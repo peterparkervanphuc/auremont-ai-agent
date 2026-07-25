@@ -1,10 +1,10 @@
-from contextlib import asynccontextmanager
+﻿from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routes import router
-from src.config import get_settings
+from backend.core.config import get_settings
+from backend.routers import auth, documents, users
 
 
 @asynccontextmanager
@@ -16,8 +16,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AI20K Agent",
-    description="AI Agent built with LangGraph",
+    title="AI20K Project",
+    description="AI-powered application built with LangGraph and FastAPI",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -31,9 +31,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router, prefix="/api/v1")
+app.include_router(auth.router)
+app.include_router(users.router)
+app.include_router(documents.router, prefix="/api/v1")
 
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "env": settings.app_env}
+

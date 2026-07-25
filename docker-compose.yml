@@ -5,15 +5,41 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: ai20k_backend
     ports:
       - "8000:8000"
     env_file:
       - .env
-    volumes:
-      - ./data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # Add services below as needed (database, cache, etc.)
+  # Example PostgreSQL:
+  # postgres:
+  #   image: postgres:15
+  #   ports:
+  #     - "5432:5432"
+  #   environment:
+  #     POSTGRES_DB: ai20k_db
+  #     POSTGRES_PASSWORD: password
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #
+  # Example MySQL:
+  # mysql:
+  #   image: mysql:8.4
+  #   ports:
+  #     - "3306:3306"
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: password
+  #     MYSQL_DATABASE: ai20k_db
+  #   volumes:
+  #     - mysql_data:/var/lib/mysql
+
+# volumes:
+#   postgres_data:
+#   mysql_data:

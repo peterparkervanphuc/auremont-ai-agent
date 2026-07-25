@@ -25,10 +25,10 @@ Sản phẩm giải quyết vấn đề như thế nào bằng AI:
 
 | Layer | Technology |
 |-------|-----------|
-| AI Agent | LangGraph + [LLM] |
 | Backend | FastAPI + Python 3.11+ |
+| LLM | Google Gemini |
+| Database | SQL (PostgreSQL / MySQL / SQLite) |
 | Frontend | React/Next.js + TypeScript |
-| Database | PostgreSQL / SQLite |
 | DevOps | Docker + GitHub Actions |
 
 ## Quick Start
@@ -46,30 +46,35 @@ cp .env.example .env
 pip install -r requirements.txt
 
 # 4. Run development server
-uvicorn src.main:app --reload
+uvicorn backend.main:app --reload
 ```
 
 ## Project Structure
 
 ```
-├── src/
-│   ├── agents/          # LangGraph agent definitions
-│   │   ├── graph.py     # Main graph (nodes + edges)
-│   │   ├── state.py     # State schema
-│   │   ├── nodes/       # Individual nodes
-│   │   └── tools/       # Agent tools
-│   ├── api/             # FastAPI routes
-│   ├── models/          # Pydantic schemas
-│   ├── services/        # Business logic
-│   ├── config.py        # Settings
-│   └── main.py          # App entry point
-├── tests/               # Test suite
-├── docs/                # Documentation
-├── eval/                # Evaluation results
-├── presentation/        # Demo materials
-├── Dockerfile           # Multi-stage build
-├── docker-compose.yml   # Full stack
-└── .github/workflows/   # CI/CD pipelines
+├── backend/
+│   ├── core/                    # Config, utilities
+│   │   ├── config.py            # Pydantic settings
+│   │   ├── gemini_client.py     # Gemini LLM wrapper
+│   │   ├── mysql_client.py      # Database client (SQLAlchemy)
+│   │   └── enums.py             # Common enums
+│   ├── models/                  # ORM models (SQLAlchemy)
+│   ├── schemas/                 # Pydantic request/response schemas
+│   ├── repositories/            # Database access layer
+│   ├── services/                # Business logic
+│   ├── routers/                 # API endpoints
+│   ├── utils/                   # Utilities (logger, helpers, etc.)
+│   ├── main.py                  # FastAPI app entry point
+│   └── requirements.txt          # Python dependencies (if separate)
+├── frontend/                    # React/Next.js app (to be created)
+├── tests/                       # Test suite
+├── docs/                        # Documentation
+├── eval/                        # Evaluation results
+├── presentation/                # Demo materials
+├── Dockerfile                   # Multi-stage build
+├── docker-compose.yml           # Service orchestration
+├── requirements.txt             # Python dependencies
+└── .github/workflows/           # CI/CD pipelines
 ```
 
 ## API Endpoints
