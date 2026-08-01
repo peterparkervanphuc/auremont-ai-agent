@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import type { ChatSessionResponse } from "../../types";
 
-// CLAUDE.md §6.4.b — sidebar: nút "+" tạo Session mới, danh sách "Session: Khách...".
+// CLAUDE.md §5.2.b — sidebar: nút "+" tạo Session mới, danh sách "Session: Khách...".
 export function SessionList() {
   const [sessions, setSessions] = useState<ChatSessionResponse[]>([]);
 
@@ -12,7 +12,7 @@ export function SessionList() {
   }, []);
 
   const createSession = async () => {
-    const session = await api.post<ChatSessionResponse>("/sale/sessions", { source: "sale_initiated" });
+    const session = await api.post<ChatSessionResponse>("/sale/sessions", {});
     setSessions((prev) => [session, ...prev]);
   };
 
@@ -26,7 +26,6 @@ export function SessionList() {
           </li>
         ))}
       </ul>
-      {/* TODO: khu vực notification cho yêu cầu Live Chat từ Khách hàng (CLAUDE.md §6.4.b) */}
     </aside>
   );
 }

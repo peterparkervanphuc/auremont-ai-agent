@@ -11,7 +11,6 @@ from backend.routers import (
     admin_eval,
     admin_settings,
     auth,
-    chatbot,
     documents,
     hitl,
     sale_chat,
@@ -53,9 +52,6 @@ app.include_router(hitl.router, prefix="/api/v1")
 app.include_router(admin_eval.router, prefix="/api/v1")
 app.include_router(admin_conflicts.router, prefix="/api/v1")
 app.include_router(admin_settings.router, prefix="/api/v1")
-
-# Public (Chatbot)
-app.include_router(chatbot.router, prefix="/api/v1")
 
 
 @app.get("/health")
