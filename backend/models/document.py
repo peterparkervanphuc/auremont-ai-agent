@@ -10,7 +10,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
     title = Column(String(255), nullable=False)
     file_path = Column(String(512), nullable=True)
     status = Column(String(50), default=DocumentStatus.PENDING, nullable=False)

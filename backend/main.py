@@ -4,6 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.core.config import get_settings
+from backend.core.mysql_client import Base, engine
+from backend.models import chat_session, conflict_flag, document, hitl_log, message, project, user  # noqa: F401
 from backend.routers import (
     admin_conflicts,
     admin_eval,
@@ -21,6 +23,7 @@ from backend.routers import (
 async def lifespan(app: FastAPI):
     settings = get_settings()
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
+    Base.metadata.create_all(bind=engine)
     yield
     print("Shutting down...")
 
