@@ -1,26 +1,12 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from backend.core.deps import get_current_user
+from backend.models.user import User
+from backend.schemas.user import UserResponse
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-# TODO: Implement user management endpoints (requires auth middleware first)
-#
-# GET /users/me
-#   - Dependency: get_current_user (from auth)
-#   - Return: UserResponse of the authenticated user
-#
-# GET /users/{user_id}
-#   - Dependency: require_role("admin")
-#   - Fetch user by ID from DB
-#   - Raise 404 if not found
-#   - Return: UserResponse
-#
-# PATCH /users/{user_id}
-#   - Dependency: require_role("admin")
-#   - Accept partial update: role, is_active
-#   - Persist via repositories/user.py → update_user()
-#   - Return: updated UserResponse
-#
-# DELETE /users/{user_id}
-#   - Dependency: require_role("admin")
-#   - Soft-delete: set is_active=False (do not hard-delete)
-#   - Return: 204 No Content
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(current_user: User = Depends(get_current_user)) -> UserResponse:
+    return UserResponse.model_validate(current_user)

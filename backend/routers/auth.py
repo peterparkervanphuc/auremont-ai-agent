@@ -1,26 +1,31 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+
+from backend.core.mysql_client import get_db
+from backend.core.security import create_access_token, create_refresh_token, verify_password
+from backend.repositories.user import get_user_by_username
+from backend.schemas.user import TokenResponse, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-# TODO: Implement JWT authentication endpoints
-#
-# POST /auth/register
-#   - Accept: UserCreate schema (username, email, password, role)
-#   - Hash password with passlib/bcrypt before saving
-#   - Persist user via repositories/user.py → create_user()
-#   - Return: UserResponse (no password)
-#
-# POST /auth/login
-#   - Accept: OAuth2PasswordRequestForm (username, password)
-#   - Verify password hash with passlib
-#   - On success: generate access_token + refresh_token (JWT via python-jose)
-#   - Return: {"access_token": ..., "refresh_token": ..., "token_type": "bearer"}
-#
-# POST /auth/refresh
-#   - Accept: refresh_token in request body
-#   - Validate and decode JWT, check expiry
-#   - Return: new access_token
-#
-# Dependencies to create:
-#   - get_current_user(token: str) → decodes JWT, returns User from DB
-#   - require_role(role: str) → wraps get_current_user, raises 403 if role mismatch
+
+@router.post("/login", response_model=TokenResponse)
+async def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> TokenResponse:
+    """Đăng nhập nội bộ Sale/Admin — role trong token quyết định routing (CLAUDE.md §6.2)."""
+    user = get_user_by_username(db, form.username)
+
+    if not user or not verify_password(form.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
+
+    return TokenResponse(
+        access_token=create_access_token(subject=user.username, role=user.role),
+        refresh_token=create_refresh_token(subject=user.username),
+        user=UserResponse.model_validate(user),
+    )

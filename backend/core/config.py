@@ -38,6 +38,33 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
+    # Vector DB (Qdrant)
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str = ""
+    qdrant_collection: str = "salesmate_documents"
+
+    # Customer OTP login
+    otp_expire_minutes: int = 5
+
+    # Verifier confidence thresholds (0-1). Public channel has no HITL,
+    # so it must be held to a higher bar than the Sale channel.
+    verifier_threshold_sale: float = 0.7
+    verifier_threshold_public: float = 0.85
+
+    # Live Chat
+    livechat_ws_path: str = "/ws/livechat"
+
+    # Object storage (MinIO) — document originals + inventory unit images (CLAUDE.md §6.6)
+    minio_endpoint: str = "localhost:9000"
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"
+    minio_secure: bool = False
+    minio_bucket_documents: str = "salesmate-documents"
+    minio_bucket_inventory: str = "salesmate-inventory"
+
+    # Inventory data freshness threshold (days) — beyond this, answers must carry a staleness warning (CLAUDE.md §8)
+    inventory_stale_after_days: int = 7
+
 
 
 @lru_cache
