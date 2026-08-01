@@ -8,7 +8,7 @@ from backend.core.mysql_client import Base
 
 
 class User(Base):
-    """Internal actor: Sale or Admin (CLAUDE.md §4). Customers use the separate `Customer` model."""
+    """Internal actor: Sale or Admin (CLAUDE.md §4)."""
 
     __tablename__ = "users"
 

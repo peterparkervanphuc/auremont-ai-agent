@@ -10,11 +10,8 @@ from backend.routers import (
     admin_settings,
     auth,
     chatbot,
-    customer_auth,
     documents,
     hitl,
-    inventory,
-    livechat,
     sale_chat,
     users,
 )
@@ -30,7 +27,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SalesMate AI Agent",
-    description="Trợ lý AI RAG cho đội Sale bất động sản — Customer Portal, Chatbot, Live Chat, HITL.",
+    description="Trợ lý AI RAG cho đội Sale bất động sản — Ingestion, Retrieval, Verify, HITL.",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -53,13 +50,9 @@ app.include_router(hitl.router, prefix="/api/v1")
 app.include_router(admin_eval.router, prefix="/api/v1")
 app.include_router(admin_conflicts.router, prefix="/api/v1")
 app.include_router(admin_settings.router, prefix="/api/v1")
-app.include_router(inventory.admin_router, prefix="/api/v1")
 
-# Public (Customer Portal / Chatbot / Live Chat)
-app.include_router(inventory.public_router, prefix="/api/v1")
-app.include_router(customer_auth.router, prefix="/api/v1")
+# Public (Chatbot)
 app.include_router(chatbot.router, prefix="/api/v1")
-app.include_router(livechat.router, prefix="/api/v1")
 
 
 @app.get("/health")

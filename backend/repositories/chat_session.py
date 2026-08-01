@@ -5,12 +5,7 @@ from backend.schemas.chat_session import ChatSessionCreate
 
 
 def create_session(db: Session, sale_id: int, schema: ChatSessionCreate) -> ChatSession:
-    session = ChatSession(
-        sale_id=sale_id,
-        customer_id=schema.customer_id,
-        source=schema.source,
-        title=schema.title,
-    )
+    session = ChatSession(sale_id=sale_id, title=schema.title)
     db.add(session)
     db.commit()
     db.refresh(session)

@@ -21,13 +21,6 @@ class UserRole(StrEnum):
     ADMIN = "admin"
 
 
-class SessionSource(StrEnum):
-    """Where a Sale consultation Session originated from."""
-
-    SALE_INITIATED = "sale_initiated"
-    LIVE_CHAT = "live_chat"
-
-
 class MessageSender(StrEnum):
     CUSTOMER = "customer"
     SALE = "sale"
@@ -39,21 +32,6 @@ class HitlStatus(StrEnum):
     CONFIRMED = "confirmed"
 
 
-class LiveChatStatus(StrEnum):
-    WAITING = "waiting"
-    ACTIVE = "active"
-    ENDED = "ended"
-
-
 class ConflictStatus(StrEnum):
     OPEN = "open"
     RESOLVED = "resolved"
-
-
-class UnitStatus(StrEnum):
-    """Trạng thái căn trong bảng inventory_units (CLAUDE.md §6.6)."""
-
-    AVAILABLE = "available"
-    RESERVED = "reserved"
-    SOLD = "sold"
-    LOCKED = "locked"

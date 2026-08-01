@@ -3,7 +3,8 @@
 TODO:
 - Run DeepEval's FaithfulnessMetric / AnswerRelevancyMetric against (query, draft_answer, retrieved_context).
 - If score < threshold, signal the caller to ask Generation to retry (Sale channel) or to
-  short-circuit to "Không đủ thông tin" / "Kết nối trực tiếp với Sale" (see channel thresholds below).
+  short-circuit to "Không đủ thông tin, liên hệ Admin" (public Chatbot has no fallback channel;
+  see CLAUDE.md §5.4).
 """
 
 from backend.core.config import settings

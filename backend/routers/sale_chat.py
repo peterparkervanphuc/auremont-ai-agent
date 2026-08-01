@@ -47,7 +47,7 @@ async def list_session_messages(session_id: int, db: Session = Depends(get_db)) 
 
 @router.post("/{session_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def ask_in_session(session_id: int, payload: SaleAskRequest, db: Session = Depends(get_db)) -> MessageResponse:
-    """Agent Pipeline for the Sale flow (CLAUDE.md §6.4.d) — flags HITL when a price/commitment risk is detected.
+    """Agent Pipeline for the Sale flow (CLAUDE.md §5.2.c) — flags HITL when a price/commitment risk is detected.
 
     TODO: replace with a real call once agent_pipeline.run_pipeline is implemented.
     """
