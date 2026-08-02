@@ -7,7 +7,7 @@ from backend.core.mysql_client import Base
 
 
 class ConflictFlag(Base):
-    """Flags contradictory content between two documents, e.g. two price-list versions (CLAUDE.md §6.5 Tab 3)."""
+    """Flags contradictory content between two documents, e.g. two price-list versions """
 
     __tablename__ = "conflict_flags"
 
@@ -19,4 +19,7 @@ class ConflictFlag(Base):
     status = Column(String(20), default=ConflictStatus.OPEN, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Who closed the flag, and when.
+    resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     resolved_at = Column(DateTime, nullable=True)

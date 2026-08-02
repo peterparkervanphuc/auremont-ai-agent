@@ -5,13 +5,23 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.core.config import get_settings
 from backend.core.mysql_client import Base, engine
-from backend.models import chat_session, conflict_flag, document, hitl_log, message, project, user  # noqa: F401
+from backend.models import (  # noqa: F401
+    chat_session,
+    conflict_flag,
+    document,
+    hitl_log,
+    message,
+    project,
+    user,
+)
+from backend.models import feedback as feedback_model  # noqa: F401
 from backend.routers import (
     admin_conflicts,
     admin_eval,
     admin_settings,
     auth,
     documents,
+    feedback,
     hitl,
     sale_chat,
     users,
@@ -49,6 +59,7 @@ app.include_router(users.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(sale_chat.router, prefix="/api/v1")
 app.include_router(hitl.router, prefix="/api/v1")
+app.include_router(feedback.router, prefix="/api/v1")
 app.include_router(admin_eval.router, prefix="/api/v1")
 app.include_router(admin_conflicts.router, prefix="/api/v1")
 app.include_router(admin_settings.router, prefix="/api/v1")

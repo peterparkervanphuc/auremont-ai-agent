@@ -19,7 +19,7 @@ async def confirm_hitl(
     db: Session = Depends(get_db),
     sale: User = Depends(require_role(UserRole.SALE)),
 ) -> HitlLogResponse:
-    """Mandatory 'XÁC NHẬN & GỬI' action before a price/commitment answer can be sent or copied (CLAUDE.md §6.4.e)."""
+    """Mandatory 'XÁC NHẬN & GỬI' action before a price/commitment answer can be sent or copied."""
     message = get_message(db, message_id)
     if message is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")

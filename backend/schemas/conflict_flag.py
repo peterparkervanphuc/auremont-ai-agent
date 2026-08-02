@@ -16,6 +16,7 @@ class ConflictFlagResponse(BaseModel):
     description: str | None = None
     status: ConflictStatus
     created_at: datetime
+    resolved_by: int | None = None
     resolved_at: datetime | None = None
 
     model_config = {"from_attributes": True}

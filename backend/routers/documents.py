@@ -36,7 +36,7 @@ class VisibilityUpdateRequest(BaseModel):
 
 @router.post("/ingest", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
 async def ingest_document(payload: IngestRequest, db: Session = Depends(get_db)) -> IngestResponse:
-    """Upload + scan (CLAUDE.md §6.5 Tab 1). New documents default to INTERNAL until an Admin relabels them."""
+    """Upload + scan. New documents default to INTERNAL until an Admin relabels them."""
     try:
         sanitize_and_scan(payload.raw_text)
     except PromptInjectionError as exc:
@@ -65,7 +65,7 @@ async def get_documents(db: Session = Depends(get_db)) -> list[DocumentResponse]
 async def set_document_visibility(
     document_id: int, payload: VisibilityUpdateRequest, db: Session = Depends(get_db)
 ) -> DocumentResponse:
-    """Gán nhãn RBAC — bắt buộc trước khi tài liệu có thể phục vụ Chatbot công khai (CLAUDE.md §6.5 Tab 1)."""
+    """Gán nhãn RBAC — INTERNAL chỉ Sale/Admin xem, PUBLIC là tài liệu được phép chia sẻ cho khách."""
     try:
         return update_document_visibility(db, document_id, payload.visibility)
     except ValueError as exc:

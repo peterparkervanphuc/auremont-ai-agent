@@ -19,6 +19,7 @@ class UserResponse(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    permissions: list[str] | None = None
     is_active: bool
     created_at: datetime
 

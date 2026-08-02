@@ -14,7 +14,7 @@ router = APIRouter(
 
 @router.get("", response_model=list[ConflictFlagResponse])
 async def get_conflicts(db: Session = Depends(get_db)) -> list[ConflictFlagResponse]:
-    """CLAUDE.md §6.5 Tab 3 — conflicting documents (e.g. two price-list versions of the same project)."""
+    """conflicting documents (e.g. two price-list versions of the same project)."""
     return list_open_conflicts(db)
 
 

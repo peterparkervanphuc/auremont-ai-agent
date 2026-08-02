@@ -12,7 +12,7 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 @router.post("/login", response_model=TokenResponse)
 async def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> TokenResponse:
-    """Đăng nhập nội bộ Sale/Admin — role trong token quyết định routing (CLAUDE.md §6.2)."""
+    """Đăng nhập nội bộ Sale/Admin — role trong token quyết định routing."""
     user = get_user_by_username(db, form.username)
 
     if not user or not verify_password(form.password, user.hashed_password):

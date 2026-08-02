@@ -2,7 +2,7 @@
 
 export type UserRole = "sale" | "admin";
 export type DocumentVisibility = "internal" | "public";
-export type MessageSender = "customer" | "sale" | "agent";
+export type MessageSender = "sale" | "agent";
 
 export interface UserResponse {
   id: number;

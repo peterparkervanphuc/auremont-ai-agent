@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import JSON, Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.enums import UserRole
@@ -8,7 +8,7 @@ from backend.core.mysql_client import Base
 
 
 class User(Base):
-    """Internal actor: Sale or Admin (CLAUDE.md §4)."""
+    """Internal actor: Sale or Admin."""
 
     __tablename__ = "users"
 
@@ -21,6 +21,10 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
 
     role: Mapped[str] = mapped_column(String(20), default=UserRole.SALE, nullable=False)
+
+    # Extra per-user grants layered on top of `role`, e.g. ["documents:delete"].
+    # NULL/empty means the user gets exactly what their role allows.
+    permissions: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

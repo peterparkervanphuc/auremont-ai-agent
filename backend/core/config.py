@@ -43,19 +43,17 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     qdrant_collection: str = "salesmate_documents"
 
-    # Verifier confidence thresholds (0-1). Public channel has no HITL,
-    # so it must be held to a higher bar than the Sale channel.
+    # Ngưỡng tin cậy tối thiểu của Verifier (0-1) — dưới ngưỡng thì báo "Không đủ thông tin, liên hệ Admin".
     verifier_threshold_sale: float = 0.7
-    verifier_threshold_public: float = 0.85
 
-    # Object storage (MinIO) — document originals (CLAUDE.md §5 bước 1)
+    # Object storage (MinIO) — document originals
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin"
     minio_secure: bool = False
     minio_bucket_documents: str = "salesmate-documents"
 
-    # Inventory API — tra cứu tồn kho real-time qua API nội bộ doanh nghiệp (CLAUDE.md §3, §5.2.c)
+    # Inventory API — tra cứu tồn kho real-time qua API nội bộ doanh nghiệp
     inventory_api_url: str = ""
     inventory_api_key: str = ""
 

@@ -1,12 +1,12 @@
-"""Document ingest pipeline: sanitize -> chunk -> embed -> upsert to Qdrant (CLAUDE.md §6.1 step 1).
+"""Document ingest pipeline: sanitize -> chunk -> embed -> upsert to Qdrant.
 
 TODO:
 - Parse PDF/Excel/Word via LlamaIndex loaders.
 - Scan for hidden prompt-injection payloads before chunking; on detection, mark the document
-  status as BLOCKED and do not index it (CLAUDE.md §7 edge case: "File upload chứa Prompt Injection").
+  status as BLOCKED and do not index it.
 - Chunk + embed + upsert into Qdrant with payload {document_id, project_id, visibility}.
 - After indexing, run a conflict-detection pass against existing documents in the same project
-  (e.g. two price-list versions) and create a ConflictFlag when found (CLAUDE.md §6.5 Tab 3).
+  (e.g. two price-list versions) and create a ConflictFlag when found.
 """
 
 

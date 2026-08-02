@@ -15,8 +15,12 @@ class Document(Base):
     file_path = Column(String(512), nullable=True)
     status = Column(String(50), default=DocumentStatus.PENDING, nullable=False)
 
-    # RBAC tier — defaults to INTERNAL so a forgotten label never leaks to the public Chatbot (CLAUDE.md §6.5).
+    # Nhãn RBAC — mặc định INTERNAL để tài liệu quên gán nhãn không bị chia sẻ ra ngoài.
     visibility = Column(String(20), default=DocumentVisibility.INTERNAL, nullable=False)
+
+    # Ingestion provenance — which Admin uploaded this file, and when.
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

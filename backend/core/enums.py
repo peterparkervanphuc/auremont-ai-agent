@@ -10,7 +10,7 @@ class DocumentStatus(StrEnum):
 
 
 class DocumentVisibility(StrEnum):
-    """RBAC tier: INTERNAL is visible to Sale/Admin only, PUBLIC is visible to the customer Chatbot."""
+    """RBAC tier: INTERNAL chỉ Sale/Admin xem; PUBLIC là tài liệu Sale được phép chia sẻ cho khách."""
 
     INTERNAL = "internal"
     PUBLIC = "public"
@@ -22,7 +22,8 @@ class UserRole(StrEnum):
 
 
 class MessageSender(StrEnum):
-    CUSTOMER = "customer"
+    """Chỉ Sale và Agent trao đổi trong một phiên — khách hàng không truy cập hệ thống."""
+
     SALE = "sale"
     AGENT = "agent"
 
@@ -35,3 +36,11 @@ class HitlStatus(StrEnum):
 class ConflictStatus(StrEnum):
     OPEN = "open"
     RESOLVED = "resolved"
+
+
+class FeedbackType(StrEnum):
+    """Đánh giá của Sale cho một câu trả lời của Agent — cấp dữ liệu cho Admin Tab 2."""
+
+    HELPFUL = "helpful"
+    WRONG = "wrong"  # câu trả lời sai
+    INCOMPLETE = "incomplete"  # câu trả lời thiếu

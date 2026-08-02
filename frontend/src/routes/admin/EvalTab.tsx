@@ -1,35 +1,79 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
+import { AlertIcon, ChartIcon } from "../../components/Icons";
 
-interface EvalScores {
-  channel: string;
-  faithfulness_avg: number | null;
-  answer_relevancy_avg: number | null;
-  top_failed_questions: string[];
+interface FailedQuestion {
+  message_id: number;
+  question: string;
+  feedback_count: number;
 }
 
-// CLAUDE.md §6.5 Tab 2 — điểm DeepEval tách riêng theo kênh Sale vs Chatbot công khai.
+interface EvalScores {
+  faithfulness_avg: number | null;
+  answer_relevancy_avg: number | null;
+  top_failed_questions: FailedQuestion[];
+}
+
+function ScoreCard({ label, value }: { label: string; value: number | null }) {
+  const pct = value == null ? 0 : Math.round(value * 100);
+  return (
+    <div className="stat-card">
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{value == null ? "—" : `${pct}%`}</div>
+      <div className="stat-bar">
+        <div className="stat-bar-fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+// Dashboard DeepEval của Verifier Agent + Top câu hỏi thất bại từ Feedback của Sale.
 export function EvalTab() {
-  const [saleScores, setSaleScores] = useState<EvalScores | null>(null);
-  const [publicScores, setPublicScores] = useState<EvalScores | null>(null);
+  const [scores, setScores] = useState<EvalScores | null>(null);
 
   useEffect(() => {
-    api.get<EvalScores>("/admin/eval/scores?channel=sale").then(setSaleScores);
-    api.get<EvalScores>("/admin/eval/scores?channel=public").then(setPublicScores);
+    api.get<EvalScores>("/admin/eval/scores").then(setScores).catch(() => {});
   }, []);
 
+  const failed = scores?.top_failed_questions ?? [];
+
   return (
-    <div>
-      <h3>Đánh giá & Phân tích AI</h3>
-      <section>
-        <h4>Agent nội bộ (Sale)</h4>
-        <p>Faithfulness: {saleScores?.faithfulness_avg ?? "—"}</p>
-        <p>Answer Relevancy: {saleScores?.answer_relevancy_avg ?? "—"}</p>
+    <div className="page">
+      <h2 className="page-title">Đánh giá &amp; Phân tích AI</h2>
+      <p className="page-sub">Điểm DeepEval tự động từ Verifier Agent, đo Faithfulness và Answer Relevancy.</p>
+
+      <section style={{ marginBottom: 28 }}>
+        <div className="stat-grid">
+          <ScoreCard label="Faithfulness" value={scores?.faithfulness_avg ?? null} />
+          <ScoreCard label="Answer Relevancy" value={scores?.answer_relevancy_avg ?? null} />
+        </div>
       </section>
+
       <section>
-        <h4>Chatbot công khai (Khách hàng)</h4>
-        <p>Faithfulness: {publicScores?.faithfulness_avg ?? "—"}</p>
-        <p>Answer Relevancy: {publicScores?.answer_relevancy_avg ?? "—"}</p>
+        <h3 className="section-title">Top câu hỏi AI trả lời thất bại</h3>
+        <p className="page-sub" style={{ marginBottom: 12 }}>
+          Tổng hợp từ nút Feedback của Sale — ưu tiên bổ sung tài liệu cho các câu hỏi này.
+        </p>
+        {failed.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <ChartIcon size={26} />
+            </div>
+            <p>Chưa có câu hỏi thất bại nào được ghi nhận.</p>
+          </div>
+        ) : (
+          <div className="data-list">
+            {failed.map((f, i) => (
+              <div key={f.message_id} className="data-row">
+                <span className="badge badge-warning">
+                  <AlertIcon size={12} />#{i + 1}
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>{f.question}</span>
+                <span className="badge badge-muted">{f.feedback_count} báo cáo</span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

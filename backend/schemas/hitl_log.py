@@ -6,7 +6,7 @@ from backend.core.enums import HitlStatus
 
 
 class HitlConfirmRequest(BaseModel):
-    """Payload for the mandatory 'XÁC NHẬN & GỬI' action (CLAUDE.md §6.4.e)."""
+    """Payload for the mandatory 'XÁC NHẬN & GỬI' action."""
 
     confirmed_content: str
 

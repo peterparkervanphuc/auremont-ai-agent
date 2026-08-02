@@ -1,14 +1,12 @@
-"""Verifier Agent: scores a draft answer against its source documents (CLAUDE.md §6.1 step 4).
+"""Verifier Agent: chấm điểm câu trả lời nháp so với tài liệu nguồn.
 
 TODO:
-- Run DeepEval's FaithfulnessMetric / AnswerRelevancyMetric against (query, draft_answer, retrieved_context).
-- If score < threshold, signal the caller to ask Generation to retry (Sale channel) or to
-  short-circuit to "Không đủ thông tin, liên hệ Admin" (public Chatbot has no fallback channel;
-  see CLAUDE.md §5.4).
+- Chạy DeepEval FaithfulnessMetric / AnswerRelevancyMetric trên (query, draft_answer, retrieved_context).
+- Nếu điểm dưới ngưỡng, báo cho caller bắt Main Agent sinh lại; nếu vẫn thấp thì
+  hiển thị "Không đủ thông tin, liên hệ Admin".
 """
 
 from backend.core.config import settings
-from backend.core.enums import UserRole
 
 
 class VerifierResult:
@@ -25,7 +23,6 @@ def score_answer(query: str, draft_answer: str, retrieved_context: list[str]) ->
     raise NotImplementedError("TODO: implement DeepEval Faithfulness/AnswerRelevancy scoring")
 
 
-def passes_threshold(result: VerifierResult, channel: UserRole | None) -> bool:
-    """Public Chatbot has no HITL, so it is held to a higher bar than the Sale channel (CLAUDE.md §9)."""
-    threshold = settings.verifier_threshold_sale if channel == UserRole.SALE else settings.verifier_threshold_public
-    return result.score >= threshold
+def passes_threshold(result: VerifierResult) -> bool:
+    """Dưới ngưỡng -> hiển thị cảnh báo giới hạn thay vì đưa câu trả lời cho Sale."""
+    return result.score >= settings.verifier_threshold_sale

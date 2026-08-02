@@ -4,7 +4,7 @@ import { AdminPage } from "./routes/admin/AdminPage";
 import { Login } from "./routes/sale/Login";
 import { SalePage } from "./routes/sale/SalePage";
 
-// CLAUDE.md §5.1 — 1 điểm truy cập chung; màn hình ĐĂNG NHẬP nội bộ,
+// 1 điểm truy cập chung; màn hình ĐĂNG NHẬP nội bộ,
 // sau xác thực routing tự động theo role (SALE / ADMIN).
 function App() {
   return (

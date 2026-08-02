@@ -1,16 +1,59 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { DocumentResponse, DocumentVisibility } from "../../types";
+import { InboxIcon, LoaderIcon, TrashIcon, UploadIcon } from "../../components/Icons";
 
-// CLAUDE.md §6.5 Tab 1 — upload, quét, gán nhãn RBAC bắt buộc, danh sách, xoá.
+const STATUS_LABEL: Record<string, { text: string; badge: string }> = {
+  pending: { text: "Đang chờ", badge: "badge-warning" },
+  processing: { text: "Đang xử lý & quét mã độc", badge: "badge-info" },
+  completed: { text: "Upload & Vector hóa thành công", badge: "badge-success" },
+  failed: { text: "Thất bại", badge: "badge-danger" },
+  blocked: { text: "Đã chặn — nội dung bất thường", badge: "badge-danger" },
+};
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader;
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+// kéo-thả file, quét mã độc, gán nhãn RBAC, danh sách, xoá.
 export function DocumentsTab() {
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    api.get<DocumentResponse[]>("/documents").then(setDocuments);
+  const loadDocuments = useCallback(() => {
+    api.get<DocumentResponse[]>("/documents").then(setDocuments).catch(() => setDocuments([]));
   }, []);
 
-  // TODO: drag-and-drop upload -> POST /documents/ingest (multipart, once ingestion_service reads files).
+  useEffect(() => {
+    loadDocuments();
+  }, [loadDocuments]);
+
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    setError(null);
+    try {
+      const raw_text = await readFileAsText(file);
+      await api.post("/documents/ingest", { title: file.name, raw_text });
+      loadDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload thất bại — phát hiện nội dung bất thường, chặn file");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    uploadFile(files[0]);
+  };
 
   const setVisibility = async (documentId: number, visibility: DocumentVisibility) => {
     const updated = await api.patch<DocumentResponse>(`/documents/${documentId}/visibility`, { visibility });
@@ -23,35 +66,88 @@ export function DocumentsTab() {
   };
 
   return (
-    <div>
-      <h3>Quản lý Tài liệu</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Tên file</th>
-            <th>Trạng thái</th>
-            <th>Phân quyền</th>
-            <th>Xoá</th>
-          </tr>
-        </thead>
-        <tbody>
-          {documents.map((doc) => (
-            <tr key={doc.id}>
-              <td>{doc.title}</td>
-              <td>{doc.status}</td>
-              <td>
-                <select value={doc.visibility} onChange={(e) => setVisibility(doc.id, e.target.value as DocumentVisibility)}>
-                  <option value="internal">Nội bộ</option>
-                  <option value="public">Public</option>
-                </select>
-              </td>
-              <td>
-                <button onClick={() => removeDocument(doc.id)}>Xoá</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="page">
+      <h2 className="page-title">Kho Tài liệu</h2>
+      <p className="page-sub">Tải lên và quản lý tài liệu dự án cho pipeline RAG.</p>
+
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragActive(true);
+        }}
+        onDragLeave={() => setDragActive(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragActive(false);
+          handleFiles(e.dataTransfer.files);
+        }}
+        onClick={() => fileInputRef.current?.click()}
+        className={`upload-zone ${dragActive ? "upload-zone--active" : ""}`}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.xlsx,.xls,.docx,.doc,.txt"
+          onChange={(e) => handleFiles(e.target.files)}
+          style={{ display: "none" }}
+        />
+        <div className="upload-zone-icon">
+          {uploading ? <LoaderIcon size={24} className="icon-spin" /> : <UploadIcon size={24} />}
+        </div>
+        <p className="upload-zone-title">
+          {uploading ? "Đang xử lý & quét mã độc..." : "Kéo thả file PDF/Excel/Word vào đây"}
+        </p>
+        <p className="upload-zone-hint">hoặc bấm để chọn từ máy tính</p>
+      </div>
+
+      {error && (
+        <div className="alert alert-danger" style={{ marginTop: 16 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ marginTop: 32 }}>
+        <h3 className="section-title">Danh sách tài liệu</h3>
+        {documents.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <InboxIcon size={26} />
+            </div>
+            <p>Chưa có tài liệu nào được tải lên.</p>
+          </div>
+        ) : (
+          <div className="data-list">
+            {documents.map((doc) => {
+              const status = STATUS_LABEL[doc.status] ?? { text: doc.status, badge: "badge-muted" };
+              return (
+                <div key={doc.id} className="data-row">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="data-row-title">{doc.title}</div>
+                    <div className="data-row-meta">{new Date(doc.created_at).toLocaleString("vi-VN")}</div>
+                  </div>
+
+                  <span className={`badge ${status.badge}`}>{status.text}</span>
+
+                  <select
+                    value={doc.visibility}
+                    onChange={(e) => setVisibility(doc.id, e.target.value as DocumentVisibility)}
+                    className="field"
+                    style={{ width: "auto", padding: "6px 10px", fontSize: 13 }}
+                  >
+                    <option value="internal">Nội bộ</option>
+                    <option value="public">Public</option>
+                  </select>
+
+                  <button onClick={() => removeDocument(doc.id)} className="btn btn-sm btn-danger" aria-label="Xoá">
+                    <TrashIcon size={14} />
+                    Xoá
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

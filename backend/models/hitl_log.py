@@ -7,7 +7,7 @@ from backend.core.mysql_client import Base
 
 
 class HitlLog(Base):
-    """Audit trail for the mandatory HITL confirmation on price/commitment answers (CLAUDE.md §6.4.e)."""
+    """Audit trail for the mandatory HITL confirmation on price/commitment answers."""
 
     __tablename__ = "hitl_logs"
 

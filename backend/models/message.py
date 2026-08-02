@@ -6,7 +6,7 @@ from backend.core.mysql_client import Base
 
 
 class Message(Base):
-    """A single turn in a ChatSession (Sale flow) or a public Chatbot exchange."""
+    """Một lượt trao đổi trong phiên tư vấn của Sale — câu hỏi của Sale hoặc câu trả lời của Agent."""
 
     __tablename__ = "messages"
 

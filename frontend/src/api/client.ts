@@ -16,8 +16,10 @@ function getAccessToken(): string | null {
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getAccessToken();
   const headers = new Headers(options.headers);
-  // Let the browser set the multipart boundary itself when the body is FormData.
-  if (!(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  // Let the browser set the multipart boundary itself when the body is FormData,
+  // and keep the caller's Content-Type for URLSearchParams (form-urlencoded).
+  const bodyHasOwnContentType = options.body instanceof FormData || options.body instanceof URLSearchParams;
+  if (!bodyHasOwnContentType) headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
@@ -41,4 +43,5 @@ export const api = {
     apiFetch<T>(path, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
   delete: <T>(path: string) => apiFetch<T>(path, { method: "DELETE" }),
   postForm: <T>(path: string, body: FormData) => apiFetch<T>(path, { method: "POST", body }),
+  postUrlEncoded: <T>(path: string, body: URLSearchParams) => apiFetch<T>(path, { method: "POST", body }),
 };
