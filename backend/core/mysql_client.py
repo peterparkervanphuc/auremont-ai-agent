@@ -1,4 +1,4 @@
-﻿from sqlalchemy import create_engine
+from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from backend.core.config import settings
@@ -23,4 +23,3 @@ def get_db():
         yield db
     finally:
         db.close()
-

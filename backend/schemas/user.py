@@ -1,22 +1,31 @@
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+from backend.core.enums import UserRole
 
 
 class UserBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
-    role: str | None = "viewer"
+    role: UserRole = UserRole.SALE
+
 
 class UserCreate(UserBase):
-    """Data required to register a new user."""
     password: str = Field(..., min_length=8)
 
+
 class UserResponse(UserBase):
-    """Data safe to send back to the frontend (No passwords!)."""
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
+    permissions: list[str] | None = None
     is_active: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user: UserResponse

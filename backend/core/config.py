@@ -38,6 +38,25 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
+    # Vector DB (Qdrant)
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str = ""
+    qdrant_collection: str = "salesmate_documents"
+
+    # Ngưỡng tin cậy tối thiểu của Verifier (0-1) — dưới ngưỡng thì báo "Không đủ thông tin, liên hệ Admin".
+    verifier_threshold_sale: float = 0.7
+
+    # Object storage (MinIO) — document originals
+    minio_endpoint: str = "localhost:9000"
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"
+    minio_secure: bool = False
+    minio_bucket_documents: str = "salesmate-documents"
+
+    # Inventory API — tra cứu tồn kho real-time qua API nội bộ doanh nghiệp
+    inventory_api_url: str = ""
+    inventory_api_key: str = ""
+
 
 
 @lru_cache

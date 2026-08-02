@@ -4,20 +4,42 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.core.config import get_settings
-from backend.routers import auth, documents, users
+from backend.core.mysql_client import Base, engine
+from backend.models import (  # noqa: F401
+    chat_session,
+    conflict_flag,
+    document,
+    hitl_log,
+    message,
+    project,
+    user,
+)
+from backend.models import feedback as feedback_model  # noqa: F401
+from backend.routers import (
+    admin_conflicts,
+    admin_eval,
+    admin_settings,
+    auth,
+    documents,
+    feedback,
+    hitl,
+    sale_chat,
+    users,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
+    Base.metadata.create_all(bind=engine)
     yield
     print("Shutting down...")
 
 
 app = FastAPI(
-    title="AI20K Project",
-    description="AI-powered application built with LangGraph and FastAPI",
+    title="SalesMate AI Agent",
+    description="Trợ lý AI RAG cho đội Sale bất động sản — Ingestion, Retrieval, Verify, HITL.",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -31,9 +53,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router)
-app.include_router(users.router)
+# Internal (Sale/Admin)
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(users.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
+app.include_router(sale_chat.router, prefix="/api/v1")
+app.include_router(hitl.router, prefix="/api/v1")
+app.include_router(feedback.router, prefix="/api/v1")
+app.include_router(admin_eval.router, prefix="/api/v1")
+app.include_router(admin_conflicts.router, prefix="/api/v1")
+app.include_router(admin_settings.router, prefix="/api/v1")
 
 
 @app.get("/health")
