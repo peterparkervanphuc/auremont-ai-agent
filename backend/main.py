@@ -44,8 +44,8 @@ app.add_middleware(
 )
 
 # Internal (Sale/Admin)
-app.include_router(auth.router)
-app.include_router(users.router)
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(users.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(sale_chat.router, prefix="/api/v1")
 app.include_router(hitl.router, prefix="/api/v1")
