@@ -105,7 +105,122 @@ Giao diện "SalesMate Admin" gồm thanh điều hướng trên cùng (Tài kho
 
 ---
 
-### 6. Ứng dụng Công nghệ (Tech Stack)
+### 6. Hướng dẫn chạy dự án (Local Development)
+
+#### 6.1. Yêu cầu môi trường
+
+* Python 3.11
+* Node.js 20+ (khuyến nghị) và npm
+* Docker Desktop (nếu chạy bằng Docker Compose)
+
+#### 6.2. Chuẩn bị biến môi trường
+
+```bash
+# Backend
+cp .env.example .env
+
+# Frontend
+cp frontend/.env.example frontend/.env
+```
+
+> Windows PowerShell: dùng `Copy-Item .env.example .env` và `Copy-Item frontend/.env.example frontend/.env`.
+
+Sau đó mở `.env` và điền `GEMINI_API_KEY`, `SECRET_KEY`, `DATABASE_URL`...
+
+#### 6.3. Cách 1 — Chạy toàn bộ bằng Docker Compose (khuyến nghị)
+
+```bash
+# Build & khởi động tất cả service (backend, frontend, MySQL, Qdrant, MinIO)
+docker compose up -d --build
+
+# Xem log
+docker compose logs -f backend
+docker compose logs -f frontend
+
+# Kiểm tra trạng thái các container
+docker compose ps
+
+# Dừng
+docker compose down
+
+# Dừng và xóa luôn dữ liệu (MySQL/Qdrant/MinIO volumes)
+docker compose down -v
+```
+
+Chỉ chạy các service hạ tầng (khi muốn tự chạy backend/frontend ở máy):
+
+```bash
+docker compose up -d mysql qdrant minio
+```
+
+#### 6.4. Cách 2 — Chạy thủ công (dev mode, hot reload)
+
+**Backend (FastAPI)**
+
+```bash
+# Tạo virtualenv
+python -m venv .venv
+
+# Kích hoạt: macOS/Linux
+source .venv/bin/activate
+# Kích hoạt: Windows PowerShell
+.venv\Scripts\Activate.ps1
+
+# Cài dependencies
+pip install -r requirements.txt
+
+# Chạy server (hot reload)
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+# hoặc
+make run
+```
+
+**Frontend (React + Vite)**
+
+```bash
+cd frontend
+npm install
+npm run dev          # dev server tại http://localhost:5173
+npm run build        # build production vào frontend/dist
+npm run preview      # xem thử bản build
+npm run lint         # oxlint
+```
+
+#### 6.5. Test & chất lượng code (backend)
+
+```bash
+make test        # pytest tests/ -v
+make lint        # ruff check backend/ tests/
+make format      # ruff format backend/ tests/
+make typecheck   # mypy backend/
+make check       # lint + format + test
+make clean       # xóa cache __pycache__, .pytest_cache, .ruff_cache
+```
+
+Nếu không dùng `make`, chạy trực tiếp:
+
+```bash
+pytest tests/ -v
+ruff check backend/ tests/
+ruff format backend/ tests/
+mypy backend/
+```
+
+#### 6.6. Truy cập sau khi chạy
+
+| Thành phần | URL | Thông tin đăng nhập |
+| :--- | :--- | :--- |
+| Frontend | `http://localhost:5173` | — |
+| Backend API | `http://localhost:8000` | — |
+| Swagger UI | `http://localhost:8000/docs` | — |
+| Health check | `http://localhost:8000/health` | — |
+| Qdrant Dashboard | `http://localhost:6333/dashboard` | — |
+| MinIO Console | `http://localhost:9001` | `minioadmin` / `minioadmin` |
+| MySQL | `localhost:3306` | `salesmate` / `salesmate` (db: `salesmate_db`) |
+
+---
+
+### 7. Ứng dụng Công nghệ (Tech Stack)
 
 * **AI Logic**: LLM Claude/GPT-4o.
 * **RAG**: Gemini 2.5 Flash, Vector DB Qdrant (chỉ lưu vector embedding, không lưu file gốc), Re-ranker.
