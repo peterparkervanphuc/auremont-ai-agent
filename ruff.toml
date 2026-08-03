@@ -1,6 +1,11 @@
 target-version = "py311"
 line-length = 120
 
+# File migration do Alembic sinh tự động: sửa tay để chiều linter sẽ khiến file
+# lệch khỏi template và dễ hỏng khi rebase. Nội dung vẫn được kiểm bằng
+# tests/test_migrations.py (chạy thật lên DB, so schema với model).
+extend-exclude = ["migrations/versions"]
+
 [lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]

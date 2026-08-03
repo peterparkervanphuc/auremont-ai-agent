@@ -21,8 +21,11 @@ ENV PATH=/home/appuser/.local/bin:$PATH
 # Copy application code
 COPY . .
 
-# Create data directory with correct ownership
-RUN mkdir -p /app/data && chown -R appuser:appuser /app
+# Create data directory with correct ownership.
+# chmod +x: file được tạo trên Windows nên không mang sẵn bit thực thi.
+RUN mkdir -p /app/data \
+    && chmod +x /app/docker-entrypoint.sh \
+    && chown -R appuser:appuser /app
 
 USER appuser
 
@@ -31,4 +34,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
