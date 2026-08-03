@@ -364,6 +364,24 @@
 }
 
 /* ── HITL card ──────────────────────────────────────────── */
+/* Bọc thẻ HITL để gắn kèm timestamp + nút Feedback như bong bóng chat thường. */
+.chat-hitl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.chat-hitl-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-left: 2px;
+  max-width: 640px;
+}
+
 .hitl-card {
   align-self: flex-start;
   max-width: 640px;

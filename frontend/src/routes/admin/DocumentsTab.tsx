@@ -11,9 +11,19 @@ const STATUS_LABEL: Record<string, { text: string; badge: string }> = {
   blocked: { text: "Đã chặn — nội dung bất thường", badge: "badge-danger" },
 };
 
+// Backend /documents/ingest hiện nhận raw_text. Đọc PDF/Excel bằng readAsText
+// chỉ ra chuỗi nhị phân vô nghĩa, nên chặn sớm và báo rõ cho Admin thay vì
+// đẩy rác vào pipeline vector hoá.
+const TEXT_EXTENSIONS = [".txt", ".md", ".csv"];
+
+function isTextFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return TEXT_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader;
+    const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ""));
     reader.onerror = () => reject(reader.error);
     reader.readAsText(file);
@@ -37,6 +47,14 @@ export function DocumentsTab() {
   }, [loadDocuments]);
 
   const uploadFile = async (file: File) => {
+    if (!isTextFile(file)) {
+      setError(
+        `Chưa hỗ trợ trích xuất nội dung từ "${file.name}". Hiện tại chỉ nhận .txt/.md/.csv — ` +
+          "pipeline đọc PDF/Excel đang được hoàn thiện.",
+      );
+      return;
+    }
+
     setUploading(true);
     setError(null);
     try {
@@ -87,7 +105,7 @@ export function DocumentsTab() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.xlsx,.xls,.docx,.doc,.txt"
+          accept=".txt,.md,.csv"
           onChange={(e) => handleFiles(e.target.files)}
           style={{ display: "none" }}
         />
@@ -95,9 +113,9 @@ export function DocumentsTab() {
           {uploading ? <LoaderIcon size={24} className="icon-spin" /> : <UploadIcon size={24} />}
         </div>
         <p className="upload-zone-title">
-          {uploading ? "Đang xử lý & quét mã độc..." : "Kéo thả file PDF/Excel/Word vào đây"}
+          {uploading ? "Đang xử lý & quét mã độc..." : "Kéo thả tài liệu vào đây"}
         </p>
-        <p className="upload-zone-hint">hoặc bấm để chọn từ máy tính</p>
+        <p className="upload-zone-hint">hoặc bấm để chọn từ máy tính · hiện hỗ trợ .txt, .md, .csv</p>
       </div>
 
       {error && (

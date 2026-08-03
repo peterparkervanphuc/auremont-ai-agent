@@ -127,7 +127,16 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
 
           {messages.map((m) => {
             if (m.requires_hitl) {
-              return <HitlCard key={m.id} message={m} onConfirmed={() => {}} />;
+              // Câu trả lời rủi ro vẫn nằm trong feedback loop như mọi câu khác.
+              return (
+                <div key={m.id} className="chat-hitl-row">
+                  <HitlCard message={m} onConfirmed={() => {}} />
+                  <div className="chat-hitl-meta">
+                    <span className="chat-timestamp">{formatTime(m.created_at)}</span>
+                    <FeedbackButtons messageId={m.id} />
+                  </div>
+                </div>
+              );
             }
 
             const isUser = m.sender === "sale";

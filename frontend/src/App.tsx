@@ -37,6 +37,8 @@ function AppShell() {
       <div className="app-content">
         <Routes>
           <Route path="/home" element={<Home />} />
+
+          {/* Chat mở cho cả SALE và ADMIN — mỗi người thấy phiên của riêng mình. */}
           <Route path="/chat/*" element={<SalePage />} />
 
           {/* Khu vực chỉ dành cho ADMIN */}

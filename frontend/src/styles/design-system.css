@@ -3542,6 +3542,19 @@ code {
 .login-submit { width: 100%; justify-content: center; padding: 12px; font-size: 0.9375rem; margin-top: 4px; }
 .login-hint { text-align: center; font-size: 0.8rem; color: var(--text-3); margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
 
+/* Tài khoản seed cho dev — bấm để điền sẵn form. Chỉ render khi import.meta.env.DEV. */
+.login-devbox { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; padding: 12px; background: var(--bg-2); border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+.login-devbox-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); }
+.login-devbox-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 8px; border-radius: 4px; text-align: left;
+  font-size: 0.8rem; color: var(--text-2); transition: background var(--t-fast);
+}
+.login-devbox-row:hover:not(:disabled) { background: var(--bg-3); color: var(--text-1); }
+.login-devbox-row:disabled { opacity: 0.5; cursor: not-allowed; }
+.login-devbox-role { flex-shrink: 0; min-width: 44px; font-weight: 600; color: var(--text-1); }
+.login-devbox-row code { font-family: var(--font-mono, monospace); font-size: 0.75rem; }
+
 /* ══════════════════════════════════════════════════════════
    RESPONSIVE - ≤ 900px (tablet)
    ══════════════════════════════════════════════════════════ */

@@ -11,6 +11,13 @@ interface TokenResponse {
   token_type: string;
 }
 
+// Tài khoản seed sẵn khi APP_ENV=development (backend/main.py POST /__test__/users).
+// Ghi chú tiện test — gỡ khối này trước khi triển khai thật.
+const DEV_ACCOUNTS = [
+  { label: "Sale", username: "sale_test", password: "pass1234" },
+  { label: "Admin", username: "admin_test", password: "pass1234" },
+];
+
 function decodeRoleFromToken(accessToken: string): UserRole {
   // backend/core/security.py create_access_token nhúng {"role":...} vào payload JWT.
   const payload = JSON.parse(atob(accessToken.split(".")[1])) as { role: UserRole };
@@ -129,6 +136,27 @@ export function Login() {
         </form>
 
         <p className="login-hint">Hệ thống tự chuyển tới màn hình phù hợp theo vai trò tài khoản.</p>
+
+        <div className="login-devbox">
+          <span className="login-devbox-title">Tài khoản thử nghiệm</span>
+          {DEV_ACCOUNTS.map((account) => (
+            <button
+              key={account.username}
+              type="button"
+              className="login-devbox-row"
+              disabled={loading}
+              onClick={() => {
+                setUsername(account.username);
+                setPassword(account.password);
+              }}
+            >
+              <span className="login-devbox-role">{account.label}</span>
+              <code>
+                {account.username} / {account.password}
+              </code>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

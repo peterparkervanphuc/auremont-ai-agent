@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import {
   ArrowRightIcon,
+  ChartIcon,
   ChatIcon,
   DatabaseIcon,
   DocumentIcon,
@@ -62,6 +63,12 @@ export function Home() {
             icon: <DocumentIcon size={22} />,
             title: "Kho tài liệu",
             desc: "Tải lên và quản lý tài liệu dự án",
+          },
+          {
+            to: "/eval",
+            icon: <ChartIcon size={22} />,
+            title: "Đánh giá AI",
+            desc: "Theo dõi điểm DeepEval và câu hỏi thất bại",
           },
         ]
       : [
