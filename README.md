@@ -169,11 +169,37 @@ source .venv/bin/activate
 # Cài dependencies
 pip install -r requirements.txt
 
+# Tạo/cập nhật schema DB (BẮT BUỘC trước lần chạy đầu)
+alembic upgrade head
+
 # Chạy server (hot reload)
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 # hoặc
 make run
 ```
+
+> Chạy bằng Docker Compose thì không cần bước `alembic upgrade head` — container
+> tự chạy migration lúc khởi động (`docker-entrypoint.sh`).
+
+#### 6.4.1. Migration cơ sở dữ liệu (Alembic)
+
+Schema do Alembic quản lý, **không** dùng `Base.metadata.create_all` nữa:
+`create_all` chỉ tạo bảng còn thiếu và không bao giờ `ALTER` bảng đã tồn tại, nên
+cột thêm sau sẽ âm thầm vắng mặt cho tới khi có query nổ lỗi lúc chạy.
+
+```bash
+alembic upgrade head                              # đưa DB lên bản mới nhất
+alembic revision --autogenerate -m "mô tả"        # sinh migration sau khi sửa model
+alembic downgrade -1                              # lùi 1 bước
+alembic current                                   # DB đang ở revision nào
+alembic check                                     # model có lệch migration không
+```
+
+Sau khi sửa bất kỳ file nào trong `backend/models/`, **phải** tạo revision mới —
+`tests/test_migrations.py` sẽ fail nếu quên.
+
+DB đã có sẵn bảng từ trước (tạo bằng `create_all`) thì đánh dấu một lần thay vì
+chạy upgrade: `alembic stamp head`.
 
 **Frontend (React + Vite)**
 
@@ -187,6 +213,21 @@ npm run lint         # oxlint
 ```
 
 #### 6.5. Test & chất lượng code (backend)
+
+Bộ test chia 3 tầng:
+
+| Tầng | Đường dẫn | Cần gì | Kiểm cái gì |
+| :--- | :--- | :--- | :--- |
+| Unit / API | `tests/test_api/` | Không | Từng endpoint trên SQLite in-memory |
+| Migration | `tests/test_migrations.py` | Không | Migration khớp model, không drift |
+| E2E | `tests/test_e2e/` | `docker compose up -d` | Hành trình Sale/Admin trên MySQL thật |
+
+```bash
+pytest tests/test_api tests/test_migrations   # nhanh, không cần Docker
+docker compose up -d && pytest tests/test_e2e # E2E trên stack thật
+```
+
+E2E tự **skip** nếu backend chưa chạy, nên `pytest tests/` luôn an toàn.
 
 ```bash
 make test        # pytest tests/ -v
@@ -222,7 +263,7 @@ mypy backend/
 
 ### 7. Ứng dụng Công nghệ (Tech Stack)
 
-* **AI Logic**: LLM Claude/GPT-4o.
+* **AI Logic**: Gemini 2.5 Flash
 * **RAG**: Gemini 2.5 Flash, Vector DB Qdrant (chỉ lưu vector embedding, không lưu file gốc), Re-ranker.
 * **Object Storage**: MinIO — lưu file gốc (PDF/Excel/Word) khi Admin upload tài liệu; MySQL chỉ lưu metadata + đường dẫn tham chiếu tới MinIO.
 * **Eval**: DeepEval — cho phép triển khai các metric RAG chuẩn công nghiệp chỉ trong vài dòng code, dùng để đo faithfulness/answer relevancy tự động.
