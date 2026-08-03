@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 
 from backend.core.mysql_client import Base
+from backend.utils.time import utcnow
 
 
 class Message(Base):
@@ -22,4 +21,4 @@ class Message(Base):
     verifier_score = Column(Float, nullable=True)  # Faithfulness/Relevancy score from the Verifier Agent
     requires_hitl = Column(Boolean, default=False, nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)

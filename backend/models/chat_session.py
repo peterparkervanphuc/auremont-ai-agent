@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 
 from backend.core.mysql_client import Base
+from backend.utils.time import utcnow
 
 
 class ChatSession(Base):
@@ -18,4 +17,4 @@ class ChatSession(Base):
     # The customer this session belongs to — each session keeps its own Memory per customer.
     customer_name = Column(String(255), nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)

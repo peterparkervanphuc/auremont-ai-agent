@@ -1,9 +1,8 @@
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 
 from backend.core.enums import HitlStatus
 from backend.core.mysql_client import Base
+from backend.utils.time import utcnow
 
 
 class HitlLog(Base):
@@ -19,4 +18,4 @@ class HitlLog(Base):
     confirmed_content = Column(Text, nullable=True)  # snapshot of what was actually confirmed/sent
     confirmed_at = Column(DateTime, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)

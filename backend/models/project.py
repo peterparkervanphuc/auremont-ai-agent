@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, String
 
 from backend.core.mysql_client import Base
+from backend.utils.time import utcnow
 
 
 class Project(Base):
@@ -12,4 +11,4 @@ class Project(Base):
     name = Column(String(255), nullable=False)
     location = Column(String(255), nullable=True)
     description = Column(String(2000), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.enums import UserRole
 from backend.core.mysql_client import Base
+from backend.utils.time import utcnow
 
 
 class User(Base):
@@ -27,4 +28,4 @@ class User(Base):
     permissions: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

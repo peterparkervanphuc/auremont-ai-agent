@@ -1,9 +1,8 @@
-﻿from datetime import datetime
-
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+﻿from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 
 from backend.core.enums import DocumentStatus, DocumentVisibility
 from backend.core.mysql_client import Base
+from backend.utils.time import utcnow
 
 
 class Document(Base):
@@ -20,7 +19,7 @@ class Document(Base):
 
     # Ingestion provenance — which Admin uploaded this file, and when.
     uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=True)
+    uploaded_at = Column(DateTime, default=utcnow, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 

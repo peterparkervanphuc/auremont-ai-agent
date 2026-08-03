@@ -1,9 +1,8 @@
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 
 from backend.core.enums import ConflictStatus
 from backend.core.mysql_client import Base
+from backend.utils.time import utcnow
 
 
 class ConflictFlag(Base):
@@ -18,7 +17,7 @@ class ConflictFlag(Base):
     description = Column(Text, nullable=True)
     status = Column(String(20), default=ConflictStatus.OPEN, nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 
     # Who closed the flag, and when.
     resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)

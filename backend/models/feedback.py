@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 
 from backend.core.mysql_client import Base
+from backend.utils.time import utcnow
 
 
 class Feedback(Base):
@@ -22,4 +21,4 @@ class Feedback(Base):
     type = Column(String(20), nullable=False, index=True)  # FeedbackType
     comment = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
