@@ -18,3 +18,11 @@ def list_sessions_for_sale(db: Session, sale_id: int) -> list[ChatSession]:
 
 def get_session(db: Session, session_id: int) -> ChatSession | None:
     return db.query(ChatSession).filter(ChatSession.id == session_id).first()
+
+
+def delete_session(db: Session, session_id: int) -> None:
+    session = get_session(db, session_id)
+    if session is None:
+        return
+    db.delete(session)
+    db.commit()

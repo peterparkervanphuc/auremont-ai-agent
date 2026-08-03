@@ -1,9 +1,8 @@
-from datetime import datetime
-
 from sqlalchemy.orm import Session
 
 from backend.core.enums import HitlStatus
 from backend.models.hitl_log import HitlLog
+from backend.utils.time import utcnow
 
 
 def create_hitl_log(db: Session, message_id: int, sale_id: int) -> HitlLog:
@@ -20,7 +19,7 @@ def confirm_hitl_log(db: Session, log_id: int, confirmed_content: str) -> HitlLo
         raise ValueError(f"HitlLog with id={log_id} not found.")
     log.status = HitlStatus.CONFIRMED
     log.confirmed_content = confirmed_content
-    log.confirmed_at = datetime.utcnow()
+    log.confirmed_at = utcnow()
     db.commit()
     db.refresh(log)
     return log

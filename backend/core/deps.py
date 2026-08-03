@@ -32,9 +32,16 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
-def require_role(role: UserRole):
+def require_role(*roles: UserRole):
+    """Cho phép user thuộc một trong các role truyền vào.
+
+    Gọi với 1 role để khoá chặt (vd. require_role(UserRole.ADMIN)), hoặc nhiều
+    role khi cả hai bên cùng dùng chung một luồng (vd. Chat mở cho SALE + ADMIN).
+    """
+    allowed = set(roles)
+
     def _dependency(user: User = Depends(get_current_user)) -> User:
-        if user.role != role:
+        if user.role not in allowed:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         return user
 

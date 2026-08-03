@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { AuthContext } from "./auth-context";
+import { api } from "../api/client";
 import type { UserRole } from "../types";
 
 function read(key: string): string | null {
@@ -29,6 +30,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    // Báo server để ghi vết, nhưng không chờ: JWT stateless nên xoá token phía
+    // client mới là thứ thực sự kết thúc phiên. Lỗi mạng không được chặn logout.
+    api.post("/auth/logout").catch(() => {});
     ["access_token", "refresh_token", "role", "username"].forEach((k) => localStorage.removeItem(k));
     setState({ isAuthenticated: false, role: null, username: null });
   }, []);

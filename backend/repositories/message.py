@@ -33,3 +33,8 @@ def list_messages_for_session(db: Session, session_id: int) -> list[Message]:
 
 def get_message(db: Session, message_id: int) -> Message | None:
     return db.query(Message).filter(Message.id == message_id).first()
+
+
+def delete_messages_for_session(db: Session, session_id: int) -> None:
+    db.query(Message).filter(Message.session_id == session_id).delete(synchronize_session=False)
+    db.commit()
