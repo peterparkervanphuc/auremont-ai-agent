@@ -41,19 +41,19 @@ export function ConflictsTab() {
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {conflicts.map((c) => (
             <div key={c.id} className="conflict-card">
-              <div className="hitl-head">
+              <div className="conflict-card-head">
                 <AlertIcon size={16} />
-                <span className="hitl-title">Mâu thuẫn dữ liệu</span>
-                <span className="data-row-meta" style={{ marginLeft: "auto" }}>
+                <span>Mâu thuẫn dữ liệu</span>
+                <span className="conflict-doc-meta" style={{ marginLeft: "auto", textTransform: "none" }}>
                   {new Date(c.created_at).toLocaleString("vi-VN")}
                 </span>
               </div>
 
-              <p style={{ color: "var(--text-h)", fontSize: 14.5, lineHeight: 1.6 }}>
+              <p style={{ color: "var(--text-1)", fontSize: "0.9375rem", lineHeight: 1.65 }}>
                 {c.description ?? `Tài liệu #${c.document_id_a} mâu thuẫn với tài liệu #${c.document_id_b}`}
               </p>
 
-              <div className="hitl-actions">
+              <div className="conflict-actions" style={{ marginTop: 16 }}>
                 <button onClick={() => resolve(c.id, c.document_id_a)} className="btn btn-sm btn-outline">
                   Giữ tài liệu #{c.document_id_a}
                 </button>

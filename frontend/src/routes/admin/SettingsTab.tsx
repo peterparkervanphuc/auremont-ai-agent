@@ -42,19 +42,21 @@ export function SettingsTab() {
       <h2 className="page-title">Cài đặt chung</h2>
       <p className="page-sub">Ngưỡng điểm Verifier tối thiểu — dưới ngưỡng, hệ thống báo "Không đủ thông tin".</p>
 
-      <div className="card" style={{ padding: 20, display: "flex", flexDirection: "column", gap: 18 }}>
-        <label style={{ display: "block" }}>
-          <div className="stat-label" style={{ marginBottom: 6 }}>Ngưỡng tin cậy — Sale</div>
+      <div className="card">
+        <label className="field" style={{ marginBottom: 0 }}>
+          Ngưỡng tin cậy — Sale
           <input
             type="number"
             step="0.01"
             min="0"
             max="1"
-            className="field"
             value={settings.verifier_threshold_sale}
-            onChange={(e) => setSettings({...settings, verifier_threshold_sale: Number(e.target.value) })}
+            onChange={(e) => setSettings({ ...settings, verifier_threshold_sale: Number(e.target.value) })}
           />
+          <span className="field-hint">Giá trị từ 0 đến 1 — dưới ngưỡng này AI sẽ từ chối trả lời.</span>
         </label>
+
+        <div style={{ height: 18 }} />
 
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={save} disabled={saving} className="btn btn-primary">

@@ -131,8 +131,8 @@ export function DocumentsTab() {
                   <select
                     value={doc.visibility}
                     onChange={(e) => setVisibility(doc.id, e.target.value as DocumentVisibility)}
-                    className="field"
-                    style={{ width: "auto", padding: "6px 10px", fontSize: 13 }}
+                    className="doc-visibility-select"
+                    aria-label="Phân quyền tài liệu"
                   >
                     <option value="internal">Nội bộ</option>
                     <option value="public">Public</option>

@@ -42,7 +42,7 @@ export function HitlCard({ message, onConfirmed }: HitlCardProps) {
       <div className="hitl-body">{message.content}</div>
 
       {message.citations && message.citations.length > 0 && (
-        <div className="hitl-citations">
+        <div className="hitl-sources">
           <span className="chat-citations-label">Tài liệu</span>
           {message.citations.map((c) => (
             <span key={`${c.document_id}-${c.page ?? 0}`} className="chat-citation">
@@ -61,7 +61,7 @@ export function HitlCard({ message, onConfirmed }: HitlCardProps) {
             {copied ? "Đã xác nhận & copy vào clipboard" : "Đã xác nhận"}
           </span>
         ) : (
-          <button onClick={confirm} disabled={confirming} className="btn hitl-confirm">
+          <button onClick={confirm} disabled={confirming} className="btn btn-primary" type="button">
             {confirming ? <LoaderIcon size={16} className="icon-spin" /> : <CopyIcon size={16} />}
             XÁC NHẬN &amp; COPY GỬI KHÁCH
           </button>

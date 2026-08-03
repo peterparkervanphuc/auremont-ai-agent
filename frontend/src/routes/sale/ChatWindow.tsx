@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type { MessageResponse } from "../../types";
 import { HitlCard } from "./HitlCard";
-import { BotIcon, DocumentIcon, LoaderIcon, SendIcon, SparkleIcon, UserIcon } from "../../components/Icons";
+import { BotIcon, DocumentIcon, LoaderIcon, SendIcon, SparkleIcon, TrashIcon, UserIcon } from "../../components/Icons";
 import { FeedbackButtons } from "../../components/FeedbackButtons";
 
 function formatTime(iso: string): string {
@@ -11,8 +11,13 @@ function formatTime(iso: string): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
 }
 
+interface Props {
+  /** Gọi lại khi danh sách phiên có thể đã đổi (ví dụ sau khi xoá lịch sử). */
+  onSessionsChange?: () => void;
+}
+
 // Agent Pipeline: text input -> câu trả lời + trích nguồn, hoặc Thẻ HITL.
-export function ChatWindow() {
+export function ChatWindow({ onSessionsChange }: Props = {}) {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [messages, setMessages] = useState<MessageResponse[]>([]);
   const [input, setInput] = useState("");
@@ -73,6 +78,13 @@ export function ChatWindow() {
     }
   };
 
+  const clearChat = async () => {
+    if (!sessionId) return;
+    await api.delete(`/sale/sessions/${sessionId}/messages`).catch(() => {});
+    setMessages([]);
+    onSessionsChange?.();
+  };
+
   const ready = Boolean(input.trim()) && !loading;
 
   return (
@@ -90,6 +102,11 @@ export function ChatWindow() {
             </div>
           </div>
         </div>
+
+        <button className="chat-clear-btn" onClick={clearChat} type="button">
+          <TrashIcon size={15} />
+          Xóa chat
+        </button>
       </header>
 
       <div className="chat-messages" ref={scrollRef}>
@@ -99,7 +116,7 @@ export function ChatWindow() {
               <div className="chat-empty-icon">
                 <SparkleIcon size={26} />
               </div>
-              <h2 className="chat-empty-title">Bắt đầu phiên tư vấn</h2>
+              <h2 className="chat-empty-title">SalesMate có thể giúp gì?</h2>
               <p className="chat-empty-text">
                 Hỏi về bảng giá, mặt bằng, chính sách bán hàng hoặc tồn kho căn.
                 <br />
