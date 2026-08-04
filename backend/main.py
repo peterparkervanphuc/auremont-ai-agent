@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.core.config import get_settings
+from backend.core.enums import UserRole
 
 # Import model để chúng được đăng ký vào Base.metadata (quan hệ ORM + Alembic autogenerate).
 from backend.models import (  # noqa: F401
