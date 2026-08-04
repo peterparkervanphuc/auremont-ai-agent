@@ -12,6 +12,7 @@ If the POST fails, the pending file is restored so nothing is lost.
 import json
 import os
 import shutil
+import ssl
 import sys
 import time
 import urllib.request
@@ -62,6 +63,26 @@ ARCHIVE_DIR = LOG_DIR / "archive"
 # If the local file has more than this, we submit the oldest BATCH_LIMIT
 # and leave the rest for the next push.
 BATCH_LIMIT = 500
+
+
+def ssl_context() -> ssl.SSLContext:
+    """Use a trusted CA bundle when Git's Python has no default bundle."""
+    candidates = [Path(os.environ["AI_LOG_CA_FILE"])] if os.environ.get("AI_LOG_CA_FILE") else []
+    try:
+        import certifi
+
+        candidates.append(Path(certifi.where()))
+    except ImportError:
+        pass
+    candidates.extend((
+        Path("/etc/ssl/certs/ca-certificates.crt"),
+        Path("/etc/ssl/cert.pem"),
+        Path("C:/msys64/usr/ssl/certs/ca-bundle.crt"),
+    ))
+    for ca_file in candidates:
+        if ca_file.is_file():
+            return ssl.create_default_context(cafile=str(ca_file))
+    return ssl.create_default_context()
 
 
 def _archive(pending: Path) -> None:
@@ -146,7 +167,7 @@ def main():
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10, context=ssl_context()) as resp:
             print(f"[ai-log] Submitted {len(entries)} entries → {resp.status}", file=sys.stderr)
     except urllib.error.URLError as e:
         # Failure: restore the whole pending (including leftover) for next push.
