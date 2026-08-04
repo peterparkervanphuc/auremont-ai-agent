@@ -47,17 +47,22 @@ def redact(text: str) -> str:
     return text
 
 
-def logged_ids(log_file: Path) -> set[str]:
+def logged_ids(log_dir: Path) -> set[str]:
     result: set[str] = set()
-    if not log_file.exists():
-        return result
-    for line in log_file.read_text(encoding="utf-8-sig").splitlines():
-        try:
-            entry = json.loads(line)
-            if entry.get("entry_id"):
-                result.add(entry["entry_id"])
-        except json.JSONDecodeError:
+    files = [log_dir / "session.jsonl"]
+    archive_dir = log_dir / "archive"
+    if archive_dir.is_dir():
+        files.extend(archive_dir.glob("*.jsonl"))
+    for log_file in files:
+        if not log_file.exists():
             continue
+        for line in log_file.read_text(encoding="utf-8-sig").splitlines():
+            try:
+                entry = json.loads(line)
+                if entry.get("entry_id"):
+                    result.add(entry["entry_id"])
+            except json.JSONDecodeError:
+                continue
     return result
 
 
@@ -129,7 +134,7 @@ def main() -> None:
     log_dir = Path(os.environ.get("AI_LOG_DIR", ".ai-log"))
     log_dir.mkdir(exist_ok=True)
     log_file = log_dir / "session.jsonl"
-    seen = logged_ids(log_file)
+    seen = logged_ids(log_dir)
     cutoff = None if args.all else datetime.now(timezone.utc) - timedelta(hours=args.hours)
     repo_root = str(Path.cwd())
     repo = git("git remote get-url origin").split("/")[-1].removesuffix(".git") or Path.cwd().name
