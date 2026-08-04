@@ -1,5 +1,6 @@
 ﻿from contextlib import asynccontextmanager
 
+from backend.core.enums import UserRole
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -28,6 +29,50 @@ from backend.routers import (
     users,
 )
 
+# Tài khoản dùng chung cho cả team — khớp với gợi ý hiển thị ở màn hình đăng nhập
+# (frontend/src/routes/sale/Login.tsx). Seed lại mỗi lần khởi động nên máy nào
+# clone repo về rồi `docker compose up` cũng đăng nhập được ngay, không cần ai
+# phải chia sẻ database hay chạy script tạo user thủ công.
+#
+# Email phải qua được EmailStr của UserResponse — tên miền .local/.test bị
+# email-validator từ chối, seed vẫn tạo được user nhưng /auth/login sẽ nổ 500
+# lúc serialize response.
+SEED_USERS = [
+    {
+        "username": "sale_test",
+        "email": "sale_test@salesmate.example.com",
+        "password": "pass1234",
+        "role": UserRole.SALE,
+    },
+    {
+        "username": "admin_test",
+        "email": "admin_test@salesmate.example.com",
+        "password": "pass1234",
+        "role": UserRole.ADMIN,
+    },
+]
+
+
+def _seed_users() -> None:
+    from backend.core.mysql_client import SessionLocal
+    from backend.repositories.user import ensure_seed_user
+
+    if SessionLocal is None:
+        return
+
+    db = SessionLocal()
+    try:
+        for seed in SEED_USERS:
+            ensure_seed_user(db, **seed)
+        print(f"Seeded {len(SEED_USERS)} test accounts: {', '.join(s['username'] for s in SEED_USERS)}")
+    except Exception as exc:  # pragma: no cover - seed hỏng không được chặn app khởi động
+        # Bảng `users` có thể chưa tồn tại nếu migration chưa chạy xong. Đây là
+        # tiện ích cho dev, không phải điều kiện sống còn của service, nên chỉ log.
+        db.rollback()
+        print(f"Seeding test accounts failed, skipping: {exc}")
+    finally:
+        db.close()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,6 +81,7 @@ async def lifespan(app: FastAPI):
     # Schema do Alembic quản lý (`alembic upgrade head`), không dùng create_all:
     # create_all chỉ tạo bảng còn thiếu, không bao giờ ALTER bảng đã tồn tại, nên
     # cột thêm sau sẽ âm thầm vắng mặt cho tới khi có query nổ lỗi lúc chạy.
+    _seed_users()
     yield
     print("Shutting down...")
 

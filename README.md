@@ -261,6 +261,23 @@ mypy backend/
 
 ---
 
+#### 6.7. Tài khoản thử nghiệm
+
+Backend tự seed 2 tài khoản mỗi lần khởi động (`SEED_USERS` trong
+`backend/main.py`), nên máy nào clone repo về rồi `docker compose up` cũng đăng
+nhập được ngay — không cần chia sẻ database giữa các máy hay chạy script tạo
+user thủ công.
+
+| Tài khoản | Mật khẩu | Role |
+| :--- | :--- | :--- |
+| `sale_test` | `pass1234` | SALE |
+| `admin_test` | `pass1234` | ADMIN |
+
+Seed là **idempotent**: tài khoản đã tồn tại thì được đặt lại mật khẩu/role/trạng
+thái active về đúng bảng trên. Muốn thêm tài khoản dùng chung thì bổ sung vào
+`SEED_USERS` — email phải là tên miền hợp lệ với `EmailStr` (tránh `.local`,
+`.test`), nếu không `/auth/login` sẽ lỗi 500 lúc serialize response.
+
 ### 7. Ứng dụng Công nghệ (Tech Stack)
 
 * **AI Logic**: Gemini 2.5 Flash

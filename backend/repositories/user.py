@@ -25,3 +25,23 @@ def create_user(db: Session, username: str, email: str, password: str, role: str
     db.commit()
     db.refresh(user)
     return user
+
+
+def ensure_seed_user(db: Session, username: str, email: str, password: str, role: str) -> User:
+    """Tạo tài khoản seed nếu chưa có, hoặc đưa tài khoản sẵn có về đúng trạng thái chuẩn.
+
+    Idempotent để mỗi lần khởi động backend đều cho ra cùng một kết quả: máy nào
+    clone repo về cũng đăng nhập được bằng cùng bộ tài khoản, kể cả khi ai đó đã
+    lỡ đổi mật khẩu hoặc khoá tài khoản đó trên DB dùng chung.
+    """
+    user = get_user_by_username(db, username)
+    if user is None:
+        return create_user(db, username=username, email=email, password=password, role=role)
+
+    user.email = email
+    user.hashed_password = hash_password(password)
+    user.role = role
+    user.is_active = True
+    db.commit()
+    db.refresh(user)
+    return user

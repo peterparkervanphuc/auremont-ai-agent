@@ -26,3 +26,71 @@ def generate_text(prompt: str, system_instruction: str | None = None) -> str:
     )
     return response.text or ""
 
+
+class GeminiEmbeddingError(RuntimeError):
+    """Gemini không trả embedding hợp lệ."""
+
+
+def embed_documents(texts: list[str], *, title: str) -> list[list[float]]:
+    """Embed các chunk tài liệu để lưu Qdrant.
+
+    Dùng RETRIEVAL_DOCUMENT vì đây là vector của dữ liệu nguồn,
+    không phải câu hỏi tìm kiếm.
+    """
+    return _embed(
+        texts,
+        task_type="RETRIEVAL_DOCUMENT",
+        title=title,
+    )
+
+
+def embed_query(query: str) -> list[float]:
+    """Embed câu hỏi khi retrieval từ Qdrant ở giai đoạn sau."""
+    vectors = _embed(
+        [query],
+        task_type="RETRIEVAL_QUERY",
+        title=None,
+    )
+    return vectors[0]
+
+
+def _embed(
+    texts: list[str],
+    *,
+    task_type: str,
+    title: str | None,
+) -> list[list[float]]:
+    if not texts:
+        return []
+
+    config_kwargs: dict = {
+        "task_type": task_type,
+        "output_dimensionality": settings.embedding_dimensions,
+    }
+
+    # title giúp embedding tài liệu retrieval tốt hơn.
+    if title:
+        config_kwargs["title"] = title
+
+    try:
+        response = get_gemini_client().models.embed_content(
+            model=settings.embedding_model,
+            contents=texts,
+            config=types.EmbedContentConfig(**config_kwargs),
+        )
+    except Exception as exc:
+        raise GeminiEmbeddingError("Gemini embedding request failed.") from exc
+
+    vectors = [embedding.values for embedding in response.embeddings]
+
+    if len(vectors) != len(texts):
+        raise GeminiEmbeddingError(
+            "Gemini returned a different number of embeddings than inputs."
+        )
+
+    if any(len(vector) != settings.embedding_dimensions for vector in vectors):
+        raise GeminiEmbeddingError(
+            "Gemini returned an embedding with an unexpected dimension."
+        )
+
+    return vectors
