@@ -33,3 +33,7 @@ pytest>=8.0.0
 pytest-asyncio>=0.24.0
 httpx>=0.28.0
 mypy>=1.13.0
+
+# Handle docx and pdf
+PyMuPDF>=1.24
+python-docx>=1.1

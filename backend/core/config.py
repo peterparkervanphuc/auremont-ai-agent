@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     inventory_api_url: str = ""
     inventory_api_key: str = ""
 
+    # Model embedding
+    embedding_model: str = "gemini-embedding-001"
+    embedding_dimensions: int = 768
+    upload_max_bytes: int = 20 * 1024 * 1024
 
 
 @lru_cache

@@ -1,5 +1,6 @@
 ﻿from contextlib import asynccontextmanager
 
+from backend.core.enums import UserRole
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

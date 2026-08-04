@@ -1,36 +1,51 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
-import type { DocumentResponse, DocumentVisibility } from "../../types";
-import { InboxIcon, LoaderIcon, TrashIcon, UploadIcon } from "../../components/Icons";
+import type {
+  DocumentResponse,
+  DocumentVisibility,
+} from "../../types";
+import {
+  InboxIcon,
+  LoaderIcon,
+  TrashIcon,
+  UploadIcon,
+} from "../../components/Icons";
 
-const STATUS_LABEL: Record<string, { text: string; badge: string }> = {
+const STATUS_LABEL: Record<
+  string,
+  { text: string; badge: string }
+> = {
   pending: { text: "Đang chờ", badge: "badge-warning" },
-  processing: { text: "Đang xử lý & quét mã độc", badge: "badge-info" },
-  completed: { text: "Upload & Vector hóa thành công", badge: "badge-success" },
+  processing: {
+    text: "Đang xử lý & quét mã độc",
+    badge: "badge-info",
+  },
+  completed: {
+    text: "Upload & Vector hóa thành công",
+    badge: "badge-success",
+  },
   failed: { text: "Thất bại", badge: "badge-danger" },
-  blocked: { text: "Đã chặn — nội dung bất thường", badge: "badge-danger" },
+  blocked: {
+    text: "Đã chặn — nội dung bất thường",
+    badge: "badge-danger",
+  },
 };
 
-// Backend /documents/ingest hiện nhận raw_text. Đọc PDF/Excel bằng readAsText
-// chỉ ra chuỗi nhị phân vô nghĩa, nên chặn sớm và báo rõ cho Admin thay vì
-// đẩy rác vào pipeline vector hoá.
-const TEXT_EXTENSIONS = [".txt", ".md", ".csv"];
+const ALLOWED_EXTENSIONS = [".pdf", ".docx"];
 
-function isTextFile(file: File): boolean {
-  const name = file.name.toLowerCase();
-  return TEXT_EXTENSIONS.some((ext) => name.endsWith(ext));
+interface UploadResponse {
+  document_id: number;
+  status: string;
+  message: string;
 }
 
-function readFileAsText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(file);
-  });
+function isSupportedFile(file: File): boolean {
+  const filename = file.name.toLowerCase();
+  return ALLOWED_EXTENSIONS.some((extension) =>
+    filename.endsWith(extension),
+  );
 }
 
-// kéo-thả file, quét mã độc, gán nhãn RBAC, danh sách, xoá.
 export function DocumentsTab() {
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -39,7 +54,10 @@ export function DocumentsTab() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadDocuments = useCallback(() => {
-    api.get<DocumentResponse[]>("/documents").then(setDocuments).catch(() => setDocuments([]));
+    api
+      .get<DocumentResponse[]>("/documents")
+      .then(setDocuments)
+      .catch(() => setDocuments([]));
   }, []);
 
   useEffect(() => {
@@ -47,75 +65,122 @@ export function DocumentsTab() {
   }, [loadDocuments]);
 
   const uploadFile = async (file: File) => {
-    if (!isTextFile(file)) {
+    if (!isSupportedFile(file)) {
       setError(
-        `Chưa hỗ trợ trích xuất nội dung từ "${file.name}". Hiện tại chỉ nhận .txt/.md/.csv — ` +
-          "pipeline đọc PDF/Excel đang được hoàn thiện.",
+        `Không hỗ trợ "${file.name}". Chỉ nhận file PDF hoặc DOCX.`,
       );
       return;
     }
 
     setUploading(true);
     setError(null);
+
     try {
-      const raw_text = await readFileAsText(file);
-      await api.post("/documents/ingest", { title: file.name, raw_text });
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("visibility", "internal");
+
+      const result = await api.postForm<UploadResponse>(
+        "/documents/upload",
+        formData,
+      );
+
       loadDocuments();
+
+      if (result.status !== "completed") {
+        setError(result.message);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload thất bại — phát hiện nội dung bất thường, chặn file");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Upload tài liệu thất bại.",
+      );
     } finally {
       setUploading(false);
     }
   };
 
   const handleFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    uploadFile(files[0]);
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    void uploadFile(files[0]);
   };
 
-  const setVisibility = async (documentId: number, visibility: DocumentVisibility) => {
-    const updated = await api.patch<DocumentResponse>(`/documents/${documentId}/visibility`, { visibility });
-    setDocuments((prev) => prev.map((d) => (d.id === documentId ? updated : d)));
+  const setVisibility = async (
+    documentId: number,
+    visibility: DocumentVisibility,
+  ) => {
+    const updated = await api.patch<DocumentResponse>(
+      `/documents/${documentId}/visibility`,
+      { visibility },
+    );
+
+    setDocuments((previous) =>
+      previous.map((document) =>
+        document.id === documentId ? updated : document,
+      ),
+    );
   };
 
   const removeDocument = async (documentId: number) => {
     await api.delete(`/documents/${documentId}`);
-    setDocuments((prev) => prev.filter((d) => d.id !== documentId));
+
+    setDocuments((previous) =>
+      previous.filter((document) => document.id !== documentId),
+    );
   };
 
   return (
     <div className="page">
       <h2 className="page-title">Kho Tài liệu</h2>
-      <p className="page-sub">Tải lên và quản lý tài liệu dự án cho pipeline RAG.</p>
+      <p className="page-sub">
+        Tải PDF/DOCX để parse, vector hóa và đưa vào kho tri thức RAG.
+      </p>
 
       <div
-        onDragOver={(e) => {
-          e.preventDefault();
+        className={`upload-zone ${
+          dragActive ? "upload-zone--active" : ""
+        }`}
+        onDragOver={(event) => {
+          event.preventDefault();
           setDragActive(true);
         }}
         onDragLeave={() => setDragActive(false)}
-        onDrop={(e) => {
-          e.preventDefault();
+        onDrop={(event) => {
+          event.preventDefault();
           setDragActive(false);
-          handleFiles(e.dataTransfer.files);
+          handleFiles(event.dataTransfer.files);
         }}
         onClick={() => fileInputRef.current?.click()}
-        className={`upload-zone ${dragActive ? "upload-zone--active" : ""}`}
       >
         <input
           ref={fileInputRef}
           type="file"
-          accept=".txt,.md,.csv"
-          onChange={(e) => handleFiles(e.target.files)}
+          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          onChange={(event) => handleFiles(event.target.files)}
           style={{ display: "none" }}
         />
+
         <div className="upload-zone-icon">
-          {uploading ? <LoaderIcon size={24} className="icon-spin" /> : <UploadIcon size={24} />}
+          {uploading ? (
+            <LoaderIcon size={24} className="icon-spin" />
+          ) : (
+            <UploadIcon size={24} />
+          )}
         </div>
+
         <p className="upload-zone-title">
-          {uploading ? "Đang xử lý & quét mã độc..." : "Kéo thả tài liệu vào đây"}
+          {uploading
+            ? "Đang parse, quét nội dung và vector hóa..."
+            : "Kéo thả tài liệu vào đây"}
         </p>
-        <p className="upload-zone-hint">hoặc bấm để chọn từ máy tính · hiện hỗ trợ .txt, .md, .csv</p>
+
+        <p className="upload-zone-hint">
+          hoặc bấm để chọn từ máy tính · hỗ trợ PDF và DOCX
+        </p>
       </div>
 
       {error && (
@@ -126,6 +191,7 @@ export function DocumentsTab() {
 
       <div style={{ marginTop: 32 }}>
         <h3 className="section-title">Danh sách tài liệu</h3>
+
         {documents.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">
@@ -135,30 +201,53 @@ export function DocumentsTab() {
           </div>
         ) : (
           <div className="data-list">
-            {documents.map((doc) => {
-              const status = STATUS_LABEL[doc.status] ?? { text: doc.status, badge: "badge-muted" };
+            {documents.map((document) => {
+              const displayStatus =
+                STATUS_LABEL[document.status] ?? {
+                  text: document.status,
+                  badge: "badge-muted",
+                };
+
               return (
-                <div key={doc.id} className="data-row">
+                <div key={document.id} className="data-row">
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="data-row-title">{doc.title}</div>
-                    <div className="data-row-meta">{new Date(doc.created_at).toLocaleString("vi-VN")}</div>
+                    <div className="data-row-title">
+                      {document.title}
+                    </div>
+                    <div className="data-row-meta">
+                      {new Date(
+                        document.created_at,
+                      ).toLocaleString("vi-VN")}
+                    </div>
                   </div>
 
-                  <span className={`badge ${status.badge}`}>{status.text}</span>
+                  <span className={`badge ${displayStatus.badge}`}>
+                    {displayStatus.text}
+                  </span>
 
                   <select
-                    value={doc.visibility}
-                    onChange={(e) => setVisibility(doc.id, e.target.value as DocumentVisibility)}
                     className="doc-visibility-select"
+                    value={document.visibility}
                     aria-label="Phân quyền tài liệu"
+                    onChange={(event) =>
+                      void setVisibility(
+                        document.id,
+                        event.target.value as DocumentVisibility,
+                      )
+                    }
                   >
                     <option value="internal">Nội bộ</option>
                     <option value="public">Public</option>
                   </select>
 
-                  <button onClick={() => removeDocument(doc.id)} className="btn btn-sm btn-danger" aria-label="Xoá">
+                  <button
+                    className="btn btn-sm btn-danger"
+                    type="button"
+                    aria-label="Xóa"
+                    onClick={() => void removeDocument(document.id)}
+                  >
                     <TrashIcon size={14} />
-                    Xoá
+                    Xóa
                   </button>
                 </div>
               );
