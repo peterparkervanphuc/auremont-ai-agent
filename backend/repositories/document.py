@@ -1,4 +1,4 @@
-﻿from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session
 
 from backend.core.enums import DocumentStatus
 from backend.models.document import Document
@@ -26,6 +26,29 @@ def list_documents(db: Session) -> list[Document]:
 
 def get_document(db: Session, doc_id: int) -> Document | None:
     return db.query(Document).filter(Document.id == doc_id).first()
+
+
+def list_completed_siblings(db: Session, project_id: str | None, exclude_id: int) -> list[Document]:
+    """Other successfully ingested documents of the same project.
+
+    Used by conflict detection to find an older document the new upload may
+    contradict. Documents with no project are skipped entirely: without a project
+    there is no meaningful "same project" to compare against, and flagging every
+    unassigned document against every other would bury Admins in noise.
+    """
+    if not project_id:
+        return []
+
+    return (
+        db.query(Document)
+        .filter(
+            Document.project_id == project_id,
+            Document.id != exclude_id,
+            Document.status == DocumentStatus.COMPLETED,
+        )
+        .order_by(Document.created_at.desc())
+        .all()
+    )
 
 
 def delete_document(db: Session, doc_id: int) -> None:

@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/client";
-import type { ChatSessionResponse } from "../../types";
+import type { ChatSessionResponse, ProjectResponse } from "../../types";
 import { ChatIcon, PlusIcon, TrashIcon } from "../../components/Icons";
 
 function formatDate(iso: string): string {
@@ -20,11 +21,30 @@ interface Props {
 export function SessionList({ sessions, loading, onChange }: Props) {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
+  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  const [picking, setPicking] = useState(false);
 
-  const createSession = async () => {
-    const session = await api.post<ChatSessionResponse>("/sale/sessions", {});
+  useEffect(() => {
+    api.get<ProjectResponse[]>("/projects").then(setProjects).catch(() => setProjects([]));
+  }, []);
+
+  // A session must carry a project_id: without it the agent cannot query real-time
+  // inventory. So the "+" button opens the project picker instead of creating a
+  // session straight away.
+  const createSession = async (projectId: string) => {
+    const session = await api.post<ChatSessionResponse>("/sale/sessions", { project_id: projectId });
+    setPicking(false);
     onChange([session, ...sessions]);
     navigate(`/chat/sessions/${session.id}`);
+  };
+
+  const startNewSession = () => {
+    if (projects.length === 1) {
+      // Only one project to choose from — skip the picker.
+      void createSession(projects[0].id);
+      return;
+    }
+    setPicking(true);
   };
 
   const removeSession = async (e: React.MouseEvent, id: number) => {
@@ -42,11 +62,41 @@ export function SessionList({ sessions, loading, onChange }: Props) {
           <ChatIcon size={18} />
           Đoạn chat
         </div>
-        <button onClick={createSession} className="chat-new-btn" type="button">
+        <button
+          onClick={startNewSession}
+          className="chat-new-btn"
+          type="button"
+          disabled={projects.length === 0}
+          title={projects.length === 0 ? "Chưa có dữ liệu dự án" : undefined}
+        >
           <PlusIcon size={17} />
           Phiên khách hàng mới
         </button>
       </div>
+
+      {/* README §5.2a — no project data means Sale cannot consult anything yet. */}
+      {projects.length === 0 && !loading && (
+        <p className="chat-conv-empty">Chưa có dữ liệu dự án, vui lòng báo Admin cập nhật.</p>
+      )}
+
+      {picking && (
+        <div className="chat-project-picker">
+          <p className="chat-project-picker-label">Chọn dự án tư vấn</p>
+          {projects.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="chat-project-option"
+              onClick={() => void createSession(p.id)}
+            >
+              {p.name}
+            </button>
+          ))}
+          <button type="button" className="chat-project-cancel" onClick={() => setPicking(false)}>
+            Huỷ
+          </button>
+        </div>
+      )}
 
       <div className="chat-conv-list">
         {loading ? (

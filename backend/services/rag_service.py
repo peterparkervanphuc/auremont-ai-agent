@@ -1,12 +1,12 @@
-"""Retrieval trên Qdrant, lọc theo nhãn RBAC của tài liệu.
+"""Retrieval over Qdrant, filtered by each document's RBAC label.
 
-Đây là chữ R trong RAG: tìm vài đoạn tài liệu liên quan nhất tới câu hỏi để làm căn cứ
-cho bước Generate, thay vì nhét cả kho tài liệu vào prompt.
+This is the R in RAG: find the handful of document passages most relevant to the question
+to ground the Generate step, instead of stuffing the whole corpus into the prompt.
 
-Chỉ phục vụ dữ liệu **tĩnh** đã ingest (bảng giá, chính sách, tiện ích). Tồn kho căn đổi
-liên tục nên không ingest vào Qdrant — câu hỏi cần Bảng hàng real-time phải đi nhánh
-`inventory_service.lookup_inventory()`. Việc phân luồng đó thuộc về `agent_pipeline`,
-không phải hàm này.
+Serves **static** ingested data only (price lists, policies, amenities). Unit inventory
+changes constantly and is therefore never ingested into Qdrant — questions needing the
+real-time inventory table must go through `inventory_service.lookup_inventory()`. Routing
+between the two belongs to `agent_pipeline`, not to this module.
 """
 
 import re
@@ -18,32 +18,33 @@ from backend.core.enums import DocumentVisibility
 from backend.core.gemini_client import GeminiEmbeddingError, embed_query
 from backend.core.qdrant_client import get_qdrant_client
 
-# Lấy dư kết quả từ Qdrant rồi mới re-rank và cắt về top_k. Vector search nhanh nhưng
-# thô; xếp lại trên một tập rộng hơn thì đoạn đúng mới có cơ hội trồi lên.
+# Over-fetch from Qdrant, then re-rank and trim back to top_k. Vector search is fast but
+# coarse; re-ranking a wider set gives the genuinely right passage a chance to surface.
 OVERFETCH_FACTOR = 4
 
-# Trọng số của tín hiệu từ khoá khi re-rank. Để thấp vì điểm vector vẫn là chính.
+# Weight of the keyword signal during re-ranking. Kept low because the vector score
+# remains the primary signal.
 IDENTIFIER_WEIGHT = 0.2
 
 _TOKEN_PATTERN = re.compile(r"\w+", re.UNICODE)
 
 
 class RetrievalError(RuntimeError):
-    """Không embed được câu hỏi hoặc không truy vấn được Qdrant."""
+    """The query could not be embedded, or Qdrant could not be queried."""
 
 
 def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None = None, top_k: int = 5) -> list[dict]:
     """Return retrieved chunks: [{"document_id": int, "title": str, "content": str, "score": float}, ...].
 
-    `visibility` là **mức quyền của người hỏi**, không phải nhãn cần khớp chính xác:
-    INTERNAL (Sale/Admin) đọc được cả tài liệu nội bộ lẫn công khai, PUBLIC chỉ đọc được
-    tài liệu công khai. Khớp chính xác sẽ khiến Sale không bao giờ thấy tài liệu PUBLIC —
-    vô lý, vì đó chính là tài liệu họ được phép gửi cho khách.
+    `visibility` is **the asker's clearance level**, not a label to match exactly:
+    INTERNAL (Sale/Admin) can read both internal and public documents, PUBLIC can read
+    only public ones. Matching exactly would mean a Sale never sees PUBLIC documents —
+    absurd, since those are precisely the ones they are allowed to send to customers.
 
-    Trả về `[]` khi chưa có tài liệu nào được ingest (collection chưa tồn tại) — Sale sẽ
-    thấy Empty State "Chưa có dữ liệu dự án" chứ không phải một lỗi hệ thống.
+    Returns `[]` when nothing has been ingested yet (the collection does not exist) — the
+    Sale then sees the "Chưa có dữ liệu dự án" empty state rather than a system error.
 
-    Raise `RetrievalError` khi Qdrant hoặc Gemini thật sự hỏng.
+    Raises `RetrievalError` when Qdrant or Gemini genuinely fails.
     """
     if not query.strip() or top_k <= 0:
         return []
@@ -51,7 +52,7 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
     try:
         query_vector = embed_query(query)
     except GeminiEmbeddingError as exc:
-        raise RetrievalError("Không embed được câu hỏi.") from exc
+        raise RetrievalError("Could not embed the query.") from exc
 
     conditions: list[models.Condition] = [_visibility_condition(visibility)]
     if project_id:
@@ -59,8 +60,8 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
 
     client = get_qdrant_client()
     try:
-        # Chưa ai upload tài liệu thì collection chưa được tạo. Đây là trạng thái bình
-        # thường lúc mới deploy, không phải sự cố.
+        # If nobody has uploaded a document yet the collection does not exist. That is a
+        # normal state right after deployment, not a fault.
         if not client.collection_exists(settings.qdrant_collection):
             return []
 
@@ -72,7 +73,7 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
             with_payload=True,
         )
     except Exception as exc:
-        raise RetrievalError("Không truy vấn được Qdrant.") from exc
+        raise RetrievalError("Could not query Qdrant.") from exc
 
     hits = []
     for point in response.points:
@@ -85,10 +86,10 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
                 "document_id": payload.get("document_id"),
                 "title": payload.get("title") or "",
                 "content": content,
-                # page đi kèm để bước Generate trích nguồn được tới số trang.
+                # page travels along so the Generate step can cite down to a page number.
                 "page": payload.get("page"),
-                # Cosine của Qdrant nằm trong [-1, 1]; đưa về [0, 1] cho dễ so với
-                # ngưỡng verifier_threshold_sale và dễ đọc trên Admin dashboard.
+                # Qdrant cosine lives in [-1, 1]; rescale to [0, 1] to compare easily
+                # against verifier_threshold_sale and to read well on the Admin dashboard.
                 "score": (point.score + 1.0) / 2.0,
             }
         )
@@ -97,10 +98,11 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
 
 
 def _visibility_condition(visibility: DocumentVisibility) -> models.Condition:
-    """Lớp RBAC thứ hai: chặn ở route thôi chưa đủ.
+    """The second RBAC layer: guarding the route alone is not enough.
 
-    Nếu không lọc ở đây, tài liệu INTERNAL vẫn lọt vào context và LLM sẽ đọc nội dung
-    nội bộ cho khách nghe, trong khi route vẫn "an toàn".
+    Without filtering here, INTERNAL documents would still reach the context and the LLM
+    would read internal content out to a customer, all while the route itself looked
+    perfectly "safe".
     """
     if visibility == DocumentVisibility.PUBLIC:
         allowed = [DocumentVisibility.PUBLIC.value]
@@ -111,20 +113,20 @@ def _visibility_condition(visibility: DocumentVisibility) -> models.Condition:
 
 
 def _identifiers(text: str) -> set[str]:
-    """Token có chứa chữ số: '2PN', 'OP3', '2024', 'Q1'.
+    """Tokens containing a digit: '2PN', 'OP3', '2024', 'Q1'.
 
-    Embedding rất giỏi bắt ngữ nghĩa nhưng lại làm nhoè đúng những mã này — '2PN' và
-    '3PN' gần như trùng vector dù là hai loại căn khác hẳn nhau. Đây là tín hiệu duy
-    nhất cần vớt lại bằng từ khoá.
+    Embeddings capture meaning well but blur exactly these codes — '2PN' and '3PN' sit
+    almost on top of each other in vector space despite being entirely different unit
+    types. This is the one signal worth rescuing with keyword matching.
     """
     return {token.lower() for token in _TOKEN_PATTERN.findall(text) if any(c.isdigit() for c in token)}
 
 
 def _rerank(query: str, hits: list[dict]) -> list[dict]:
-    """Xếp lại theo điểm vector, cộng thêm điểm cho đoạn khớp mã trong câu hỏi.
+    """Re-order by vector score, boosting passages that match codes from the question.
 
-    Cố tình giữ nhẹ và không thêm dependency. Muốn chất lượng cao hơn thì thay hàm này
-    bằng cross-encoder (sentence-transformers) hoặc Cohere Rerank — chữ ký giữ nguyên.
+    Deliberately lightweight and dependency-free. For higher quality, swap this function
+    for a cross-encoder (sentence-transformers) or Cohere Rerank — the signature stays.
     """
     wanted = _identifiers(query)
     if not wanted:

@@ -5,7 +5,7 @@ from backend.utils.time import utcnow
 
 
 class Message(Base):
-    """Một lượt trao đổi trong phiên tư vấn của Sale — câu hỏi của Sale hoặc câu trả lời của Agent."""
+    """One turn in a Sale's consultation session — either a Sale question or an Agent answer."""
 
     __tablename__ = "messages"
 

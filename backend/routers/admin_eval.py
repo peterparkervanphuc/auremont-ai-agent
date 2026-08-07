@@ -11,7 +11,7 @@ router = APIRouter(prefix="/admin/eval", tags=["Admin Eval"], dependencies=[Depe
 
 @router.get("/scores")
 async def get_eval_scores(db: Session = Depends(get_db)) -> dict:
-    """Dashboard DeepEval Faithfulness/Answer Relevancy + Top câu hỏi AI trả lời thất bại.
+    """DeepEval Faithfulness/Answer Relevancy dashboard + the top failed AI answers.
 
     TODO: read persisted DeepEval run results (see eval/results/) instead of returning None.
     """

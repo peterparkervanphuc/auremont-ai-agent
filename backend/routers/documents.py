@@ -41,7 +41,7 @@ ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".docx"}
 
 
 class IngestRequest(BaseModel):
-    """Legacy raw-text endpoint; giữ lại để không làm luồng cũ hỏng."""
+    """Legacy raw-text endpoint; kept so the older flow does not break."""
 
     title: str
     raw_text: str
@@ -124,14 +124,14 @@ async def upload_document(
             content_type=file.content_type,
         )
     except PromptInjectionError:
-        # ingestion_service đã đổi document sang BLOCKED.
+        # ingestion_service has already moved the document to BLOCKED.
         return IngestResponse(
             document_id=document.id,
             status=DocumentStatus.BLOCKED,
             message="Document blocked due to suspicious content.",
         )
     except DocumentIngestionError as exc:
-        # ingestion_service đã đổi document sang FAILED.
+        # ingestion_service has already moved the document to FAILED.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Document ingestion failed. Check server logs.",

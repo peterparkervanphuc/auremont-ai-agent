@@ -30,9 +30,9 @@ def list_feedback_for_message(db: Session, message_id: int) -> list[Feedback]:
 
 
 def list_top_failed(db: Session, limit: int = 10) -> list[tuple[int, int]]:
-    """(message_id, feedback_count) cho các câu trả lời bị báo sai/thiếu, nhiều nhất trước.
+    """(message_id, feedback_count) for answers reported wrong/incomplete, worst first.
 
-    Chỉ đếm WRONG/INCOMPLETE — HELPFUL không phải thất bại.
+    Counts only WRONG/INCOMPLETE — HELPFUL is not a failure.
     """
     rows = (
         db.query(Feedback.message_id, func.count(Feedback.id).label("total"))
@@ -46,9 +46,9 @@ def list_top_failed(db: Session, limit: int = 10) -> list[tuple[int, int]]:
 
 
 def get_question_for_answer(db: Session, answer_message_id: int) -> str | None:
-    """Câu hỏi đã sinh ra câu trả lời bị báo lỗi — tin nhắn của Sale ngay trước đó.
+    """The question that produced a reported answer — the Sale message immediately before it.
 
-    Admin cần thấy *câu hỏi*, không phải câu trả lời, để biết cần bổ sung tài liệu nào.
+    Admins need to see the *question*, not the answer, to know which documents to add.
     """
     answer = db.query(Message).filter(Message.id == answer_message_id).first()
     if answer is None:
@@ -65,5 +65,5 @@ def get_question_for_answer(db: Session, answer_message_id: int) -> str | None:
         .order_by(Message.created_at.desc(), Message.id.desc())
         .first()
     )
-    # Phiên chưa có câu hỏi nào đứng trước (dữ liệu lệch) -> lấy tạm nội dung câu trả lời.
+    # No preceding question in this session (inconsistent data) -> fall back to the answer text.
     return question.content if question is not None else answer.content

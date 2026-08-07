@@ -3,7 +3,6 @@ from dataclasses import dataclass
 
 from backend.services.parser_service import ParsedSection
 
-
 SECTION_BOUNDARY_RE = re.compile(
     r"\n\s*\n|(?=\n(?:[IVXLCDM]+|\d+)\.\s+)"
 )
@@ -11,7 +10,7 @@ SECTION_BOUNDARY_RE = re.compile(
 
 @dataclass(frozen=True)
 class DocumentChunk:
-    """Một đoạn văn bản sẵn sàng để embedding và lưu Qdrant."""
+    """A block of text ready to be embedded and stored in Qdrant."""
 
     index: int
     text: str
@@ -51,7 +50,7 @@ def chunk_sections(
     return chunks
 
 
-# Regex nhận diện thêm các cấp tiêu đề
+# Regexes recognising the additional heading levels
 ROMAN_HEADING_RE = re.compile(r"^[IVXLCDM]+\.\s+[^\n]+$")
 NUMBER_HEADING_RE = re.compile(r"^\d+\.\s+[^\n]+$")
 ALPHA_HEADING_RE = re.compile(r"^[a-z]\.\s+[^\n]+$", re.IGNORECASE)
@@ -62,7 +61,7 @@ def _split_text(
     chunk_chars: int,
     overlap_chars: int,
 ) -> list[str]:
-    """Tách text và quản lý Breadcrumb Ngữ cảnh 3 cấp (I. -> 1. -> a.)."""
+    """Split text while maintaining a 3-level context breadcrumb (I. -> 1. -> a.)."""
     if not text or not text.strip():
         return []
 
@@ -74,29 +73,29 @@ def _split_text(
 
     result: list[str] = []
     current = ""
-    
-    # Bộ lưu trữ ngữ cảnh 3 cấp
+
+    # Storage for the 3-level context
     roman_header = ""
     number_header = ""
     active_header = ""
 
     for block in blocks:
-        # Cấp 1: Mục La Mã (I., II.)
+        # Level 1: Roman numeral sections (I., II.)
         if ROMAN_HEADING_RE.match(block):
             if current:
                 result.append(current)
                 current = ""
             roman_header = block
-            number_header = ""  # Reset cấp nhỏ hơn khi sang Mục La Mã mới
+            number_header = ""  # Reset the lower level when entering a new Roman section
             continue
 
-        # Cấp 2: Mục số (1., 2.)
+        # Level 2: numbered sections (1., 2.)
         if NUMBER_HEADING_RE.match(block):
-            # Nếu block mục số quá ngắn (chỉ có tiêu đề), gán làm header cấp 2
+            # If the numbered block is very short (heading only), use it as the level-2 header
             lines = block.split("\n")
             number_header = lines[0]
 
-        # Tạo chuỗi Active Header đầy đủ dạng Breadcrumb
+        # Build the full active header as a breadcrumb
         headers = [h for h in (roman_header, number_header) if h]
         active_header = " > ".join(headers) if headers else ""
 
@@ -135,7 +134,7 @@ def _append_block(
     chunk_chars: int,
     overlap_chars: int,
 ) -> str:
-    """Thêm block vào chunk hiện tại; tự chia nhỏ khi cần."""
+    """Append a block to the current chunk, splitting it further when needed."""
     remaining = block.strip()
 
     while remaining:
@@ -150,7 +149,7 @@ def _append_block(
         separator = "\n\n" if current else ""
         available = chunk_chars - len(current) - len(separator)
 
-        # Chunk hiện tại đã kín: ghi nó rồi mở chunk mới.
+        # The current chunk is full: flush it and open a new one.
         if available <= 0:
             result.append(current)
             current = ""
@@ -159,7 +158,7 @@ def _append_block(
         piece, remaining = _take_prefix(remaining, available)
         current = f"{current}{separator}{piece}" if current else piece
 
-        # Còn text chưa đưa vào được thì đóng chunk hiện tại.
+        # Text still does not fit, so close the current chunk.
         if remaining:
             result.append(current)
             current = ""
@@ -174,10 +173,10 @@ def _start_chunk(
     chunk_chars: int,
     overlap_chars: int,
 ) -> str:
-    """Tạo chunk mới, lặp lại heading và overlap trong giới hạn cho phép."""
+    """Start a new chunk, repeating the heading and overlap within the allowed limit."""
     header = active_header.strip()
 
-    # Heading quá dài vẫn không được làm chunk vượt giới hạn.
+    # An over-long heading must still not push the chunk past its limit.
     if len(header) >= chunk_chars:
         return header[:chunk_chars]
 
@@ -191,7 +190,7 @@ def _start_chunk(
 
 
 def _take_prefix(text: str, limit: int) -> tuple[str, str]:
-    """Lấy phần đầu không quá limit, ưu tiên cắt ở newline hoặc khoảng trắng."""
+    """Take a prefix no longer than limit, preferring to cut at a newline or space."""
     if len(text) <= limit:
         return text, ""
 
@@ -199,14 +198,14 @@ def _take_prefix(text: str, limit: int) -> tuple[str, str]:
     space_boundary = text.rfind(" ", 0, limit + 1)
     boundary = max(newline_boundary, space_boundary)
 
-    # Một từ hoặc một dòng quá dài: bắt buộc cắt cứng để tránh vòng lặp vô hạn.
+    # A single over-long word or line: force a hard cut to avoid an infinite loop.
     if boundary <= 0:
         boundary = limit
 
     prefix = text[:boundary].strip()
     remainder = text[boundary:].strip()
 
-    # Phòng trường hợp boundary rơi vào whitespace đầu chuỗi.
+    # Guard against the boundary landing on leading whitespace.
     if not prefix:
         prefix = text[:limit].strip()
         remainder = text[limit:].strip()
@@ -215,7 +214,7 @@ def _take_prefix(text: str, limit: int) -> tuple[str, str]:
 
 
 def _tail(text: str, limit: int) -> str:
-    """Lấy phần cuối làm overlap, ưu tiên bắt đầu tại ranh giới từ."""
+    """Take a suffix to use as overlap, preferring to start at a word boundary."""
     if limit <= 0 or not text:
         return ""
 

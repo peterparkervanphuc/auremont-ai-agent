@@ -8,11 +8,11 @@ from backend.services.chunking_service import DocumentChunk
 
 
 class VectorStoreError(RuntimeError):
-    """Lỗi khởi tạo hoặc ghi vector vào Qdrant."""
+    """Failure while initialising the collection or writing vectors to Qdrant."""
 
 
 def ensure_collection() -> None:
-    """Tạo collection nếu chưa có; chặn dùng nhầm dimension nếu đã tồn tại."""
+    """Create the collection if absent; reject a dimension mismatch if it already exists."""
     client = get_qdrant_client()
     collection_name = settings.qdrant_collection
 
@@ -45,7 +45,7 @@ def index_document_chunks(
     chunks: list[DocumentChunk],
     vectors: list[list[float]],
 ) -> int:
-    """Ghi chunks và vector tương ứng vào Qdrant."""
+    """Write chunks and their corresponding vectors into Qdrant."""
     if len(chunks) != len(vectors):
         raise VectorStoreError(
             "Number of chunks must match number of embeddings."
@@ -66,7 +66,7 @@ def index_document_chunks(
 
     points = [
         models.PointStruct(
-            # Deterministic ID: cùng document/chunk index sẽ không sinh bản sao.
+            # Deterministic ID: the same document/chunk index never creates a duplicate.
             id=str(
                 uuid.uuid5(
                     uuid.NAMESPACE_URL,
@@ -100,7 +100,7 @@ def index_document_chunks(
 
 
 def delete_document_vectors(document_id: int) -> None:
-    """Xóa toàn bộ vector của một document; dùng khi xóa/re-index tài liệu."""
+    """Delete every vector belonging to a document; used when deleting or re-indexing it."""
     try:
         get_qdrant_client().delete(
             collection_name=settings.qdrant_collection,

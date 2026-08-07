@@ -33,11 +33,12 @@ class SaleAskRequest(BaseModel):
 
 
 def _owned_session(db: Session, session_id: int, user: User):
-    """Lấy phiên chat, 404 nếu không tồn tại hoặc không thuộc về người đang gọi.
+    """Fetch a chat session; 404 if it does not exist or does not belong to the caller.
 
-    Cả SALE và ADMIN đều chat được, nhưng mỗi người chỉ thấy phiên của chính
-    mình: phiên chứa lịch sử tư vấn theo từng khách, không được để người này
-    đọc/xoá phiên của người kia. Trả 404 thay vì 403 để không lộ id nào tồn tại.
+    Both SALE and ADMIN can chat, but each only sees their own sessions: a session
+    holds per-customer consultation history, so one user must never read or delete
+    another's. Returns 404 rather than 403 so the response does not reveal which
+    session ids exist.
     """
     session = get_session(db, session_id)
     if session is None or session.sale_id != user.id:
@@ -74,15 +75,12 @@ async def ask_in_session(
     db: Session = Depends(get_db),
     user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN)),
 ) -> MessageResponse:
-    """Agent Pipeline for the Sale flow — flags HITL when a price/commitment risk is detected.
-
-    TODO: replace with a real call once agent_pipeline.run_pipeline is implemented.
-    """
-    _owned_session(db, session_id, user)
+    """Agent Pipeline for the Sale flow — flags HITL when a price/commitment risk is detected."""
+    session = _owned_session(db, session_id, user)
 
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
 
-    result = agent_pipeline.run_pipeline(payload.content)
+    result = agent_pipeline.run_pipeline(payload.content, project_id=session.project_id)
     return create_message(
         db,
         session_id,
@@ -98,7 +96,7 @@ async def ask_in_session(
 async def clear_session_messages(
     session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))
 ) -> None:
-    """Xoá lịch sử chat nhưng giữ lại phiên — nút 'Xóa chat' trong ChatWindow."""
+    """Clear the chat history but keep the session — the 'Xóa chat' button in ChatWindow."""
     _owned_session(db, session_id, user)
     delete_messages_for_session(db, session_id)
 
@@ -107,7 +105,7 @@ async def clear_session_messages(
 async def remove_sale_session(
     session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))
 ) -> None:
-    """Xoá hẳn phiên tư vấn cùng toàn bộ tin nhắn — nút xoá trong SessionList."""
+    """Delete the consultation session and all its messages — the delete button in SessionList."""
     _owned_session(db, session_id, user)
     delete_messages_for_session(db, session_id)
     delete_session(db, session_id)
