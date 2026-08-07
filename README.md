@@ -125,7 +125,75 @@ cp frontend/.env.example frontend/.env
 
 > Windows PowerShell: dùng `Copy-Item .env.example .env` và `Copy-Item frontend/.env.example frontend/.env`.
 
-Sau đó mở `.env` và điền `GEMINI_API_KEY`, `SECRET_KEY`, `DATABASE_URL`...
+Sau đó mở `.env` và điền `GEMINI_API_KEY`, `SECRET_KEY`, `DATABASE_URL`, `INVENTORY_API_URL`...
+
+#### 6.2.1. Mock API tồn kho
+
+Tồn kho căn được tra **real-time qua HTTP**, không ingest vào Qdrant — số lượng căn
+thay đổi liên tục nên vector hoá là sẽ trả lời số cũ. Giai đoạn build dùng mock API
+dựng trên [mockapi.io](https://mockapi.io) theo đúng shape của API nội bộ sẽ dùng ở
+production, nên khi đổi sang API thật chỉ cần sửa biến môi trường, không phải sửa code.
+
+**Bước 1 — Tạo resource trên mockapi.io**
+
+Tạo project mới, thêm resource tên `units` với 5 field dưới đây (mockapi tự thêm `id`,
+`lookup_inventory` sẽ bỏ qua field lạ này):
+
+| Field | Kiểu | Ví dụ | Ghi chú |
+| :--- | :--- | :--- | :--- |
+| `unit_code` | string | `OP3-A-0203` | Mã căn |
+| `project_id` | string | `ocean-park-3` | Khớp `project_id` truyền vào khi tra cứu |
+| `unit_type` | string | `2PN` | `1PN`…`10PN`, `Penthouse`, `Studio`, `Shophouse`, `Duplex` |
+| `price` | number | `3600000000` | VND. Nhận cả chuỗi `"3600000000"` |
+| `status` | string | `available` | `available` / `reserved` / `sold` |
+
+Endpoint trả về một **JSON array**:
+
+```json
+[
+  { "unit_code": "OP3-A-0203", "project_id": "ocean-park-3",
+    "unit_type": "2PN", "price": 3600000000, "status": "available" }
+]
+```
+
+**Bước 2 — Trỏ `.env` vào endpoint**
+
+```bash
+INVENTORY_API_URL=https://<project-id>.mockapi.io/units
+INVENTORY_API_KEY=
+```
+
+> Tên biến phải đúng là `INVENTORY_API_URL`. `Settings` đặt `extra="ignore"`
+> (`backend/core/config.py`), nên gõ sai tên (vd. `INVENTORY_MOCK_API`) sẽ **không
+> báo lỗi** — biến bị bỏ qua im lặng và tra cứu luôn thất bại với thông báo
+> "INVENTORY_API_URL chưa được cấu hình".
+
+`INVENTORY_API_KEY` để trống với mockapi.io. Khi có giá trị, nó được gửi kèm dưới
+dạng header `Authorization: Bearer <key>` — dành cho API nội bộ ở production.
+
+**Bước 3 — Kiểm tra**
+
+```bash
+python -c "from backend.services.inventory_service import lookup_inventory; print(lookup_inventory('ocean-park-3', 'Còn căn 2PN nào trống không?'))"
+```
+
+Hoặc chạy unit test (không cần mạng, đã mock sẵn `httpx`):
+
+```bash
+pytest tests/test_services/test_inventory_service.py -v
+```
+
+**Cách hàm hoạt động** — `lookup_inventory(project_id, query)` trong
+`backend/services/inventory_service.py`:
+
+* Gửi `project_id` làm query param, timeout 5 giây.
+* Đọc loại căn ngay trong câu hỏi tự nhiên của Sale ("còn căn **2PN** không") và lọc
+  theo đó; không nhắc loại căn nào thì trả cả bảng hàng.
+* **Không còn căn khớp → trả về `[]`**, đây là câu trả lời hợp lệ ("hết căn 2PN").
+* **Không gọi được API → raise `InventoryApiError`**, để pipeline hiển thị
+  "Tạm thời không tra được tồn kho". Hai trường hợp này tách bạch: gộp lại sẽ báo lỗi
+  hệ thống trong khi thực chất chỉ là hết hàng.
+* Record thiếu field bắt buộc bị bỏ qua thay vì làm hỏng cả lần tra cứu.
 
 #### 6.3. Cách 1 — Chạy toàn bộ bằng Docker Compose (khuyến nghị)
 
@@ -323,4 +391,4 @@ thái active về đúng bảng trên. Muốn thêm tài khoản dùng chung th�
 | :--- | :--- |
 | **File PDF Chính sách bán hàng** | `market-files.vinhomes.vn` (public-mngt) — tra cứu Google: `site:vinhomes.vn "chính sách bán hàng" filetype:pdf` |
 | **Hình ảnh Mặt bằng (Floor Plans) & Tiện ích** | `rever.vn`; `batdongsan.com.vn` hoặc website chính thức của dự án (mục "Mặt bằng tổng thể") |
-| **API** | Mock API — `mockapi.io` |
+| **API** | Mock API tồn kho — `mockapi.io` (cách dựng: mục 6.2.1) |
