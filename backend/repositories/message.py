@@ -12,6 +12,8 @@ def create_message(
     citations: list[dict] | None = None,
     verifier_score: float | None = None,
     requires_hitl: bool = False,
+    faithfulness: float | None = None,
+    answer_relevancy: float | None = None,
 ) -> Message:
     message = Message(
         session_id=session_id,
@@ -20,6 +22,8 @@ def create_message(
         citations=citations,
         verifier_score=verifier_score,
         requires_hitl=requires_hitl,
+        faithfulness=faithfulness,
+        answer_relevancy=answer_relevancy,
     )
     db.add(message)
     db.commit()

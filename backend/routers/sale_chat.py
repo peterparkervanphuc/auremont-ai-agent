@@ -12,6 +12,7 @@ from backend.repositories.chat_session import (
     get_session,
     list_sessions_for_sale,
 )
+from backend.repositories.feedback import delete_feedback_for_session
 from backend.repositories.message import (
     create_message,
     delete_messages_for_session,
@@ -89,6 +90,8 @@ async def ask_in_session(
         citations=result.citations,
         verifier_score=result.verifier_score,
         requires_hitl=result.requires_hitl,
+        faithfulness=result.faithfulness,
+        answer_relevancy=result.answer_relevancy,
     )
 
 
@@ -98,6 +101,7 @@ async def clear_session_messages(
 ) -> None:
     """Clear the chat history but keep the session — the 'Xóa chat' button in ChatWindow."""
     _owned_session(db, session_id, user)
+    delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)
 
 
@@ -107,5 +111,6 @@ async def remove_sale_session(
 ) -> None:
     """Delete the consultation session and all its messages — the delete button in SessionList."""
     _owned_session(db, session_id, user)
+    delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)
     delete_session(db, session_id)

@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     # Gemini
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
 
     # CORS
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
