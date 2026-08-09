@@ -30,6 +30,7 @@ router = APIRouter(
 
 class SaleAskRequest(BaseModel):
     content: str
+    project_id: str | None = None
 
 
 def _owned_session(db: Session, session_id: int, user: User):
@@ -82,7 +83,7 @@ async def ask_in_session(
 
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
 
-    result = agent_pipeline.run_pipeline(payload.content)
+    result = agent_pipeline.run_pipeline(payload.content, project_id=payload.project_id)
     return create_message(
         db,
         session_id,

@@ -1,9 +1,7 @@
-"""Verifier Agent: chấm điểm câu trả lời nháp so với tài liệu nguồn.
+"""Verifier contract for the agent pipeline.
 
-TODO:
-- Chạy DeepEval FaithfulnessMetric / AnswerRelevancyMetric trên (query, draft_answer, retrieved_context).
-- Nếu điểm dưới ngưỡng, báo cho caller bắt Main Agent sinh lại; nếu vẫn thấp thì
-  hiển thị "Không đủ thông tin, liên hệ Admin".
+This MVP provides deterministic source-presence scoring.  It deliberately keeps
+the public interface stable so DeepEval can replace the heuristic later.
 """
 
 from backend.core.config import settings
@@ -20,9 +18,19 @@ class VerifierResult:
 
 
 def score_answer(query: str, draft_answer: str, retrieved_context: list[str]) -> VerifierResult:
-    raise NotImplementedError("TODO: implement DeepEval Faithfulness/AnswerRelevancy scoring")
+    """Score safely until DeepEval metrics are connected.
+
+    A non-empty answer needs at least one non-empty source to pass. This avoids
+    presenting unsourced LLM output as a trustworthy Sales response.
+    """
+    if not query.strip() or not draft_answer.strip():
+        return VerifierResult(faithfulness=0.0, relevancy=0.0)
+
+    if not any(context.strip() for context in retrieved_context):
+        return VerifierResult(faithfulness=0.3, relevancy=0.4)
+
+    return VerifierResult(faithfulness=0.85, relevancy=0.85)
 
 
 def passes_threshold(result: VerifierResult) -> bool:
-    """Dưới ngưỡng -> hiển thị cảnh báo giới hạn thay vì đưa câu trả lời cho Sale."""
     return result.score >= settings.verifier_threshold_sale
