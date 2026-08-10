@@ -154,6 +154,7 @@ async def upload_document(
 async def ingest_document(
     payload: IngestRequest,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
 ) -> IngestResponse:
     """Legacy raw-text ingest endpoint."""
     try:
@@ -171,6 +172,7 @@ async def ingest_document(
             file_path=payload.file_path,
             project_id=payload.project_id,
         ),
+        uploaded_by=admin.id,
     )
 
     return IngestResponse(

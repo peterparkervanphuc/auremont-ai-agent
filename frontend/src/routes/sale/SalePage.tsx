@@ -38,7 +38,7 @@ export function SalePage() {
                     <div className="chat-empty-icon">
                       <SparkleIcon size={26} />
                     </div>
-                    <h2 className="chat-empty-title">SalesMate có thể giúp gì?</h2>
+                    <h2 className="chat-empty-title">Auremont có thể giúp gì?</h2>
                     <p className="chat-empty-text">
                       Chào {username ?? "bạn"}, chọn một phiên tư vấn ở thanh bên hoặc tạo phiên khách hàng mới để bắt
                       đầu.

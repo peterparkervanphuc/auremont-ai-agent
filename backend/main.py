@@ -1,6 +1,5 @@
 ﻿from contextlib import asynccontextmanager
 
-from backend.core.enums import UserRole
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -22,10 +21,12 @@ from backend.routers import (
     admin_conflicts,
     admin_eval,
     admin_settings,
+    admin_stats,
     auth,
     documents,
     feedback,
     hitl,
+    projects,
     sale_chat,
     users,
 )
@@ -108,10 +109,12 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(sale_chat.router, prefix="/api/v1")
+app.include_router(projects.router, prefix="/api/v1")
 app.include_router(hitl.router, prefix="/api/v1")
 app.include_router(feedback.router, prefix="/api/v1")
 app.include_router(admin_eval.router, prefix="/api/v1")
 app.include_router(admin_conflicts.router, prefix="/api/v1")
+app.include_router(admin_stats.router, prefix="/api/v1")
 app.include_router(admin_settings.router, prefix="/api/v1")
 
 

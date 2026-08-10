@@ -34,6 +34,7 @@ export interface ChatSessionResponse {
   id: number;
   sale_id: number;
   title: string | null;
+  customer_name: string | null;
   created_at: string;
 }
 

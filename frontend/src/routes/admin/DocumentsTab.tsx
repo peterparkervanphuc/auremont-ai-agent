@@ -137,7 +137,7 @@ export function DocumentsTab() {
     <div className="page">
       <h2 className="page-title">Kho Tài liệu</h2>
       <p className="page-sub">
-        Tải PDF/DOCX để parse, vector hóa và đưa vào kho tri thức RAG.
+        Tải PDF/DOCX để hệ thống đọc hiểu và đưa vào kho tri thức, giúp AI trả lời khách chính xác hơn.
       </p>
 
       <div
@@ -174,7 +174,7 @@ export function DocumentsTab() {
 
         <p className="upload-zone-title">
           {uploading
-            ? "Đang parse, quét nội dung và vector hóa..."
+            ? "Đang xử lý và đưa vào kho tri thức..."
             : "Kéo thả tài liệu vào đây"}
         </p>
 

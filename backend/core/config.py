@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     minio_secret_key: str = "minioadmin"
     minio_secure: bool = False
     minio_bucket_documents: str = "salesmate-documents"
+    minio_bucket_project_images: str = "project-images"
 
     # Inventory API — tra cứu tồn kho real-time qua API nội bộ doanh nghiệp
     inventory_api_url: str = ""

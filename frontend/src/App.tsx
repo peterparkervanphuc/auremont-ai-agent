@@ -1,45 +1,71 @@
-import { useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
-import { AppSidebar } from "./components/AppSidebar";
+import { Route, Routes, useLocation } from "react-router-dom";
+import { TopNavbar } from "./components/TopNavbar";
+import { ChatWidget } from "./components/ChatWidget";
+import { Footer } from "./components/Footer";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { useAuth } from "./hooks/useAuth";
+import { Landing } from "./routes/Landing";
 import { Home } from "./routes/Home";
 import { Login } from "./routes/sale/Login";
 import { SalePage } from "./routes/sale/SalePage";
+import { InventoryPage } from "./routes/sale/InventoryPage";
+import { CategoryDetailPage } from "./routes/sale/CategoryDetailPage";
+import { AdminHome } from "./routes/admin/AdminHome";
 import { DocumentsTab } from "./routes/admin/DocumentsTab";
 import { EvalTab } from "./routes/admin/EvalTab";
 import { ConflictsTab } from "./routes/admin/ConflictsTab";
-import { ApiTestTab } from "./routes/admin/ApiTestTab";
 import { SettingsTab } from "./routes/admin/SettingsTab";
 import { NotFound } from "./routes/NotFound";
 
-/** Shell chung: sidebar bên trái + vùng nội dung, dùng cho cả SALE và ADMIN. */
-function AppShell() {
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sb-collapsed") === "true");
-  const [mobileOpen, setMobileOpen] = useState(false);
+/** Admin có bảng điều khiển riêng; Sale thấy trang chủ hướng chat tư vấn. */
+function HomeRoute() {
+  const { role } = useAuth();
+  return role === "admin" ? <AdminHome /> : <Home />;
+}
 
-  const toggleCollapse = () => {
-    setCollapsed((v) => {
-      const next = !v;
-      localStorage.setItem("sb-collapsed", String(next));
-      return next;
-    });
-  };
+/** Shell chung: thanh menu ngang trên đầu + vùng nội dung, dùng cho cả SALE và ADMIN. */
+function AppShell() {
+  const { role } = useAuth();
+  const location = useLocation();
+  const showChatWidget = role === "sale" && !location.pathname.startsWith("/chat");
+  // Chat là UI dạng app full-height (ChatGPT-style, không cuộn trang) — thêm Footer
+  // vào đó sẽ đội chiều cao vượt 100vh và phá layout cố định của khung chat.
+  const showFooter = !location.pathname.startsWith("/chat");
 
   return (
-    <div className={`app-shell ${collapsed ? "app-shell--sm" : ""}`}>
-      <AppSidebar
-        collapsed={collapsed}
-        onToggleCollapse={toggleCollapse}
-        mobileOpen={mobileOpen}
-        onMobileClose={() => setMobileOpen(false)}
-        onMobileOpen={() => setMobileOpen(true)}
-      />
+    <div className="app-shell">
+      <TopNavbar />
       <div className="app-content">
         <Routes>
-          <Route path="/home" element={<Home />} />
+          <Route path="/home" element={<HomeRoute />} />
 
-          {/* Chat mở cho cả SALE và ADMIN — mỗi người thấy phiên của riêng mình. */}
-          <Route path="/chat/*" element={<SalePage />} />
+          {/* Chat tư vấn khách hàng — chỉ dành cho SALE, ADMIN không trực tiếp tư vấn khách. */}
+          <Route
+            path="/chat/*"
+            element={
+              <ProtectedRoute allowedRole="sale">
+                <SalePage />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Tra cứu dự án — công cụ chính của SALE, chatbot chỉ là trợ lý đi kèm. */}
+          <Route
+            path="/inventory"
+            element={
+              <ProtectedRoute allowedRole="sale">
+                <InventoryPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/inventory/:categorySlug"
+            element={
+              <ProtectedRoute allowedRole="sale">
+                <CategoryDetailPage />
+              </ProtectedRoute>
+            }
+          />
 
           {/* Khu vực chỉ dành cho ADMIN */}
           <Route
@@ -67,14 +93,6 @@ function AppShell() {
             }
           />
           <Route
-            path="/api-test"
-            element={
-              <ProtectedRoute allowedRole="admin">
-                <ApiTestTab />
-              </ProtectedRoute>
-            }
-          />
-          <Route
             path="/settings"
             element={
               <ProtectedRoute allowedRole="admin">
@@ -86,6 +104,9 @@ function AppShell() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
+
+      {showFooter && <Footer />}
+      {showChatWidget && <ChatWidget />}
     </div>
   );
 }
@@ -94,7 +115,7 @@ function AppShell() {
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/home" replace />} />
+      <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route
         path="*"

@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 
 from minio import Minio
@@ -20,3 +21,30 @@ def ensure_bucket(bucket: str) -> None:
     client = get_minio_client()
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
+
+
+def ensure_public_read_bucket(bucket: str) -> None:
+    """Bucket cho ảnh marketing dự án — public GetObject để frontend load ảnh trực tiếp.
+
+    Khác với bucket tài liệu nội bộ (`minio_bucket_documents`), vốn phải giữ private.
+    """
+    ensure_bucket(bucket)
+    client = get_minio_client()
+    policy = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {"AWS": ["*"]},
+                "Action": ["s3:GetObject"],
+                "Resource": [f"arn:aws:s3:::{bucket}/*"],
+            }
+        ],
+    }
+    client.set_bucket_policy(bucket, json.dumps(policy))
+
+
+def public_object_url(bucket: str, object_name: str) -> str:
+    settings = get_settings()
+    scheme = "https" if settings.minio_secure else "http"
+    return f"{scheme}://{settings.minio_endpoint}/{bucket}/{object_name}"

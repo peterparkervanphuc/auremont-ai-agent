@@ -1,4 +1,5 @@
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { Link, useMatch, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import type { ChatSessionResponse } from "../../types";
 import { ChatIcon, PlusIcon, TrashIcon } from "../../components/Icons";
@@ -18,13 +19,33 @@ interface Props {
 
 // Sidebar: nút tạo Session mới + danh sách "Session: Khách...".
 export function SessionList({ sessions, loading, onChange }: Props) {
-  const { sessionId } = useParams<{ sessionId: string }>();
+  // Nằm ngoài <Route path="sessions/:sessionId">, nên useParams() sẽ luôn undefined —
+  // dùng useMatch để đọc sessionId trực tiếp từ URL hiện tại.
+  const match = useMatch("/chat/sessions/:sessionId");
+  const sessionId = match?.params.sessionId;
   const navigate = useNavigate();
 
-  const createSession = async () => {
-    const session = await api.post<ChatSessionResponse>("/sale/sessions", {});
+  const [naming, setNaming] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+
+  const closeNaming = () => {
+    setNaming(false);
+    setCustomerName("");
+  };
+
+  const submitNewSession = async (e: FormEvent) => {
+    e.preventDefault();
+    const name = customerName.trim();
+    const session = await api.post<ChatSessionResponse>("/sale/sessions", {
+      customer_name: name || undefined,
+    });
     onChange([session, ...sessions]);
+    closeNaming();
     navigate(`/chat/sessions/${session.id}`);
+  };
+
+  const handleNameKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") closeNaming();
   };
 
   const removeSession = async (e: React.MouseEvent, id: number) => {
@@ -42,10 +63,32 @@ export function SessionList({ sessions, loading, onChange }: Props) {
           <ChatIcon size={18} />
           Đoạn chat
         </div>
-        <button onClick={createSession} className="chat-new-btn" type="button">
-          <PlusIcon size={17} />
-          Phiên khách hàng mới
-        </button>
+
+        {naming ? (
+          <form className="chat-new-form" onSubmit={submitNewSession}>
+            <input
+              autoFocus
+              className="chat-new-form-input"
+              placeholder="Tên khách hàng (có thể bỏ trống)"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              onKeyDown={handleNameKeyDown}
+            />
+            <div className="chat-new-form-actions">
+              <button type="submit" className="btn btn-primary chat-new-form-submit">
+                Tạo phiên
+              </button>
+              <button type="button" className="chat-new-form-cancel" onClick={closeNaming}>
+                Huỷ
+              </button>
+            </div>
+          </form>
+        ) : (
+          <button onClick={() => setNaming(true)} className="chat-new-btn" type="button">
+            <PlusIcon size={17} />
+            Phiên khách hàng mới
+          </button>
+        )}
       </div>
 
       <div className="chat-conv-list">
@@ -68,7 +111,9 @@ export function SessionList({ sessions, loading, onChange }: Props) {
               to={`/chat/sessions/${s.id}`}
               className={`chat-conv-item ${String(s.id) === sessionId ? "chat-conv-item--active" : ""}`}
             >
-              <span className="chat-conv-title">{s.title ?? `Session: Khách #${s.id}`}</span>
+              <span className="chat-conv-title">
+                {s.customer_name ?? s.title ?? `Session: Khách #${s.id}`}
+              </span>
               <span className="chat-conv-time">{formatDate(s.created_at)}</span>
               <button
                 className="chat-conv-delete"
