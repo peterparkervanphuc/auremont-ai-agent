@@ -1,13 +1,15 @@
-"""Tool tra cứu tồn kho qua API nội bộ real-time của công ty.
+"""Tool for looking up unit inventory through the company's real-time internal API.
 
-Main Agent gọi hàm này (Function Calling) khi câu hỏi của Sale cần dữ liệu Bảng hàng real-time —
-thứ không nằm trong Vector DB vì tồn kho đổi liên tục, ingest vào Qdrant là sẽ trả lời số cũ.
+The Main Agent calls this (Function Calling) when a Sale's question needs live inventory
+data — something deliberately kept out of the Vector DB, because stock changes constantly
+and anything ingested into Qdrant would answer with stale numbers.
 
-Giai đoạn build đang trỏ `INVENTORY_API_URL` sang một mock API (mockapi.io) dựng đúng shape của API
-nội bộ sẽ dùng ở production, nên lúc đổi sang API thật chỉ cần đổi biến môi trường, không sửa code.
+During the build phase `INVENTORY_API_URL` points at a mock API (mockapi.io) shaped
+exactly like the internal production API, so switching to the real one is an environment
+variable change rather than a code change.
 
-Mọi lỗi gọi API được bọc thành `InventoryApiError` để router/pipeline hiển thị đúng thông báo
-"Tạm thời không tra được tồn kho" thay vì để lỗi rơi tự do thành 500.
+Every API failure is wrapped in `InventoryApiError` so the router/pipeline can show the
+proper "Tạm thời không tra được tồn kho" message instead of letting the error escape as a 500.
 """
 
 import re
@@ -19,13 +21,13 @@ from backend.core.config import settings
 
 INVENTORY_TIMEOUT_SECONDS = 5.0
 
-# Loại căn Sale hay nhắc trong câu hỏi: "2PN", "3 pn", "Penthouse", "Studio", "Shophouse", "Duplex".
-# \b hai đầu để "21PN" không bị bắt nhầm thành "1PN".
+# Unit types a Sale commonly mentions: "2PN", "3 pn", "Penthouse", "Studio", "Shophouse", "Duplex".
+# \b at both ends so "21PN" is not mis-matched as "1PN".
 _UNIT_TYPE_PATTERN = re.compile(r"\b(\d+\s*pn|penthouse|studio|shophouse|duplex)\b", re.IGNORECASE)
 
 
 class InventoryApiError(Exception):
-    """Mất kết nối hoặc lỗi phản hồi từ API tồn kho nội bộ."""
+    """Lost connection to, or a bad response from, the internal inventory API."""
 
 
 @dataclass
@@ -38,14 +40,14 @@ class InventoryUnit:
 
 
 def lookup_inventory(project_id: str, query: str) -> list[InventoryUnit]:
-    """Tra tồn kho của một dự án, lọc theo loại căn được nhắc tới trong câu hỏi.
+    """Look up a project's inventory, filtered by the unit type mentioned in the question.
 
-    Trả về danh sách rỗng khi dự án không còn căn nào khớp — đó là một câu trả lời hợp lệ
-    ("hiện không còn căn 2PN nào"), khác hẳn với việc không tra được tồn kho. Gộp hai
-    trường hợp này lại sẽ khiến Sale thấy báo "Tạm thời không tra được tồn kho" trong khi
-    API vẫn chạy tốt và câu trả lời đúng chỉ đơn giản là "hết hàng".
+    Returns an empty list when the project has no matching units left — that is a valid
+    answer ("there are no 2PN units available"), entirely different from failing to reach
+    the inventory. Conflating the two would show the Sale "Tạm thời không tra được tồn kho"
+    while the API is perfectly healthy and the correct answer is simply "sold out".
 
-    Raise `InventoryApiError` khi thật sự không lấy được dữ liệu từ API.
+    Raises `InventoryApiError` only when data genuinely cannot be fetched from the API.
     """
     payload = _fetch_units(project_id)
 
@@ -59,9 +61,9 @@ def lookup_inventory(project_id: str, query: str) -> list[InventoryUnit]:
 
 
 def _fetch_units(project_id: str) -> list:
-    """Gọi API tồn kho và trả về payload thô, đã chắc chắn là một list."""
+    """Call the inventory API and return the raw payload, guaranteed to be a list."""
     if not settings.inventory_api_url:
-        raise InventoryApiError("INVENTORY_API_URL chưa được cấu hình.")
+        raise InventoryApiError("INVENTORY_API_URL is not configured.")
 
     headers = {}
     if settings.inventory_api_key:
@@ -77,16 +79,16 @@ def _fetch_units(project_id: str) -> list:
         response.raise_for_status()
         payload = response.json()
     except httpx.HTTPError as exc:
-        # Bắt trọn nhánh HTTPError: ConnectError, TimeoutException và HTTPStatusError
-        # (do raise_for_status ném ra) đều là con của nó.
+        # Catch the whole HTTPError branch: ConnectError, TimeoutException and
+        # HTTPStatusError (raised by raise_for_status) are all subclasses of it.
         raise InventoryApiError(f"Inventory API unreachable: {exc}") from exc
     except ValueError as exc:
-        # json.JSONDecodeError kế thừa ValueError — gặp khi API trả về trang HTML lỗi
-        # thay vì JSON, thường là lúc URL trỏ sai chỗ.
-        raise InventoryApiError("Inventory API trả về body không phải JSON.") from exc
+        # json.JSONDecodeError subclasses ValueError — hit when the API returns an HTML
+        # error page instead of JSON, usually because the URL points somewhere wrong.
+        raise InventoryApiError("Inventory API returned a body that is not JSON.") from exc
 
     if not isinstance(payload, list):
-        raise InventoryApiError(f"Inventory API trả về {type(payload).__name__}, cần một list.")
+        raise InventoryApiError(f"Inventory API returned {type(payload).__name__}, expected a list.")
 
     return payload
 
@@ -95,11 +97,11 @@ _FIELD_NAMES = {field.name for field in fields(InventoryUnit)}
 
 
 def _parse_unit(item: object) -> InventoryUnit | None:
-    """Đổi một record thô thành `InventoryUnit`; trả về None nếu record không dùng được.
+    """Turn a raw record into an `InventoryUnit`; return None if the record is unusable.
 
-    Bỏ qua record hỏng thay vì ném lỗi: mock API lẫn API nội bộ đều kèm field lạ (`id`,
-    `createdAt`) hoặc thỉnh thoảng thiếu field, và một dòng dữ liệu bẩn không đáng làm
-    hỏng cả lần tra cứu của Sale.
+    Skips bad records rather than raising: both the mock and the internal API carry extra
+    fields (`id`, `createdAt`) or occasionally omit one, and a single dirty row is not
+    worth failing a Sale's entire lookup over.
     """
     if not isinstance(item, dict):
         return None
@@ -119,7 +121,8 @@ def _parse_unit(item: object) -> InventoryUnit | None:
 
 
 def _to_float(value: object) -> float | None:
-    """Giá có thể về dạng số hoặc chuỗi tuỳ API; giá lỗi thì bỏ trống chứ không chặn cả căn."""
+    """Price arrives as a number or a string depending on the API; a bad price is left
+    blank rather than discarding the whole unit."""
     if value is None or value == "":
         return None
     try:
@@ -129,13 +132,14 @@ def _to_float(value: object) -> float | None:
 
 
 def _extract_unit_type(query: str) -> str | None:
-    """Rút loại căn từ câu hỏi tự nhiên của Sale. None nghĩa là hỏi chung, không lọc."""
+    """Extract the unit type from a Sale's natural question. None means ask broadly, no filter."""
     match = _UNIT_TYPE_PATTERN.search(query)
     return _normalize_unit_type(match.group(0)) if match else None
 
 
 def _normalize_unit_type(unit_type: str | None) -> str | None:
-    """'3 pn' và '3PN' về cùng '3PN' để so khớp không phụ thuộc cách gõ của Sale hay của API."""
+    """Normalise '3 pn' and '3PN' to '3PN' so matching does not depend on how the Sale or
+    the API happens to spell it."""
     if unit_type is None:
         return None
     return re.sub(r"\s+", "", unit_type).upper()

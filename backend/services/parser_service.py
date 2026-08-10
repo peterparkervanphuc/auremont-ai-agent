@@ -8,10 +8,10 @@ from docx import Document as DocxDocument
 
 @dataclass(frozen=True)
 class ParsedSection:
-    """Một đoạn text lấy từ tài liệu gốc.
+    """A block of text extracted from a source document.
 
-    PDF giữ số trang (bắt đầu từ 1); DOCX không có khái niệm trang ổn định
-    nên dùng None.
+    PDFs keep their page number (1-based); DOCX has no stable notion of a page,
+    so None is used there.
     """
 
     text: str
@@ -19,15 +19,15 @@ class ParsedSection:
 
 
 class UnsupportedDocumentTypeError(ValueError):
-    """File không phải định dạng mà pipeline hỗ trợ."""
+    """The file is not in a format the pipeline supports."""
 
 
 class DocumentParseError(ValueError):
-    """File bị hỏng hoặc không thể trích xuất text."""
+    """The file is corrupt or no text could be extracted from it."""
 
 
 def parse_document(filename: str, data: bytes) -> list[ParsedSection]:
-    """Parse PDF/DOCX từ bytes, không phụ thuộc vào file tạm trên ổ đĩa."""
+    """Parse PDF/DOCX straight from bytes, with no dependency on a temp file on disk."""
     suffix = Path(filename).suffix.lower()
 
     if suffix == ".pdf":

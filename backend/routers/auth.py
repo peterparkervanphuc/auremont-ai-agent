@@ -24,7 +24,7 @@ class RefreshRequest(BaseModel):
 
 @router.post("/login", response_model=TokenResponse)
 async def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> TokenResponse:
-    """Đăng nhập nội bộ Sale/Admin — role trong token quyết định routing."""
+    """Internal Sale/Admin login — the role inside the token drives frontend routing."""
     user = get_user_by_username(db, form.username)
 
     if not user or not verify_password(form.password, user.hashed_password):
@@ -45,10 +45,10 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depen
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(payload: RefreshRequest, db: Session = Depends(get_db)) -> TokenResponse:
-    """Đổi refresh token lấy access token mới.
+    """Exchange a refresh token for a new access token.
 
-    Access token chỉ sống vài chục phút; nếu không có endpoint này thì Sale đang
-    tư vấn giữa chừng sẽ bị văng ra màn hình đăng nhập khi token hết hạn.
+    Access tokens live only a few dozen minutes; without this endpoint a Sale in the
+    middle of a consultation would be kicked back to the login screen on expiry.
     """
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -57,7 +57,7 @@ async def refresh(payload: RefreshRequest, db: Session = Depends(get_db)) -> Tok
     )
 
     claims = decode_token(payload.refresh_token)
-    # Bắt buộc type == "refresh": không cho dùng access token để tự gia hạn vô hạn.
+    # Require type == "refresh": an access token must not be able to renew itself forever.
     if claims is None or claims.get("type") != "refresh":
         raise credentials_error
 
@@ -78,10 +78,11 @@ async def refresh(payload: RefreshRequest, db: Session = Depends(get_db)) -> Tok
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(user: User = Depends(get_current_user)) -> None:
-    """Đăng xuất.
+    """Log out.
 
-    JWT là stateless nên token vẫn hợp lệ tới khi hết hạn — client phải xoá token
-    khỏi máy. Endpoint này tồn tại để client có điểm gọi thống nhất và để ghi vết.
-    TODO: thêm token denylist (Redis) nếu cần thu hồi tức thì.
+    JWTs are stateless, so the token stays valid until it expires — the client must
+    discard it locally. This endpoint exists to give clients a single call to make
+    and to leave an audit trail.
+    TODO: add a token denylist (Redis) if immediate revocation becomes necessary.
     """
     return None

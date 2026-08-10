@@ -5,7 +5,7 @@ from backend.utils.time import utcnow
 
 
 class Message(Base):
-    """Một lượt trao đổi trong phiên tư vấn của Sale — câu hỏi của Sale hoặc câu trả lời của Agent."""
+    """One turn in a Sale's consultation session — either a Sale question or an Agent answer."""
 
     __tablename__ = "messages"
 
@@ -18,7 +18,13 @@ class Message(Base):
     # Retrieval citations, e.g. [{"document_id": 12, "title": "...", "page": 3}]
     citations = Column(JSON, nullable=True)
 
-    verifier_score = Column(Float, nullable=True)  # Faithfulness/Relevancy score from the Verifier Agent
+    verifier_score = Column(Float, nullable=True)  # Overall Verifier score: min(faithfulness, relevancy)
+    # The two component scores behind verifier_score, kept apart for the Admin dashboard:
+    # low faithfulness means invented figures, low relevancy means retrieval fetched the wrong
+    # documents. Nullable: messages written before this column existed, cache hits, and every
+    # edge-case notice (empty state, inventory down) have no Verifier run behind them.
+    faithfulness = Column(Float, nullable=True)
+    answer_relevancy = Column(Float, nullable=True)
     requires_hitl = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime, default=utcnow, nullable=False)

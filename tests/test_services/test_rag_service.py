@@ -198,7 +198,7 @@ def test_embedding_failure_becomes_retrieval_error(qdrant, monkeypatch):
 
     monkeypatch.setattr(rag_service, "embed_query", _boom)
 
-    with pytest.raises(rag_service.RetrievalError, match="Không embed được"):
+    with pytest.raises(rag_service.RetrievalError, match="Could not embed"):
         rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
 
 
@@ -208,7 +208,7 @@ def test_qdrant_failure_becomes_retrieval_error(qdrant, monkeypatch):
 
     monkeypatch.setattr(qdrant, "query_points", _boom)
 
-    with pytest.raises(rag_service.RetrievalError, match="Không truy vấn được Qdrant"):
+    with pytest.raises(rag_service.RetrievalError, match="Could not query Qdrant"):
         rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
 
 

@@ -21,8 +21,8 @@ async def confirm_hitl(
 ) -> HitlLogResponse:
     """Mandatory 'XÁC NHẬN & GỬI' action before a price/commitment answer can be sent or copied.
 
-    Cả SALE và ADMIN đều chat được nên đều có thể xác nhận; hitl_log.sale_id ghi
-    lại chính người bấm xác nhận, phục vụ truy vết sau này.
+    Both SALE and ADMIN can chat, so both can confirm; hitl_log.sale_id records
+    whoever actually pressed confirm, for later auditing.
     """
     message = get_message(db, message_id)
     if message is None:

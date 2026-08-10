@@ -33,10 +33,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 
 def require_role(*roles: UserRole):
-    """Cho phép user thuộc một trong các role truyền vào.
+    """Allow users holding any one of the given roles.
 
-    Gọi với 1 role để khoá chặt (vd. require_role(UserRole.ADMIN)), hoặc nhiều
-    role khi cả hai bên cùng dùng chung một luồng (vd. Chat mở cho SALE + ADMIN).
+    Pass a single role to lock an endpoint down (e.g. require_role(UserRole.ADMIN)),
+    or several when both roles share a flow (e.g. Chat is open to SALE + ADMIN).
     """
     allowed = set(roles)
 

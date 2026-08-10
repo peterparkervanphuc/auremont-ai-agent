@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     # Gemini
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
 
     # CORS
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
@@ -43,7 +43,8 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     qdrant_collection: str = "salesmate_documents"
 
-    # Ngưỡng tin cậy tối thiểu của Verifier (0-1) — dưới ngưỡng thì báo "Không đủ thông tin, liên hệ Admin".
+    # Minimum Verifier confidence (0-1). Below this the Sale sees
+    # "Không đủ thông tin, liên hệ Admin" instead of the answer.
     verifier_threshold_sale: float = 0.7
 
     # Object storage (MinIO) — document originals
@@ -53,7 +54,7 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     minio_bucket_documents: str = "salesmate-documents"
 
-    # Inventory API — tra cứu tồn kho real-time qua API nội bộ doanh nghiệp
+    # Inventory API — real-time unit availability from the company's internal API
     inventory_api_url: str = ""
     inventory_api_key: str = ""
 
