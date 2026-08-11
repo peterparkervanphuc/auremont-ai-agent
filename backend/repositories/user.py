@@ -28,11 +28,11 @@ def create_user(db: Session, username: str, email: str, password: str, role: str
 
 
 def ensure_seed_user(db: Session, username: str, email: str, password: str, role: str) -> User:
-    """Tạo tài khoản seed nếu chưa có, hoặc đưa tài khoản sẵn có về đúng trạng thái chuẩn.
+    """Create the seed account if missing, or reset an existing one to the standard state.
 
-    Idempotent để mỗi lần khởi động backend đều cho ra cùng một kết quả: máy nào
-    clone repo về cũng đăng nhập được bằng cùng bộ tài khoản, kể cả khi ai đó đã
-    lỡ đổi mật khẩu hoặc khoá tài khoản đó trên DB dùng chung.
+    Idempotent so every backend startup yields the same result: anyone who clones
+    the repo can log in with the same accounts, even if someone previously changed
+    the password or deactivated that account on a shared database.
     """
     user = get_user_by_username(db, username)
     if user is None:

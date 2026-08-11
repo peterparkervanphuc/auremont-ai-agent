@@ -29,10 +29,10 @@ def resolve_conflict(
     keep_document_id: int,
     resolved_by: int | None = None,
 ) -> ConflictFlag:
-    """Đóng flag mâu thuẫn: giữ 1 tài liệu, vô hiệu hoá tài liệu còn lại.
+    """Close a conflict flag: keep one document, disable the other.
 
-    `keep_document_id` phải là một trong hai tài liệu của flag — nếu không, quyết
-    định của Admin sẽ áp lên nhầm tài liệu.
+    `keep_document_id` must be one of the flag's two documents — otherwise the
+    Admin's decision would be applied to the wrong document.
     """
     conflict = db.query(ConflictFlag).filter(ConflictFlag.id == conflict_id).first()
     if conflict is None:
@@ -44,9 +44,10 @@ def resolve_conflict(
 
     superseded_id = conflict.document_id_b if keep_document_id == conflict.document_id_a else conflict.document_id_a
 
-    # "Xoá tài liệu cũ / Ưu tiên tài liệu mới": đánh dấu BLOCKED thay vì DELETE.
-    # Bản ghi flag vẫn trỏ tới tài liệu này qua khoá ngoại nên xoá hẳn sẽ vi phạm
-    # ràng buộc; BLOCKED vừa loại nó khỏi kho tri thức, vừa giữ lại vết đối chiếu.
+    # "Delete the old document / prefer the new one": mark it BLOCKED rather than
+    # DELETE. The flag row still references this document via a foreign key, so a
+    # hard delete would violate the constraint; BLOCKED both removes it from the
+    # knowledge base and preserves the audit trail.
     superseded = db.query(Document).filter(Document.id == superseded_id).first()
     if superseded is not None:
         superseded.status = DocumentStatus.BLOCKED

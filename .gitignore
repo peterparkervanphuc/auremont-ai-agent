@@ -27,9 +27,11 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+data/
+
 
 # Data (never commit large data)
-data/
+
 *.db
 *.sqlite3
 

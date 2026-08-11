@@ -24,7 +24,7 @@ async def get_settings_values() -> SettingsResponse:
 
 @router.put("", response_model=SettingsResponse)
 async def update_settings_values(payload: SettingsUpdateRequest) -> SettingsResponse:
-    """Cấu hình ngưỡng tin cậy tối thiểu của Verifier Agent.
+    """Configure the Verifier Agent's minimum confidence threshold.
 
     TODO: persist to DB/config store instead of only reflecting env-based settings — the current
     `Settings` object is process-wide and env-driven, so this endpoint cannot durably mutate it yet.

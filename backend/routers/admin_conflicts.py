@@ -26,7 +26,7 @@ async def resolve_conflict_flag(
     db: Session = Depends(get_db),
     admin: User = Depends(require_role(UserRole.ADMIN)),
 ) -> ConflictFlagResponse:
-    """Xoá tài liệu cũ / Ưu tiên tài liệu mới — tài liệu không được giữ sẽ bị gỡ khỏi kho."""
+    """Delete the old document / prefer the new one — the document not kept is removed from the store."""
     try:
         return resolve_conflict(
             db,
@@ -35,8 +35,8 @@ async def resolve_conflict_flag(
             resolved_by=admin.id,
         )
     except ValueError as exc:
-        # keep_document_id không thuộc cặp tài liệu của flag -> lỗi dữ liệu gửi lên,
-        # không phải "không tìm thấy".
+        # keep_document_id is not one of the flag's two documents -> bad request
+        # payload, not a "not found" condition.
         if "not part of conflict" in str(exc):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

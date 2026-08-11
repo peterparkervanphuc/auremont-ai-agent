@@ -30,10 +30,22 @@ export interface MessageResponse {
   created_at: string;
 }
 
+export interface ProjectResponse {
+  id: string;
+  name: string;
+  location: string | null;
+  description: string | null;
+  created_at: string;
+}
+
 export interface ChatSessionResponse {
   id: number;
   sale_id: number;
   title: string | null;
+  customer_name: string | null;
+  // The project this session is about. The agent needs it to query real-time
+  // inventory, so a session without one cannot answer stock questions.
+  project_id: string | null;
   created_at: string;
 }
 

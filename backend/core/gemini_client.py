@@ -1,4 +1,4 @@
-﻿import google.genai as genai
+import google.genai as genai
 from google.genai import types
 
 from backend.core.config import settings
@@ -28,14 +28,14 @@ def generate_text(prompt: str, system_instruction: str | None = None) -> str:
 
 
 class GeminiEmbeddingError(RuntimeError):
-    """Gemini không trả embedding hợp lệ."""
+    """Gemini did not return a valid embedding."""
 
 
 def embed_documents(texts: list[str], *, title: str) -> list[list[float]]:
-    """Embed các chunk tài liệu để lưu Qdrant.
+    """Embed document chunks for storage in Qdrant.
 
-    Dùng RETRIEVAL_DOCUMENT vì đây là vector của dữ liệu nguồn,
-    không phải câu hỏi tìm kiếm.
+    Uses RETRIEVAL_DOCUMENT because these are vectors of source data,
+    not of a search query.
     """
     return _embed(
         texts,
@@ -45,7 +45,7 @@ def embed_documents(texts: list[str], *, title: str) -> list[list[float]]:
 
 
 def embed_query(query: str) -> list[float]:
-    """Embed câu hỏi khi retrieval từ Qdrant ở giai đoạn sau."""
+    """Embed a query for retrieval against Qdrant."""
     vectors = _embed(
         [query],
         task_type="RETRIEVAL_QUERY",
@@ -68,7 +68,7 @@ def _embed(
         "output_dimensionality": settings.embedding_dimensions,
     }
 
-    # title giúp embedding tài liệu retrieval tốt hơn.
+    # A title improves retrieval quality for document embeddings.
     if title:
         config_kwargs["title"] = title
 

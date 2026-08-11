@@ -4,8 +4,8 @@ import pytest
 from qdrant_client import models
 
 from backend.core.config import settings
-from backend.services.chunking_service import DocumentChunk
 from backend.services import vector_store_service
+from backend.services.chunking_service import DocumentChunk
 
 
 class FakeQdrantClient:

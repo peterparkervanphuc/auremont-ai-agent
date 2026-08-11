@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class ChatSessionCreate(BaseModel):
     title: str | None = None
     customer_name: str | None = None
+    project_id: str | None = None
 
 
 class ChatSessionResponse(BaseModel):
@@ -13,6 +14,7 @@ class ChatSessionResponse(BaseModel):
     sale_id: int
     title: str | None = None
     customer_name: str | None = None
+    project_id: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

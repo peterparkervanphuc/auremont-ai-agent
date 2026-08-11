@@ -238,7 +238,7 @@ def test_non_json_body_becomes_inventory_api_error(mock_get):
     """URL trỏ sai chỗ, API trả trang HTML thay vì JSON."""
     mock_get.return_value = _text_response("<html>404 Not Found</html>")
 
-    with pytest.raises(InventoryApiError, match="không phải JSON"):
+    with pytest.raises(InventoryApiError, match="not JSON"):
         lookup_inventory("ocean-park-3", "còn căn nào không")
 
 
@@ -247,7 +247,7 @@ def test_non_list_payload_becomes_inventory_api_error(mock_get):
     """JSON hợp lệ nhưng là object — không lặp được thành danh sách căn."""
     mock_get.return_value = _response({"data": []})
 
-    with pytest.raises(InventoryApiError, match="cần một list"):
+    with pytest.raises(InventoryApiError, match="expected a list"):
         lookup_inventory("ocean-park-3", "còn căn nào không")
 
 
@@ -255,5 +255,5 @@ def test_missing_config_becomes_inventory_api_error(monkeypatch):
     """Chưa cấu hình URL thì báo rõ ràng, không để httpx nổ lỗi khó hiểu."""
     monkeypatch.setattr(settings, "inventory_api_url", "")
 
-    with pytest.raises(InventoryApiError, match="chưa được cấu hình"):
+    with pytest.raises(InventoryApiError, match="is not configured"):
         lookup_inventory("ocean-park-3", "còn căn nào không")

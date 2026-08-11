@@ -3,6 +3,7 @@ import { api } from "../../api/client";
 import type {
   DocumentResponse,
   DocumentVisibility,
+  ProjectResponse,
 } from "../../types";
 import {
   InboxIcon,
@@ -51,6 +52,10 @@ export function DocumentsTab() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  // Which project the uploaded document belongs to. Retrieval filters on this, and
+  // conflict detection only compares documents within the same project.
+  const [projectId, setProjectId] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadDocuments = useCallback(() => {
@@ -63,6 +68,17 @@ export function DocumentsTab() {
   useEffect(() => {
     loadDocuments();
   }, [loadDocuments]);
+
+  useEffect(() => {
+    api
+      .get<ProjectResponse[]>("/projects")
+      .then((list) => {
+        setProjects(list);
+        // Preselect when there is only one project, so the common case needs no clicks.
+        if (list.length === 1) setProjectId(list[0].id);
+      })
+      .catch(() => setProjects([]));
+  }, []);
 
   const uploadFile = async (file: File) => {
     if (!isSupportedFile(file)) {
@@ -79,6 +95,9 @@ export function DocumentsTab() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("visibility", "internal");
+      // Without a project the document cannot be filtered per project at retrieval
+      // time, and conflict detection has nothing to compare it against.
+      if (projectId) formData.append("project_id", projectId);
 
       const result = await api.postForm<UploadResponse>(
         "/documents/upload",
@@ -139,6 +158,30 @@ export function DocumentsTab() {
       <p className="page-sub">
         Tải PDF/DOCX để parse, vector hóa và đưa vào kho tri thức RAG.
       </p>
+
+      <div className="upload-project-row">
+        <label htmlFor="upload-project" className="upload-project-label">
+          Dự án
+        </label>
+        <select
+          id="upload-project"
+          className="upload-project-select"
+          value={projectId}
+          onChange={(event) => setProjectId(event.target.value)}
+        >
+          <option value="">— Không gắn dự án —</option>
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name}
+            </option>
+          ))}
+        </select>
+        {!projectId && (
+          <span className="upload-project-hint">
+            Nên chọn dự án để lọc tài liệu khi tư vấn và phát hiện mâu thuẫn.
+          </span>
+        )}
+      </div>
 
       <div
         className={`upload-zone ${

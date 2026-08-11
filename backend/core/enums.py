@@ -10,7 +10,7 @@ class DocumentStatus(StrEnum):
 
 
 class DocumentVisibility(StrEnum):
-    """RBAC tier: INTERNAL chỉ Sale/Admin xem; PUBLIC là tài liệu Sale được phép chia sẻ cho khách."""
+    """RBAC tier: INTERNAL is Sale/Admin only; PUBLIC is safe for Sale to share with customers."""
 
     INTERNAL = "internal"
     PUBLIC = "public"
@@ -22,7 +22,7 @@ class UserRole(StrEnum):
 
 
 class MessageSender(StrEnum):
-    """Chỉ Sale và Agent trao đổi trong một phiên — khách hàng không truy cập hệ thống."""
+    """Only Sale and Agent exchange messages in a session — customers never access the system."""
 
     SALE = "sale"
     AGENT = "agent"
@@ -39,8 +39,8 @@ class ConflictStatus(StrEnum):
 
 
 class FeedbackType(StrEnum):
-    """Đánh giá của Sale cho một câu trả lời của Agent — cấp dữ liệu cho Admin Tab 2."""
+    """A Sale's rating of an Agent answer — feeds the Admin Tab 2 dashboard."""
 
     HELPFUL = "helpful"
-    WRONG = "wrong"  # câu trả lời sai
-    INCOMPLETE = "incomplete"  # câu trả lời thiếu
+    WRONG = "wrong"  # the answer was incorrect
+    INCOMPLETE = "incomplete"  # the answer was missing information

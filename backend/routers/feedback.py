@@ -23,7 +23,7 @@ async def submit_feedback(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
-    """Nút Feedback dưới mỗi câu trả lời — Sale báo cáo câu trả lời sai/thiếu."""
+    """The Feedback button under each answer — a Sale reports it as wrong or incomplete."""
     if get_message(db, payload.message_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
 
@@ -51,7 +51,7 @@ async def get_top_failed_questions(
     db: Session = Depends(get_db),
     _: User = Depends(require_role(UserRole.ADMIN)),
 ) -> list[FailedQuestion]:
-    """Top câu hỏi AI trả lời thất bại, tổng hợp từ Feedback của Sale."""
+    """Top questions the AI answered badly, aggregated from Sale feedback."""
     results: list[FailedQuestion] = []
     for message_id, count in list_top_failed(db, limit=limit):
         question = get_question_for_answer(db, message_id)

@@ -6,7 +6,7 @@ from backend.core.enums import FeedbackType
 
 
 class FeedbackCreate(BaseModel):
-    """Sale báo cáo câu trả lời sai/thiếu."""
+    """A Sale reporting an answer as wrong or incomplete."""
 
     message_id: int
     type: FeedbackType
@@ -25,7 +25,7 @@ class FeedbackResponse(BaseModel):
 
 
 class FailedQuestion(BaseModel):
-    """Một dòng trong bảng "Top câu hỏi AI trả lời thất bại" của Admin Tab 2."""
+    """One row of the "Top câu hỏi AI trả lời thất bại" table in Admin Tab 2."""
 
     message_id: int
     question: str

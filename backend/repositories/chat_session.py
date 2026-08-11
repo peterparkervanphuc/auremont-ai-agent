@@ -5,7 +5,14 @@ from backend.schemas.chat_session import ChatSessionCreate
 
 
 def create_session(db: Session, sale_id: int, schema: ChatSessionCreate) -> ChatSession:
-    session = ChatSession(sale_id=sale_id, title=schema.title)
+    session = ChatSession(
+        sale_id=sale_id,
+        title=schema.title,
+        # customer_name and project_id used to be dropped here: the schema accepted
+        # them but they were never written to the DB, so every session returned null.
+        customer_name=schema.customer_name,
+        project_id=schema.project_id,
+    )
     db.add(session)
     db.commit()
     db.refresh(session)
