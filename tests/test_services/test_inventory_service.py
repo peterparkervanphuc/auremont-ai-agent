@@ -89,6 +89,38 @@ def test_returns_all_units_when_question_has_no_unit_type(mock_get):
 
 
 @patch("httpx.get")
+def test_filters_by_subdivision_area_price_and_status(mock_get):
+    mock_get.return_value = _response(
+        [
+            {"unit_code": "A", "project_id": "ocean-park-3", "subdivision": "Vịnh Tây", "unit_type": "2PN", "area_m2": 62, "price": 3600000000, "status": "available"},
+            {"unit_code": "B", "project_id": "ocean-park-3", "subdivision": "Vịnh Xanh", "unit_type": "2PN", "area_m2": 68, "price": 3750000000, "status": "reserved"},
+        ]
+    )
+
+    result = lookup_inventory(
+        "ocean-park-3",
+        "Còn bán căn 2PN khu Vinh Tay, diện tích dưới 65m2, giá dưới 4 tỷ?",
+    )
+
+    assert [unit.unit_code for unit in result] == ["A"]
+
+
+@patch("httpx.get")
+def test_filters_by_price_and_area_ranges(mock_get):
+    mock_get.return_value = _response(
+        [
+            {"unit_code": "A", "project_id": "ocean-park-3", "unit_type": "2PN", "area_m2": 62, "price": 3600000000, "status": "available"},
+            {"unit_code": "B", "project_id": "ocean-park-3", "unit_type": "2PN", "area_m2": 68, "price": 3750000000, "status": "reserved"},
+            {"unit_code": "C", "project_id": "ocean-park-3", "unit_type": "3PN", "area_m2": 88, "price": 5200000000, "status": "sold"},
+        ]
+    )
+
+    result = lookup_inventory("ocean-park-3", "Căn từ 60 đến 70m2, giá 3 đến 4 tỷ")
+
+    assert [unit.unit_code for unit in result] == ["A", "B"]
+
+
+@patch("httpx.get")
 def test_unit_type_matching_ignores_case_and_spacing(mock_get):
     """'3 pn' viết rời và thường vẫn khớp '3PN' của API."""
     mock_get.return_value = _response(MOCK_UNITS)
