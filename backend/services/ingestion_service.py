@@ -148,7 +148,9 @@ def ingest_uploaded_document(
             extra={
                 "event": "document.ingest.exception",
                 "document_id": document.id,
-                "filename": filename,
+                # Not "filename": LogRecord already owns that attribute and
+                # logging raises KeyError, which would lose this record entirely.
+                "document_name": filename,
                 "error_type": type(exc).__name__,
             },
         )

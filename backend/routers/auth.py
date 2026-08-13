@@ -3,6 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from backend.core.audit import log_event
 from backend.core.deps import get_current_user
 from backend.core.mysql_client import get_db
 from backend.core.security import (
@@ -28,14 +29,19 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depen
     user = get_user_by_username(db, form.username)
 
     if not user or not verify_password(form.password, user.hashed_password):
+        # One reason for both "no such user" and "wrong password": a log that
+        # distinguished them could be used to enumerate valid usernames.
+        log_event("auth.login.failure", username=form.username, reason="bad_credentials")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not user.is_active:
+        log_event("auth.login.failure", username=form.username, reason="inactive_user")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
 
+    log_event("auth.login.success", username=user.username, user_id=user.id, role=user.role)
     return TokenResponse(
         access_token=create_access_token(subject=user.username, role=user.role),
         refresh_token=create_refresh_token(subject=user.username),
@@ -59,14 +65,19 @@ async def refresh(payload: RefreshRequest, db: Session = Depends(get_db)) -> Tok
     claims = decode_token(payload.refresh_token)
     # Require type == "refresh": an access token must not be able to renew itself forever.
     if claims is None or claims.get("type") != "refresh":
+        # security.decode_token already logged why the JWT was rejected. Never log
+        # the token itself.
+        log_event("auth.refresh.failure", reason="invalid_token" if claims is None else "wrong_type")
         raise credentials_error
 
     username = claims.get("sub")
     if username is None:
+        log_event("auth.refresh.failure", reason="no_subject")
         raise credentials_error
 
     user = get_user_by_username(db, username)
     if user is None or not user.is_active:
+        log_event("auth.refresh.failure", username=username, reason="unknown_or_inactive_user")
         raise credentials_error
 
     return TokenResponse(
@@ -85,4 +96,5 @@ async def logout(user: User = Depends(get_current_user)) -> None:
     and to leave an audit trail.
     TODO: add a token denylist (Redis) if immediate revocation becomes necessary.
     """
+    log_event("auth.logout", username=user.username, user_id=user.id)
     return None

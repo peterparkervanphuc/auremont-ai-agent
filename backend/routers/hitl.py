@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from backend.core.audit import log_event
 from backend.core.deps import require_role
 from backend.core.enums import UserRole
 from backend.core.mysql_client import get_db
@@ -31,4 +32,17 @@ async def confirm_hitl(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message does not require HITL")
 
     log = create_hitl_log(db, message_id=message_id, sale_id=user.id)
-    return confirm_hitl_log(db, log_id=log.id, confirmed_content=payload.confirmed_content)
+    confirmed = confirm_hitl_log(db, log_id=log.id, confirmed_content=payload.confirmed_content)
+
+    # confirmed_content is deliberately absent: it is the exact price/commitment
+    # text going to a customer. Whether the Sale edited it is the audit-relevant bit.
+    log_event(
+        "hitl.confirm",
+        message_id=message_id,
+        hitl_log_id=log.id,
+        user_id=user.id,
+        role=user.role,
+        content_len=len(payload.confirmed_content),
+        edited=payload.confirmed_content != message.content,
+    )
+    return confirmed

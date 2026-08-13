@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 from fastapi import (
@@ -12,6 +13,7 @@ from fastapi import (
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from backend.core.audit import log_event
 from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import DocumentStatus, DocumentVisibility, UserRole
@@ -115,6 +117,18 @@ async def upload_document(
         uploaded_by=admin.id,
     )
 
+    log_event(
+        "document.upload",
+        document_id=document.id,
+        document_name=file.filename,
+        size_bytes=len(file_bytes),
+        content_type=file.content_type,
+        project_id=project_id,
+        visibility=visibility,
+        admin_id=admin.id,
+    )
+
+    started = time.perf_counter()
     try:
         document = ingest_uploaded_document(
             db,
@@ -125,13 +139,29 @@ async def upload_document(
         )
     except PromptInjectionError:
         # ingestion_service has already moved the document to BLOCKED.
+        # A security event, not merely an ingest outcome.
+        log_event(
+            "document.ingest.blocked",
+            document_id=document.id,
+            document_name=file.filename,
+            reason="prompt_injection",
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
         return IngestResponse(
             document_id=document.id,
             status=DocumentStatus.BLOCKED,
             message="Document blocked due to suspicious content.",
         )
     except DocumentIngestionError as exc:
-        # ingestion_service has already moved the document to FAILED.
+        # ingestion_service has already moved the document to FAILED and logged
+        # the traceback.
+        log_event(
+            "document.ingest.failure",
+            document_id=document.id,
+            document_name=file.filename,
+            error_type=type(exc).__name__,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Document ingestion failed. Check server logs.",
@@ -139,6 +169,12 @@ async def upload_document(
     finally:
         await file.close()
 
+    log_event(
+        "document.ingest.success",
+        document_id=document.id,
+        status=document.status,
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
     return IngestResponse(
         document_id=document.id,
         status=document.status,

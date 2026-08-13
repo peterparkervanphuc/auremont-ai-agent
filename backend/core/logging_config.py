@@ -106,7 +106,23 @@ class JsonFormatter(logging.Formatter):
         # ensure_ascii=False: messages in this codebase are Vietnamese, and
         # \u-escaping every one of them makes `docker compose logs` unreadable.
         # default=str: UUID/datetime/Decimal/ORM objects must not raise here.
-        return json.dumps(payload, ensure_ascii=False, default=str)
+        try:
+            return json.dumps(payload, ensure_ascii=False, default=str)
+        except Exception:
+            # `default=str` still runs the object's __repr__/__str__, which can
+            # itself raise. Emitting a degraded line beats letting a logging call
+            # blow up the request it was only meant to describe.
+            return json.dumps(
+                {
+                    "timestamp": payload["timestamp"],
+                    "level": payload["level"],
+                    "logger": payload["logger"],
+                    "message": payload["message"],
+                    "request_id": payload["request_id"],
+                    "log_format_error": "record contained a value that could not be serialised",
+                },
+                ensure_ascii=False,
+            )
 
 
 class ConsoleFormatter(logging.Formatter):
