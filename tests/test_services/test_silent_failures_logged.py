@@ -122,6 +122,24 @@ class TestRetrieval:
         assert record.levelno == logging.ERROR
         assert record.exc_info is not None
 
+    def test_a_broken_client_becomes_retrieval_error_not_a_raw_exception(self, monkeypatch, capture_logs):
+        """Building the client parses QDRANT_URL and raises on a malformed value.
+
+        That call used to sit outside the try block, so a bad URL escaped as a raw
+        LocationParseError — a 500 for the Sale instead of the intended notice.
+        """
+
+        def broken_client():
+            raise ValueError("Failed to parse: http://[bad")
+
+        monkeypatch.setattr(rag_service, "embed_query", lambda query: [0.0] * 768)
+        monkeypatch.setattr(rag_service, "get_qdrant_client", broken_client)
+
+        with pytest.raises(rag_service.RetrievalError):
+            rag_service.retrieve("giá căn 2PN?", "INTERNAL", "ocean-park-3", 5)
+
+        assert capture_logs.events("retrieval.qdrant.failed")
+
 
 class TestJwt:
     def test_rejected_token_returns_none_and_logs_the_reason(self, capture_logs):

@@ -66,8 +66,13 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
     if project_id:
         conditions.append(models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id)))
 
-    client = get_qdrant_client()
     try:
+        # Inside the try: building the client parses QDRANT_URL and raises on a
+        # malformed value, which outside would escape as a raw LocationParseError
+        # and bypass RetrievalError entirely — a 500 instead of the intended
+        # "Tạm thời không tra cứu được tài liệu" message.
+        client = get_qdrant_client()
+
         # If nobody has uploaded a document yet the collection does not exist. That is a
         # normal state right after deployment, not a fault.
         if not client.collection_exists(settings.qdrant_collection):
