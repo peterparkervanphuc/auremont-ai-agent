@@ -37,13 +37,28 @@ def _safe_fields(fields: dict) -> dict:
 
 
 def log_event(event: str, **fields: object) -> None:
-    """Emit one audit record. Never raises — auditing must not break a request."""
+    """Emit one audit record to stdout, then persist it to MySQL.
+
+    Never raises — auditing must not break a request.
+
+    Two sinks with different jobs: stdout is immediate and joins to the
+    tracebacks of the same request while they are still in the collector's
+    window; the table survives the container and answers questions months later.
+    stdout goes first so a database outage degrades the trail instead of
+    erasing the event.
+    """
     try:
         # The event name is both the message and a queryable field: the console
         # formatter then reads naturally, and the JSON has a stable `event` key.
         _audit.info(event, extra={"event": event, "audit": True, **_safe_fields(fields)})
     except Exception:  # pragma: no cover - defensive; logging must never propagate
         _audit.warning("Audit event failed to emit", extra={"event": "audit.failed", "failed_event": event})
+
+    # Imported here, not at module scope: backend.core.audit_sink imports the
+    # models, which import Base, and several modules import this one very early.
+    from backend.core.audit_sink import persist_event
+
+    persist_event(event, fields)
 
 
 def truncate(text: str | None, limit: int = _MAX_TEXT) -> str | None:

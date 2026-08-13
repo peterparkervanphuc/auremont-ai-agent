@@ -16,6 +16,7 @@ from sqlalchemy import create_engine, inspect
 
 from backend.core.mysql_client import Base
 from backend.models import (  # noqa: F401  (đăng ký bảng vào Base.metadata)
+    audit_log,
     chat_session,
     conflict_flag,
     document,

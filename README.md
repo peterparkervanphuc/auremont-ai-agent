@@ -440,6 +440,42 @@ docker compose logs backend | jq 'select(.audit == true)'
 docker compose logs backend | jq 'select(.event == "sale.query") | {verifier_score, requires_hitl, duration_ms}'
 ```
 
+#### 7.3.1. Lưu trữ bền trong MySQL (bảng `audit_logs`)
+
+Audit event đi vào **hai nơi cùng lúc**, mỗi nơi một nhiệm vụ:
+
+| Nơi | Trả lời câu hỏi | Vòng đời |
+| :--- | :--- | :--- |
+| stdout (JSON) | "Vừa nãy hỏng cái gì?" — nối được với traceback cùng `request_id` | Mất khi container bị thay |
+| Bảng `audit_logs` | "Ai đăng nhập tuần trước? Sale nào xác nhận mức giá đó?" | Còn mãi trong DB |
+
+Log chẩn đoán (traceback, access log) **không** ghi vào MySQL — khối lượng lớn, vòng đời ngắn, thuộc về log collector chứ không phải database vận hành.
+
+Hai tính chất bắt buộc của việc ghi (đều có test canh giữ trong `tests/test_core/test_audit_sink.py`):
+
+* **Ghi bằng session riêng.** `auth.login.failure` được phát ngay trước `raise HTTPException`; nếu dùng chung session của request thì dòng đó không bao giờ được commit — mất đúng những sự kiện bảo mật đáng giữ nhất. Dùng chung rồi `commit()` còn tệ hơn: nó commit lây cả nghiệp vụ đang dở dang.
+* **Không bao giờ raise.** MySQL sập chỉ làm suy giảm audit trail (dòng stdout vẫn có), không biến một request đang chạy tốt thành lỗi 500.
+
+Admin đọc qua API:
+
+```bash
+GET /api/v1/admin/eval/audit?limit=100
+GET /api/v1/admin/eval/audit?event=auth.login.failure&days=7
+GET /api/v1/admin/eval/audit?user_id=3
+```
+
+Hoặc truy vấn thẳng SQL:
+
+```sql
+-- Đăng nhập thất bại 24h qua, gom theo tài khoản
+SELECT username, COUNT(*) FROM audit_logs
+WHERE event = 'auth.login.failure' AND created_at > NOW() - INTERVAL 1 DAY
+GROUP BY username ORDER BY 2 DESC;
+
+-- Toàn bộ dấu vết của một request (nối với dòng stdout cùng request_id)
+SELECT * FROM audit_logs WHERE request_id = '<request_id>';
+```
+
 #### 7.4. Những gì KHÔNG bao giờ vào log
 
 Mật khẩu, JWT (kể cả một phần — prefix JWT vẫn decode được), `GEMINI_API_KEY`/`SECRET_KEY`/khóa MinIO, nội dung file tài liệu, câu trả lời sinh ra, và nội dung HITL gửi khách (chỉ ghi độ dài và việc Sale có sửa hay không).
