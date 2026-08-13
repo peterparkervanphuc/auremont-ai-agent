@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.core.config import get_settings
 from backend.core.logging_config import setup_logging
 from backend.core.seed import seed_projects, seed_users
+from backend.middleware.logging import REQUEST_ID_HEADER, RequestContextMiddleware
 
 # Importing the models registers them on Base.metadata (ORM relationships +
 # Alembic autogenerate).
@@ -69,12 +70,23 @@ app = FastAPI(
 )
 
 settings = get_settings()
+
+# Middleware order: Starlette builds the stack by wrapping in REVERSE order of
+# registration, so whatever is added last ends up outermost. Registering the
+# request-context middleware first therefore puts it *inside* CORS, which is
+# what we want: the contextvar is set as close to the endpoint as possible, and
+# CORS preflight OPTIONS requests are answered by CORSMiddleware before reaching
+# us, keeping preflight noise out of the access log.
+app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins.split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Without this the browser cannot read the id to quote in a bug report,
+    # which is half the point of echoing it back.
+    expose_headers=[REQUEST_ID_HEADER],
 )
 
 # Internal (Sale/Admin)
