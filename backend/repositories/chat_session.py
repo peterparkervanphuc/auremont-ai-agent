@@ -27,6 +27,17 @@ def get_session(db: Session, session_id: int) -> ChatSession | None:
     return db.query(ChatSession).filter(ChatSession.id == session_id).first()
 
 
+def set_title_if_empty(db: Session, session: ChatSession, title: str) -> ChatSession:
+    """Tự đặt tên phiên từ câu hỏi đầu tiên của Sale — tránh danh sách toàn
+    "Session: Khách #N" không phân biệt được khi có nhiều phiên."""
+    if session.title:
+        return session
+    session.title = title[:40] + ("…" if len(title) > 40 else "")
+    db.commit()
+    db.refresh(session)
+    return session
+
+
 def delete_session(db: Session, session_id: int) -> None:
     session = get_session(db, session_id)
     if session is None:

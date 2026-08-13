@@ -1,0 +1,81 @@
+"""Nạp dữ liệu mẫu Vinhomes Ocean Park: JSON -> MySQL (bảng projects), ảnh -> MinIO.
+
+Chạy một lần thủ công khi cần refresh dữ liệu demo:
+    python scripts/load_vinhomes_ocean_park.py
+"""
+
+import json
+import re
+import sys
+from pathlib import Path
+
+# REPO_ROOT là P-110 — mọi nguồn dữ liệu seed phải nằm TRONG repo (seed-data/),
+# không được trỏ ra ngoài máy: máy khác clone repo về sẽ không có gì ngoài P-110/.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from backend.core.minio_client import ensure_public_read_bucket, get_minio_client, public_object_url  # noqa: E402
+from backend.core.config import settings  # noqa: E402
+from backend.core.mysql_client import SessionLocal  # noqa: E402
+from backend.models.project import Project  # noqa: E402
+
+JSON_PATH = REPO_ROOT / "seed-data" / "vinhomes_ocean_park.json"
+IMAGES_DIR = REPO_ROOT / "frontend" / "public"
+IMAGE_PATTERN = re.compile(r"^003_Start-from-the-provided-parking-area-with-several-_(.+)\.jpg$")
+
+
+def clean_image_key(filename: str) -> str | None:
+    match = IMAGE_PATTERN.match(filename)
+    if not match:
+        return None
+    return f"{match.group(1)}.jpg"
+
+
+def upload_images() -> list[str]:
+    ensure_public_read_bucket(settings.minio_bucket_project_images)
+    client = get_minio_client()
+
+    urls = []
+    for path in sorted(IMAGES_DIR.glob("*.jpg")):
+        key = clean_image_key(path.name)
+        if key is None:
+            continue
+        object_name = f"vinhomes-ocean-park/{key}"
+        client.fput_object(settings.minio_bucket_project_images, object_name, str(path))
+        urls.append(public_object_url(settings.minio_bucket_project_images, object_name))
+        print(f"[minio] uploaded {object_name}")
+
+    if not urls:
+        print("[minio] không tìm thấy ảnh nào khớp pattern để upload.")
+    return urls
+
+
+def load_project(gallery_urls: list[str]) -> None:
+    payload = json.loads(JSON_PATH.read_text(encoding="utf-8"))
+    payload["images"]["gallery"] = gallery_urls
+    project = payload["project"]
+    location = f"{project['location']['district']}, {project['location']['city']}"
+
+    db = SessionLocal()
+    try:
+        row = db.get(Project, project["id"])
+        if row is None:
+            row = Project(id=project["id"])
+            db.add(row)
+        row.name = project["name"]
+        row.location = location
+        row.description = project["description"]
+        row.details = payload
+        db.commit()
+        print(f"[mysql] upsert project '{project['id']}' OK ({len(gallery_urls)} ảnh gallery)")
+    finally:
+        db.close()
+
+
+def main() -> None:
+    gallery_urls = upload_images()
+    load_project(gallery_urls)
+
+
+if __name__ == "__main__":
+    main()

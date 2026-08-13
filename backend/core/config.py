@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     minio_secret_key: str = "minioadmin"
     minio_secure: bool = False
     minio_bucket_documents: str = "salesmate-documents"
+    minio_bucket_project_images: str = "project-images"
 
     # Inventory API — real-time unit availability from the company's internal API
     inventory_api_url: str = ""

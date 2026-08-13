@@ -22,37 +22,16 @@ function Icon({ size = 20, className, strokeWidth = 1.75, children }: IconProps 
   )
 }
 
-export function SalesMateLogoIcon({ size = 28, className }: IconProps) {
+export function AuremontLogoIcon({ size = 28, className }: IconProps) {
   return (
-    <svg width={size} height={size} viewBox="0 0 36 36" fill="none" className={className}>
-      <path
-        d="M18 2.6 31 7.7v9.6c0 7.5-5.1 13.9-13 16.1C10.1 31.2 5 24.8 5 17.3V7.7L18 2.6Z"
-        fill="url(#salesmate-logo-shield)"
-      />
-      <path
-        d="M18 5.4 28.2 9.4v7.8c0 5.9-3.9 11.1-10.2 13.1-6.3-2-10.2-7.2-10.2-13.1V9.4L18 5.4Z"
-        fill="url(#salesmate-logo-inner)"
-        opacity="0.94"
-      />
-      {/* Mái nhà — biểu tượng bất động sản */}
-      <path d="M11.2 18.4 18 12.8l6.8 5.6" stroke="#ff8a7a" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <path d="M13 17.6v6.2h10v-6.2" stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <path d="M16.4 23.8v-3.4h3.2v3.4" stroke="#e02424" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <circle cx="10.6" cy="10.7" r="1.35" fill="#ff8a7a" />
-      <circle cx="25.6" cy="24.1" r="1.35" fill="#ff8a7a" />
-      <circle cx="26.1" cy="10.9" r="1.1" fill="white" opacity="0.9" />
-      <defs>
-        <linearGradient id="salesmate-logo-shield" x1="5" y1="2.6" x2="31" y2="33.4" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#e02424" />
-          <stop offset="46%" stopColor="#f2564a" />
-          <stop offset="100%" stopColor="#003B71" />
-        </linearGradient>
-        <linearGradient id="salesmate-logo-inner" x1="7.8" y1="5.4" x2="28.2" y2="30.3" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#0D4F86" />
-          <stop offset="100%" stopColor="#002B52" />
-        </linearGradient>
-      </defs>
-    </svg>
+    <img
+      src="/logo.png"
+      alt="Auremont"
+      width={size}
+      height={size}
+      className={className}
+      style={{ objectFit: "contain" }}
+    />
   )
 }
 
@@ -429,6 +408,15 @@ export function ClipboardListIcon(p: IconProps) {
   )
 }
 
+export function MapPinIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+      <circle cx="12" cy="10" r="3" />
+    </Icon>
+  )
+}
+
 export function BuildingIcon(p: IconProps) {
   return (
     <Icon {...p}>
@@ -452,7 +440,7 @@ export function SendIcon(p: IconProps) {
   return <Icon {...p}><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></Icon>
 }
 
-/* ── SalesMate — icon bổ sung ─────────────────────────────── */
+/* ── Auremont — icon bổ sung ─────────────────────────────── */
 
 export function BotIcon(p: IconProps) {
   return <Icon {...p}><rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="12" cy="5" r="2" /><path d="M12 7v4" /><line x1="8" y1="16" x2="8" y2="16" /><line x1="16" y1="16" x2="16" y2="16" /></Icon>

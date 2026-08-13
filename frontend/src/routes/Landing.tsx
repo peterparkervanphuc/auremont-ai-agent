@@ -1,0 +1,33 @@
+import { Link, Navigate } from "react-router-dom";
+import { useAuth } from "../hooks/useAuth";
+import { AuremontLogoIcon, LogInIcon } from "../components/Icons";
+
+const HERO_IMAGE_URL =
+  "http://localhost:9000/project-images/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
+
+// Màn hình công khai đầu tiên khi chưa đăng nhập — chỉ có branding + nút vào hệ thống,
+// không lộ nội dung tra cứu/chat nội bộ ra ngoài.
+export function Landing() {
+  const { isAuthenticated } = useAuth();
+  if (isAuthenticated) return <Navigate to="/home" replace />;
+
+  return (
+    <div className="landing-page" style={{ "--hero-image-url": `url(${HERO_IMAGE_URL})` } as React.CSSProperties}>
+      <div className="landing-scrim" />
+      <div className="landing-content">
+        <div className="landing-logo">
+          <AuremontLogoIcon size={40} />
+          <span className="logo-text">Auremont</span>
+        </div>
+        <h1 className="landing-title">Trợ lý AI nội bộ cho đội ngũ Sale Vinhomes Ocean Park</h1>
+        <p className="landing-subtitle">
+          Tra cứu bảng giá, tồn kho và tư vấn khách hàng nhanh hơn với AI có trích dẫn nguồn tài liệu.
+        </p>
+        <Link to="/login" className="btn btn-primary landing-cta">
+          Đăng nhập
+          <LogInIcon size={16} />
+        </Link>
+      </div>
+    </div>
+  );
+}

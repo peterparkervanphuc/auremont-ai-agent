@@ -3,20 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../types";
-import { EyeIcon, EyeOffIcon, LoaderIcon, LogInIcon, SalesMateLogoIcon } from "../../components/Icons";
+import { EyeIcon, EyeOffIcon, LoaderIcon, LogInIcon, AuremontLogoIcon } from "../../components/Icons";
+
+const HERO_IMAGE_URL =
+  "http://localhost:9000/project-images/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
 
 interface TokenResponse {
   access_token: string;
   refresh_token: string;
   token_type: string;
 }
-
-// Tài khoản seed sẵn khi APP_ENV=development (backend/main.py POST /__test__/users).
-// Ghi chú tiện test — gỡ khối này trước khi triển khai thật.
-const DEV_ACCOUNTS = [
-  { label: "Sale", username: "sale_test", password: "pass1234" },
-  { label: "Admin", username: "admin_test", password: "pass1234" },
-];
 
 function decodeRoleFromToken(accessToken: string): UserRole {
   // backend/core/security.py create_access_token nhúng {"role":...} vào payload JWT.
@@ -56,18 +52,13 @@ export function Login() {
   };
 
   return (
-    <div className="login-page">
-      <div className="hero-orbs" style={{ position: "fixed", inset: 0, pointerEvents: "none" }}>
-        <div className="hero-orb hero-orb-1" />
-        <div className="hero-orb hero-orb-2" />
-      </div>
+    <div className="login-page" style={{ "--hero-image-url": `url(${HERO_IMAGE_URL})` } as React.CSSProperties}>
+      <div className="login-page-scrim" />
 
       <div className="login-card">
         <div className="login-logo">
-          <SalesMateLogoIcon size={36} />
-          <span className="logo-text" style={{ fontSize: "1.25rem" }}>
-            Sales<span className="logo-accent">Mate</span>
-          </span>
+          <AuremontLogoIcon size={36} />
+          <span className="logo-text" style={{ fontSize: "1.25rem" }}>Auremont</span>
         </div>
 
         <h1 className="login-title">Đăng nhập</h1>
@@ -136,27 +127,6 @@ export function Login() {
         </form>
 
         <p className="login-hint">Hệ thống tự chuyển tới màn hình phù hợp theo vai trò tài khoản.</p>
-
-        <div className="login-devbox">
-          <span className="login-devbox-title">Tài khoản thử nghiệm</span>
-          {DEV_ACCOUNTS.map((account) => (
-            <button
-              key={account.username}
-              type="button"
-              className="login-devbox-row"
-              disabled={loading}
-              onClick={() => {
-                setUsername(account.username);
-                setPassword(account.password);
-              }}
-            >
-              <span className="login-devbox-role">{account.label}</span>
-              <code>
-                {account.username} / {account.password}
-              </code>
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );

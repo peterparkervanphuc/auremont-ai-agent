@@ -249,6 +249,21 @@ make run
 > Chạy bằng Docker Compose thì không cần bước `alembic upgrade head` — container
 > tự chạy migration lúc khởi động (`docker-entrypoint.sh`).
 
+**Nạp ảnh phân khu vào MinIO (BẮT BUỘC trước lần chạy đầu, hoặc sau khi `docker compose down -v`)**
+
+Ảnh mặt bằng/phối cảnh/layout dùng trong trang "Chung cư" (Zurich, Beverly, London,
+Paris, Sapphire, Senique Hanoi, Ocean View, Zenpark, Pavilion, Palma...) không nằm
+trong DB — code trỏ thẳng URL MinIO dạng `http://localhost:9000/project-images/<slug>/<file>`.
+File ảnh gốc đã commit sẵn trong `project-images-source/`, chỉ cần nạp lại vào MinIO
+(volume Docker mới tinh sẽ rỗng, không tự có ảnh):
+
+```bash
+python scripts/upload_project_images.py
+```
+
+Máy nào clone repo về, `docker compose up -d minio` xong chạy lệnh trên 1 lần là
+đủ ảnh — không cần thư mục ảnh gốc nào khác bên ngoài repo.
+
 #### 6.4.1. Migration cơ sở dữ liệu (Alembic)
 
 Schema do Alembic quản lý, **không** dùng `Base.metadata.create_all` nữa:

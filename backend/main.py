@@ -22,6 +22,7 @@ from backend.routers import (
     admin_conflicts,
     admin_eval,
     admin_settings,
+    admin_stats,
     auth,
     dev_seed,
     documents,
@@ -68,10 +69,12 @@ app.include_router(users.router, prefix="/api/v1")
 app.include_router(projects.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(sale_chat.router, prefix="/api/v1")
+app.include_router(projects.router, prefix="/api/v1")
 app.include_router(hitl.router, prefix="/api/v1")
 app.include_router(feedback.router, prefix="/api/v1")
 app.include_router(admin_eval.router, prefix="/api/v1")
 app.include_router(admin_conflicts.router, prefix="/api/v1")
+app.include_router(admin_stats.router, prefix="/api/v1")
 app.include_router(admin_settings.router, prefix="/api/v1")
 
 # Seeding endpoint for E2E — registered ONLY in development. See backend/routers/dev_seed.py.

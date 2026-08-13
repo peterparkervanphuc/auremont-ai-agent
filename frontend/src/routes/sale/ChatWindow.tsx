@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type { MessageResponse } from "../../types";
 import { HitlCard } from "./HitlCard";
-import { BotIcon, DocumentIcon, LoaderIcon, SendIcon, SparkleIcon, TrashIcon, UserIcon } from "../../components/Icons";
+import { BotIcon, DocumentIcon, LoaderIcon, SendIcon, TrashIcon, UserIcon } from "../../components/Icons";
 import { FeedbackButtons } from "../../components/FeedbackButtons";
+import { AuremontMascot } from "../../components/AuremontMascot";
+import { ChatContextPanel } from "./ChatContextPanel";
+import { ChatSuggestions } from "./ChatSuggestions";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -19,8 +22,9 @@ interface Props {
 // Agent Pipeline: text input -> câu trả lời + trích nguồn, hoặc Thẻ HITL.
 export function ChatWindow({ onSessionsChange }: Props = {}) {
   const { sessionId } = useParams<{ sessionId: string }>();
+  const location = useLocation();
   const [messages, setMessages] = useState<MessageResponse[]>([]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => (location.state as { prefill?: string } | null)?.prefill ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,18 +57,45 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
 
   const sendMessage = useCallback(async () => {
     if (!sessionId || !input.trim() || loading) return;
+    const content = input.trim();
+    // Tin đầu tiên trong phiên -> backend tự đặt tên session từ nội dung này,
+    // báo cho SalePage load lại sidebar để tên mới hiện ra ngay.
+    const isFirstMessage = messages.length === 0;
+
+    // Optimistic UI: server chỉ trả về câu trả lời của agent (response_model=MessageResponse,
+    // không phải list), nên tin của Sale phải tự thêm ngay — không thì user gõ xong sẽ không
+    // thấy gì cho tới khi AI trả lời xong, giống như tin nhắn "biến mất".
+    const optimisticUser: MessageResponse = {
+      id: -Date.now(),
+      session_id: Number(sessionId) || null,
+      sender: "sale",
+      content,
+      citations: null,
+      verifier_score: null,
+      requires_hitl: false,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimisticUser]);
+    setInput("");
     setLoading(true);
     setError(null);
     try {
-      const reply = await api.post<MessageResponse>(`/sale/sessions/${sessionId}/messages`, { content: input });
+      const reply = await api.post<MessageResponse>(`/sale/sessions/${sessionId}/messages`, { content });
       setMessages((prev) => [...prev, reply]);
-      setInput("");
+      if (isFirstMessage) onSessionsChange?.();
     } catch {
       setError("Tạm thời không tra được tồn kho — vui lòng thử lại.");
     } finally {
       setLoading(false);
     }
-  }, [sessionId, input, loading]);
+  }, [sessionId, input, loading, messages.length, onSessionsChange]);
+
+  // HitlCard tự giữ state "đã xác nhận" cục bộ, nhưng nếu danh sách messages
+  // re-render lại (đổi phiên rồi quay lại, v.v.) mà requires_hitl vẫn true trong
+  // state cha, thẻ HITL sẽ hiện lại nút xác nhận dù đã confirm rồi.
+  const handleHitlConfirmed = useCallback((messageId: number) => {
+    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, requires_hitl: false } : m)));
+  }, []);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -87,7 +118,13 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
 
   const ready = Boolean(input.trim()) && !loading;
 
+  const pickSuggestion = (question: string) => {
+    setInput(question);
+    textareaRef.current?.focus();
+  };
+
   return (
+    <>
     <div className="chat-page">
       <header className="chat-topbar">
         <div className="chat-topbar-info">
@@ -95,7 +132,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
             <BotIcon size={20} />
           </div>
           <div>
-            <div className="chat-topbar-name">Trợ lý tư vấn SalesMate</div>
+            <div className="chat-topbar-name">Trợ lý tư vấn Auremont</div>
             <div className="chat-topbar-status">
               <span className="chat-status-dot" />
               Sẵn sàng tra cứu tài liệu &amp; tồn kho
@@ -112,16 +149,14 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
       <div className="chat-messages" ref={scrollRef}>
         <div className="chat-messages-inner">
           {messages.length === 0 && !loading && (
-            <div className="chat-empty">
-              <div className="chat-empty-icon">
-                <SparkleIcon size={26} />
-              </div>
-              <h2 className="chat-empty-title">SalesMate có thể giúp gì?</h2>
+            <div className="chat-landing">
+              <AuremontMascot size={64} className="chat-landing-mascot" />
+              <h2 className="chat-empty-title">Hỏi Auremont bằng câu nói của bạn</h2>
               <p className="chat-empty-text">
-                Hỏi về bảng giá, mặt bằng, chính sách bán hàng hoặc tồn kho căn.
-                <br />
-                Mọi câu trả lời đều kèm trích nguồn tài liệu.
+                Ví dụ "bảng giá căn 2 ngủ The Zurich" hoặc "mặt bằng tòa BE1 The Beverly". Auremont tra tài liệu đang
+                có và trả lời kèm trích nguồn.
               </p>
+              <ChatSuggestions onPick={pickSuggestion} />
             </div>
           )}
 
@@ -130,7 +165,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
               // Câu trả lời rủi ro vẫn nằm trong feedback loop như mọi câu khác.
               return (
                 <div key={m.id} className="chat-hitl-row">
-                  <HitlCard message={m} onConfirmed={() => {}} />
+                  <HitlCard message={m} onConfirmed={() => handleHitlConfirmed(m.id)} />
                   <div className="chat-hitl-meta">
                     <span className="chat-timestamp">{formatTime(m.created_at)}</span>
                     <FeedbackButtons messageId={m.id} />
@@ -211,5 +246,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
         </form>
       </div>
     </div>
+    <ChatContextPanel messages={messages} />
+    </>
   );
 }

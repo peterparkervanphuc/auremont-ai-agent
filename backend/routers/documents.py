@@ -15,11 +15,13 @@ from sqlalchemy.orm import Session
 from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import DocumentStatus, DocumentVisibility, UserRole
+from backend.core.minio_client import presigned_get_url
 from backend.core.mysql_client import get_db
 from backend.models.user import User
 from backend.repositories.document import (
     create_document,
     delete_document,
+    get_document,
     list_documents,
     update_document_visibility,
 )
@@ -154,6 +156,7 @@ async def upload_document(
 async def ingest_document(
     payload: IngestRequest,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
 ) -> IngestResponse:
     """Legacy raw-text ingest endpoint."""
     try:
@@ -171,6 +174,7 @@ async def ingest_document(
             file_path=payload.file_path,
             project_id=payload.project_id,
         ),
+        uploaded_by=admin.id,
     )
 
     return IngestResponse(
@@ -185,6 +189,24 @@ async def get_documents(
     db: Session = Depends(get_db),
 ) -> list[DocumentResponse]:
     return list_documents(db)
+
+
+@router.get("/{document_id}/view-url")
+async def get_document_view_url(
+    document_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Link tạm thời (có chữ ký, hết hạn sau vài phút) để xem file gốc —
+    bucket tài liệu là private nên không thể link thẳng object key."""
+    document = get_document(db, document_id)
+    if document is None or not document.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document has no stored file yet.",
+        )
+
+    url = presigned_get_url(settings.minio_bucket_documents, document.file_path)
+    return {"url": url}
 
 
 @router.patch(

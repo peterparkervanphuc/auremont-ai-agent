@@ -11,6 +11,7 @@ from backend.repositories.chat_session import (
     delete_session,
     get_session,
     list_sessions_for_sale,
+    set_title_if_empty,
 )
 from backend.repositories.feedback import delete_feedback_for_session
 from backend.repositories.message import (
@@ -78,6 +79,7 @@ async def ask_in_session(
 ) -> MessageResponse:
     """Agent Pipeline for the Sale flow — flags HITL when a price/commitment risk is detected."""
     session = _owned_session(db, session_id, user)
+    set_title_if_empty(db, session, payload.content)
 
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
 
