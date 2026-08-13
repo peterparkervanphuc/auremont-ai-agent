@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     minio_bucket_documents: str = "salesmate-documents"
     minio_bucket_project_images: str = "project-images"
+    # Host:port the BROWSER uses to fetch public objects (project images).
+    # `minio_endpoint` is how the backend reaches MinIO — inside Docker that is
+    # the service name `minio:9000`, which no browser can resolve. Public image
+    # URLs are rendered by the frontend, so they must use a host-reachable
+    # address. Left blank it falls back to minio_endpoint, which is correct when
+    # running the backend outside Docker.
+    minio_public_endpoint: str = ""
 
     # Inventory API — real-time unit availability from the company's internal API
     inventory_api_url: str = ""

@@ -35,6 +35,9 @@ data/
 *.db
 *.sqlite3
 
+# Project images (loaded by scripts/upload_project_images.py & scripts/load_*.py)
+project-images-source/
+
 # Logs
 logs/
 *.log

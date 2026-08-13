@@ -46,9 +46,18 @@ def ensure_public_read_bucket(bucket: str) -> None:
 
 
 def public_object_url(bucket: str, object_name: str) -> str:
+    """URL cong khai cho object — DUNG CHO TRINH DUYET, khong phai cho backend.
+
+    Dung `minio_public_endpoint` chu khong phai `minio_endpoint`: trong Docker,
+    backend noi toi MinIO qua service name `minio:9000`, nhung URL nay duoc tra
+    ve cho frontend va render trong the <img>, ma trinh duyet tren may host
+    khong phan giai duoc hostname `minio` — anh se hong. Khong dat bien thi quay
+    ve `minio_endpoint` (dung khi chay backend ngoai Docker).
+    """
     settings = get_settings()
     scheme = "https" if settings.minio_secure else "http"
-    return f"{scheme}://{settings.minio_endpoint}/{bucket}/{object_name}"
+    endpoint = settings.minio_public_endpoint or settings.minio_endpoint
+    return f"{scheme}://{endpoint}/{bucket}/{object_name}"
 
 
 def presigned_get_url(bucket: str, object_name: str, expires_minutes: int = 10) -> str:
