@@ -392,3 +392,74 @@ thái active về đúng bảng trên. Muốn thêm tài khoản dùng chung th�
 | **File PDF Chính sách bán hàng** | `market-files.vinhomes.vn` (public-mngt) — tra cứu Google: `site:vinhomes.vn "chính sách bán hàng" filetype:pdf` |
 | **Hình ảnh Mặt bằng (Floor Plans) & Tiện ích** | `rever.vn`; `batdongsan.com.vn` hoặc website chính thức của dự án (mục "Mặt bằng tổng thể") |
 | **API** | Mock API tồn kho — `mockapi.io` (cách dựng: mục 6.2.1) |
+
+---
+
+### 7. Logging & Observability
+
+Backend ghi log ra **stdout** (`docker compose logs -f backend`). Không ghi file, không ghi stderr — log collector coi mọi dòng stderr là lỗi bất kể mức độ.
+
+#### 7.1. Định dạng
+
+| `APP_ENV` | Định dạng | Dùng khi |
+| :--- | :--- | :--- |
+| `development` / `test` | Console — một dòng dễ đọc, có `[req=<id>]` | Chạy máy local |
+| còn lại | JSON — mỗi record một dòng | Production, để collector parse |
+
+Ép định dạng bằng `LOG_JSON=true|false`. Mức log theo `LOG_LEVEL` (mặc định `INFO`).
+
+Mỗi dòng JSON có: `timestamp`, `level`, `logger`, `message`, `module`, `func`, `line`, `request_id`, cộng các field riêng của sự kiện, và `exc_type` + `exception` (traceback đầy đủ) khi có lỗi.
+
+#### 7.2. `request_id` — sợi chỉ xuyên suốt một request
+
+Mỗi request được gán một id (hoặc tái dùng header `X-Request-ID` gửi tới, cho phép trace xuyên service), id này xuất hiện trên **mọi** dòng log của request đó và được trả lại trong header `X-Request-ID`. Khi Sale báo lỗi, chỉ cần id đó là dựng lại được toàn bộ diễn biến:
+
+```bash
+docker compose logs backend | grep <request_id> | jq .
+```
+
+Khi backend trả lỗi 500, body chứa sẵn `request_id` để người dùng đọc cho support — nội dung lỗi thật không bao giờ lộ ra ngoài.
+
+#### 7.3. Audit trail nghiệp vụ
+
+Sự kiện nghiệp vụ đi vào logger riêng `salesmate.audit`, **ghim cứng ở mức INFO** để chạy production với `LOG_LEVEL=WARNING` không vô tình tắt mất vết kiểm toán.
+
+| Event | Ý nghĩa |
+| :--- | :--- |
+| `auth.login.success` / `auth.login.failure` | Đăng nhập. Thất bại dùng chung một `reason` cho cả sai user lẫn sai mật khẩu, để log không dò được username hợp lệ |
+| `auth.refresh.failure`, `auth.logout` | Vòng đời token |
+| `document.upload` | Admin tải tài liệu lên |
+| `document.ingest.success` / `.blocked` / `.failure` | Kết quả ingest; `.blocked` là phát hiện prompt injection |
+| `sale.query` | **Nguồn dữ liệu cho Dashboard Admin (§5.3 Tab 2)** — `verifier_score`, `faithfulness`, `answer_relevancy`, `requires_hitl`, `used_cache`, `citation_count`, `duration_ms` |
+| `hitl.confirm` | Sale bấm xác nhận nội dung cam kết |
+
+Lọc riêng audit event:
+
+```bash
+docker compose logs backend | jq 'select(.audit == true)'
+docker compose logs backend | jq 'select(.event == "sale.query") | {verifier_score, requires_hitl, duration_ms}'
+```
+
+#### 7.4. Những gì KHÔNG bao giờ vào log
+
+Mật khẩu, JWT (kể cả một phần — prefix JWT vẫn decode được), `GEMINI_API_KEY`/`SECRET_KEY`/khóa MinIO, nội dung file tài liệu, câu trả lời sinh ra, và nội dung HITL gửi khách (chỉ ghi độ dài và việc Sale có sửa hay không).
+
+Đặt `LOG_QUERY_TEXT=false` nếu không được phép lưu cả câu hỏi của Sale — khi đó `sale.query` vẫn giữ `query_len` nhưng bỏ `query`.
+
+Ngoài kỷ luật tại chỗ gọi, handler còn gắn `RedactingFilter` tự động che các field có tên gợi ý bí mật. Đây là lưới an toàn, không thay thế nguyên tắc "không truyền bí mật vào logger".
+
+#### 7.5. Chẩn đoán sự cố thường gặp
+
+```bash
+# Pipeline sập / Gemini lỗi — traceback đầy đủ nằm ở đây
+docker compose logs backend | jq 'select(.event | startswith("pipeline."))'
+
+# Verifier hỏng (khác hoàn toàn với "câu trả lời chất lượng kém")
+docker compose logs backend | jq 'select(.event | startswith("verifier."))'
+
+# Qdrant / MinIO / API tồn kho lỗi
+docker compose logs backend | jq 'select(.event | test("retrieval|vectorstore|storage|inventory"))'
+
+# Request chậm
+docker compose logs backend | jq 'select(.event == "http.access" and .duration_ms > 3000)'
+```

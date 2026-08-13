@@ -191,3 +191,31 @@ class TestSetupLogging:
     )
     def test_formatter_follows_the_json_flag(self, use_json, expected):
         assert build_config("INFO", use_json)["handlers"]["default"]["formatter"] == expected
+
+
+class TestLogSettings:
+    """LOG_JSON resolution, including the blank value that .env.example ships."""
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_blank_log_json_is_treated_as_unset(self, blank):
+        """A copied .env.example must not stop the app from starting."""
+        from backend.core.config import Settings
+
+        settings = Settings(_env_file=None, app_env="production", log_json=blank)
+
+        assert settings.log_json is True
+
+    @pytest.mark.parametrize(
+        ("app_env", "expected"),
+        [("production", True), ("staging", True), ("development", False), ("test", False)],
+    )
+    def test_unset_log_json_derives_from_app_env(self, app_env, expected):
+        from backend.core.config import Settings
+
+        assert Settings(_env_file=None, app_env=app_env).log_json is expected
+
+    @pytest.mark.parametrize("value", [False, "false"])
+    def test_an_explicit_value_overrides_the_env_default(self, value):
+        from backend.core.config import Settings
+
+        assert Settings(_env_file=None, app_env="production", log_json=value).log_json is False

@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,6 +68,19 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
     upload_max_bytes: int = 20 * 1024 * 1024
+
+    @field_validator("log_json", mode="before")
+    @classmethod
+    def _empty_log_json_means_unset(cls, value: object) -> object:
+        """Treat `LOG_JSON=` (present but blank) as "not set".
+
+        .env.example ships the key with an empty value so it is discoverable.
+        Without this, pydantic rejects "" as an invalid bool and the app cannot
+        start for anyone who copies the example file verbatim.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @model_validator(mode="after")
     def _default_log_json(self) -> "Settings":
