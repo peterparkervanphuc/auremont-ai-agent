@@ -153,7 +153,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # The response keeps FastAPI's exact 422 shape — the frontend parses it.
     return JSONResponse(
         {"detail": jsonable_encoder(exc.errors())},
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
     )
 
 
