@@ -140,6 +140,19 @@ def ingest_uploaded_document(
     except Exception as exc:
         update_document_status(db, document.id, DocumentStatus.FAILED)
 
+        # Logged before the re-raise branch so every ingest failure is captured,
+        # whichever way it leaves. This is what finally makes the router's
+        # "Check server logs." message in documents.py true.
+        logger.exception(
+            "Document ingestion failed",
+            extra={
+                "event": "document.ingest.exception",
+                "document_id": document.id,
+                "filename": filename,
+                "error_type": type(exc).__name__,
+            },
+        )
+
         if isinstance(exc, DocumentIngestionError):
             raise
 
@@ -218,6 +231,16 @@ def _store_original_file(
             content_type=content_type or "application/octet-stream",
         )
     except Exception as exc:
+        logger.error(
+            "Could not store original file in MinIO",
+            exc_info=True,
+            extra={
+                "event": "document.storage.failed",
+                "document_id": document_id,
+                "object_key": object_key,
+                "bucket": settings.minio_bucket_documents,
+            },
+        )
         raise DocumentIngestionError(
             "Could not store original file in MinIO."
         ) from exc

@@ -9,6 +9,7 @@ real-time inventory table must go through `inventory_service.lookup_inventory()`
 between the two belongs to `agent_pipeline`, not to this module.
 """
 
+import logging
 import re
 
 from qdrant_client import models
@@ -17,6 +18,8 @@ from backend.core.config import settings
 from backend.core.enums import DocumentVisibility
 from backend.core.gemini_client import GeminiEmbeddingError, embed_query
 from backend.core.qdrant_client import get_qdrant_client
+
+logger = logging.getLogger(__name__)
 
 # Over-fetch from Qdrant, then re-rank and trim back to top_k. Vector search is fast but
 # coarse; re-ranking a wider set gives the genuinely right passage a chance to surface.
@@ -52,6 +55,11 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
     try:
         query_vector = embed_query(query)
     except GeminiEmbeddingError as exc:
+        logger.error(
+            "Could not embed the query",
+            exc_info=True,
+            extra={"event": "retrieval.embed.failed", "project_id": project_id},
+        )
         raise RetrievalError("Could not embed the query.") from exc
 
     conditions: list[models.Condition] = [_visibility_condition(visibility)]
@@ -73,6 +81,18 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
             with_payload=True,
         )
     except Exception as exc:
+        # agent_pipeline catches RetrievalError and discards it, so this is the
+        # only place the actual Qdrant failure is ever recorded.
+        logger.error(
+            "Could not query Qdrant",
+            exc_info=True,
+            extra={
+                "event": "retrieval.qdrant.failed",
+                "collection": settings.qdrant_collection,
+                "project_id": project_id,
+                "top_k": top_k,
+            },
+        )
         raise RetrievalError("Could not query Qdrant.") from exc
 
     hits = []

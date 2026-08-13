@@ -15,6 +15,7 @@ trivial Qdrant hiccup into a total inability to answer, when the only real cost 
 skipping it is a few extra tokens.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass
 
@@ -23,6 +24,8 @@ from qdrant_client import models
 from backend.core.config import settings
 from backend.core.gemini_client import embed_query
 from backend.core.qdrant_client import get_qdrant_client
+
+logger = logging.getLogger(__name__)
 
 CACHE_COLLECTION = "salesmate_qa_cache"
 
@@ -57,8 +60,14 @@ def lookup_cache(query: str, project_id: str | None = None) -> CachedAnswer | No
         )
     except Exception:
         # Qdrant down or a Gemini embedding failure -> treat as a cache miss and let the
-        # pipeline take the full path. Not logged loudly: this is a normal route when the
-        # infrastructure is degraded.
+        # pipeline take the full path. WARNING rather than ERROR: the answer is still
+        # correct, the only cost is the tokens the cache would have saved. Logged all the
+        # same, because a permanently broken cache is otherwise invisible.
+        logger.warning(
+            "Semantic cache lookup failed; treating as miss",
+            exc_info=True,
+            extra={"event": "cache.lookup.failed", "project_id": project_id},
+        )
         return None
 
     if not response.points:
@@ -122,7 +131,13 @@ def store_cache(
             ],
         )
     except Exception:
-        # A failed cache write has no bearing on the answer already being served.
+        # A failed cache write has no bearing on the answer already being served,
+        # but it silently drops the hit rate to zero, so it must be visible.
+        logger.warning(
+            "Semantic cache write failed",
+            exc_info=True,
+            extra={"event": "cache.store.failed", "project_id": project_id},
+        )
         return
 
 

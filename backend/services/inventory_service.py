@@ -12,12 +12,15 @@ Every API failure is wrapped in `InventoryApiError` so the router/pipeline can s
 proper "Tạm thời không tra được tồn kho" message instead of letting the error escape as a 500.
 """
 
+import logging
 import re
 from dataclasses import dataclass, fields
 
 import httpx
 
 from backend.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 INVENTORY_TIMEOUT_SECONDS = 5.0
 
@@ -104,10 +107,20 @@ def _parse_unit(item: object) -> InventoryUnit | None:
     worth failing a Sale's entire lookup over.
     """
     if not isinstance(item, dict):
+        logger.warning(
+            "Skipping non-dict inventory record",
+            extra={"event": "inventory.record.not_dict", "record_type": type(item).__name__},
+        )
         return None
 
     data = {key: value for key, value in item.items() if key in _FIELD_NAMES}
     if not {"unit_code", "project_id", "status"} <= data.keys():
+        # Field names only, never their values: the API response may carry
+        # customer-linked fields.
+        logger.warning(
+            "Skipping inventory record missing required fields",
+            extra={"event": "inventory.record.incomplete", "present_fields": sorted(data.keys())},
+        )
         return None
 
     unit_type = data.get("unit_type")
@@ -128,6 +141,12 @@ def _to_float(value: object) -> float | None:
     try:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
+        # DEBUG: a malformed price silently renders as "chưa có" to the Sale, which
+        # is the intended degradation, but it should still be traceable.
+        logger.debug(
+            "Unparseable unit price, leaving blank",
+            extra={"event": "inventory.price.unparseable", "value": repr(value)[:80]},
+        )
         return None
 
 

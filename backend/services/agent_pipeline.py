@@ -25,6 +25,7 @@ Two principles govern this whole file:
   flagged for HITL.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
@@ -36,6 +37,8 @@ from backend.services import cache_service, risk_service, verifier_service
 from backend.services.inventory_service import InventoryApiError, InventoryUnit, lookup_inventory
 from backend.services.rag_service import RetrievalError, retrieve
 from backend.utils.text import strip_diacritics, strip_markdown
+
+logger = logging.getLogger(__name__)
 
 RETRIEVAL_TOP_K = 5
 
@@ -210,6 +213,13 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     try:
         hits = retrieve(query, DocumentVisibility.INTERNAL, state.get("project_id"), RETRIEVAL_TOP_K)
     except RetrievalError:
+        # rag_service already logged the underlying Qdrant/Gemini cause; this
+        # records that the Sale actually got the degraded answer.
+        logger.error(
+            "Retrieval failed; returning retrieval-error notice",
+            exc_info=True,
+            extra={"event": "pipeline.retrieve.failed", "project_id": state.get("project_id")},
+        )
         return {"notice": RETRIEVAL_ERROR_MESSAGE}
 
     needs_realtime = _needs_realtime(query)
@@ -235,6 +245,11 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
     try:
         units = lookup_inventory(project_id, state["query"])
     except InventoryApiError:
+        logger.warning(
+            "Inventory lookup failed; returning inventory-unavailable notice",
+            exc_info=True,
+            extra={"event": "pipeline.inventory.failed", "project_id": project_id},
+        )
         return {"inventory_failed": True, "notice": INVENTORY_UNAVAILABLE_MESSAGE}
 
     # An empty `units` list is a valid answer ("no 2PN units left"), not a failure —
@@ -252,6 +267,18 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     try:
         answer = generate_text(prompt, system_instruction=_SYSTEM_INSTRUCTION)
     except Exception:
+        # Quota, bad API key, safety block, timeout and network error all collapse
+        # into the same user-facing message; the traceback is the only way to tell
+        # "Gemini is down" from "we are out of quota".
+        logger.exception(
+            "Gemini generation failed",
+            extra={
+                "event": "pipeline.generate.failed",
+                "project_id": state.get("project_id"),
+                "doc_count": len(docs),
+                "unit_count": len(units),
+            },
+        )
         return {"notice": GENERATION_ERROR_MESSAGE}
 
     # Làm sạch trước khi kiểm tra rỗng: một câu trả lời chỉ gồm ký tự Markdown là rỗng
@@ -394,6 +421,12 @@ def run_pipeline(query: str, project_id: str | None = None) -> PipelineResult:
         state = _get_graph().invoke(initial)
     except Exception:
         # Final safety net: an unexpected error inside the graph must not become a 500.
+        # Without this log the failure is completely invisible — the Sale sees a
+        # generic message and nothing anywhere records why.
+        logger.exception(
+            "Agent pipeline crashed; returning generation-error notice",
+            extra={"event": "pipeline.crash", "project_id": project_id, "query_len": len(query)},
+        )
         return PipelineResult(GENERATION_ERROR_MESSAGE, [], 0.0, False)
 
     notice = state.get("notice")

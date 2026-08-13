@@ -1,9 +1,12 @@
+import logging
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from jose import JWTError, jwt
 
 from backend.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def hash_password(plain: str) -> str:
@@ -35,5 +38,14 @@ def create_refresh_token(subject: str) -> str:
 def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-    except JWTError:
+    except JWTError as exc:
+        # The exception type separates an ordinary expiry (ExpiredSignatureError)
+        # from a tampered or wrongly-signed token — indistinguishable before, since
+        # both surfaced as the same generic 401.
+        # The token itself is never logged, not even a prefix: a JWT prefix is a
+        # decodable header plus the start of the payload.
+        logger.warning(
+            "JWT rejected",
+            extra={"event": "auth.token.rejected", "reason": type(exc).__name__, "detail": str(exc)[:120]},
+        )
         return None
