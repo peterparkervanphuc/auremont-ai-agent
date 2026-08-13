@@ -8,8 +8,9 @@ import { Landing } from "./routes/Landing";
 import { Home } from "./routes/Home";
 import { Login } from "./routes/sale/Login";
 import { SalePage } from "./routes/sale/SalePage";
-import { InventoryPage } from "./routes/sale/InventoryPage";
 import { CategoryDetailPage } from "./routes/sale/CategoryDetailPage";
+import { CatalogGroupPage } from "./routes/sale/CatalogGroupPage";
+import { ProjectOverviewPage } from "./routes/sale/ProjectOverviewPage";
 import { AdminHome } from "./routes/admin/AdminHome";
 import { DocumentsTab } from "./routes/admin/DocumentsTab";
 import { EvalTab } from "./routes/admin/EvalTab";
@@ -49,20 +50,32 @@ function AppShell() {
             }
           />
 
-          {/* Tra cứu dự án — công cụ chính của SALE, chatbot chỉ là trợ lý đi kèm. */}
-          <Route
-            path="/inventory"
-            element={
-              <ProtectedRoute allowedRole="sale">
-                <InventoryPage />
-              </ProtectedRoute>
-            }
-          />
+          {/* Tra cứu dự án theo loại hình — vào thẳng qua dropdown menu TopNavbar,
+              không còn trang mục lục /inventory riêng (trùng lặp với menu). */}
           <Route
             path="/inventory/:categorySlug"
             element={
               <ProtectedRoute allowedRole="sale">
                 <CategoryDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Nhóm/phân khu trong catalog nhiều dự án (vd "The Metropolitan" gồm Beverly/London/Paris/Zurich). */}
+          <Route
+            path="/inventory/group/:groupSlug"
+            element={
+              <ProtectedRoute allowedRole="sale">
+                <CatalogGroupPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* Trang chi tiết 1 dự án con thật (The Beverly, The Sapphire...), khác với CategoryDetailPage
+              ở trên vốn chỉ hiển thị tổng quan CỦA RIÊNG Vinhomes Ocean Park theo loại hình. */}
+          <Route
+            path="/inventory/project/:projectId"
+            element={
+              <ProtectedRoute allowedRole="sale">
+                <ProjectOverviewPage />
               </ProtectedRoute>
             }
           />

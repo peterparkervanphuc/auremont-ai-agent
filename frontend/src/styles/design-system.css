@@ -297,6 +297,17 @@ code {
   transform: translateY(0);
 }
 
+.btn-gold {
+  background: #f5c518;
+  color: #1a1a1a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.btn-gold:hover {
+  background: #e0b30f;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+}
+
 .btn-outline {
   border: 1px solid var(--border-h);
   color: var(--text-2);
@@ -2893,6 +2904,65 @@ code {
 }
 .chat-empty-text { font-size: 0.9375rem; color: var(--text-2); line-height: 1.6; }
 
+/* Landing state (chua co tin nhan) — kieu MOSO: avatar phat sang giua trang +
+   card goi y "Thu hoi" ben duoi. */
+.chat-landing {
+  text-align: center;
+  padding: 40px 0 20px;
+  max-width: 620px;
+  margin: 0 auto;
+  animation: fade-up 0.4s var(--ease) both;
+}
+
+/* Bo khung tron/vien hao quang cu — chi hien dung hinh linh vat (nen trong
+   suot san co trong PNG), giong cach da sua o nut chat noi (.chat-widget-fab). */
+.chat-landing-mascot {
+  margin-bottom: 16px;
+  filter: drop-shadow(0 10px 20px rgba(0, 80, 239, 0.3));
+}
+
+.chat-suggest-card {
+  margin-top: 24px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-2);
+}
+
+.chat-suggest-label {
+  display: block;
+  padding: 12px 16px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-suggest-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.chat-suggest-item:last-child { border-bottom: none; }
+.chat-suggest-item:hover { background: var(--bg-glass-h); color: var(--accent); }
+.chat-suggest-item svg { flex-shrink: 0; opacity: 0.6; }
+.chat-suggest-item:hover svg { opacity: 1; }
+
 /* Individual message */
 .chat-message {
   display: flex;
@@ -3170,12 +3240,101 @@ code {
 
 .chat-shell {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr) 280px;
   height: calc(100vh - 68px);
   overflow: hidden;
   background:
     radial-gradient(circle at 78% 0%, rgba(0,80,239,0.08), transparent 34%),
     var(--bg);
+}
+
+.chat-sidebar-home-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 14px;
+  transition: color var(--t-fast);
+}
+.chat-sidebar-home-link:hover { color: var(--accent); }
+
+.chat-sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 12px;
+  margin-top: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-3);
+}
+.chat-sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  color: var(--text-1);
+  font-size: 0.8125rem;
+  font-family: inherit;
+}
+.chat-sidebar-search input::placeholder { color: var(--text-3); }
+
+/* Panel ben phai: ngu canh/nguon tai lieu dang dung — kieu "MOSO hieu ban dang
+   tim" nhung thay bang du lieu THAT (citations) thay vi bia 1 tinh nang AI
+   hieu y dinh chua co. */
+.chat-context-panel {
+  border-left: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-2) 82%, transparent);
+  padding: 20px 16px;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.chat-context-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: 14px;
+}
+.chat-context-head svg { color: var(--accent); }
+
+.chat-context-hint {
+  font-size: 0.8125rem;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.chat-context-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-context-source {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 0.8125rem;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+.chat-context-source svg { flex-shrink: 0; margin-top: 2px; color: var(--accent); }
+
+@media (max-width: 1180px) {
+  .chat-shell { grid-template-columns: 300px minmax(0, 1fr); }
+  .chat-context-panel { display: none; }
 }
 
 .chat-sidebar {
@@ -4144,6 +4303,20 @@ code {
   color: var(--accent);
   background: rgba(0, 80, 239, 0.08);
   font-weight: 600;
+  position: relative;
+}
+
+/* Gach chan mong duoi tab dang chon — dung currentColor de tu doi mau theo ngu canh
+   (xanh tren nen trang thuong, trang khi topnav dang o che do overlay tren banner toi). */
+.topnav-link--active::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
 }
 
 .topnav-right {
@@ -5038,22 +5211,44 @@ code {
   gap: 14px;
 }
 
+/* Linh vat Auremont (anh 3D) — dung yen, khong animate. */
+.auremont-mascot-greet {
+  display: block;
+  margin: 0 auto;
+}
+
+/* Trang thai dong (chua bam): BO han khung tron/nen/border/shadow — chi hien
+   dung hinh linh vat (nen trong suot san co trong PNG), phong to len de nguoi
+   dung de chu y hon la 1 nut bam mo nhat truoc day. */
 .chat-widget-fab {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
+  width: 72px;
+  height: 72px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--grad-primary);
-  color: #fff;
-  box-shadow: 0 10px 28px rgba(0, 80, 239, 0.35);
-  transition: transform var(--t-fast), box-shadow var(--t-fast);
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.25));
+  transition: transform var(--t-fast), filter var(--t-fast);
 }
 
 .chat-widget-fab:hover {
-  transform: translateY(-2px) scale(1.04);
-  box-shadow: 0 14px 34px rgba(0, 80, 239, 0.42);
+  transform: translateY(-2px) scale(1.06);
+  filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.32));
+}
+
+/* Trang thai dang mo (nut X dong lai) — giu nguyen khung tron nhu cu vi day la
+   1 icon dong, khong phai anh linh vat, can nen de de nhin va bam trung. */
+.chat-widget-fab--open {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--grad-primary);
+  border-color: transparent;
+  color: #fff;
+  filter: none;
+  box-shadow: 0 10px 28px rgba(0, 80, 239, 0.35);
 }
 
 .chat-widget-panel {
@@ -5307,6 +5502,51 @@ code {
 .topnav-dropdown-item:hover {
   background: var(--bg-glass);
   color: var(--accent);
+}
+
+/* Muc trong dropdown co danh sach con (vd "The Metropolitan" -> Beverly/London/Paris/Zurich)
+   mo ra 1 flyout thu 2 sang ben phai khi hover, giong menu web mau. */
+.topnav-subitem {
+  position: relative;
+}
+
+.topnav-subitem--active > .topnav-dropdown-item {
+  background: var(--accent-warn, #f5a623);
+  color: #1a1a1a;
+}
+
+.topnav-submenu {
+  display: none;
+  position: absolute;
+  top: -8px;
+  left: 100%;
+  min-width: 200px;
+  padding: 8px;
+  margin-left: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.18);
+  z-index: 320;
+}
+
+/* Bắc cầu vô hình qua khoảng margin-left phía trái — khong co no, di chuot
+   (thuong la di cheo) tu "The Metropolitan" sang flyout se di qua vung
+   "trong" 6px khong thuoc topnav-subitem, khien flyout dong lai truoc khi
+   chuot kip cham vao (giong ly do co san .topnav-dropdown::before). */
+.topnav-submenu::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -6px;
+  width: 6px;
+}
+
+.topnav-subitem:hover .topnav-submenu,
+.topnav-subitem:focus-within .topnav-submenu {
+  display: block;
+  animation: fade-up 0.15s var(--ease) both;
 }
 
 /* Điều hướng bằng #hash từ dropdown tới đúng dòng giá trong bảng loại hình */

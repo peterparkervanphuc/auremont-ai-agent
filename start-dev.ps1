@@ -44,6 +44,9 @@ for ($i = 0; $i -lt 20; $i++) {
 if ($healthy) { Write-Host "MySQL healthy." -ForegroundColor Green }
 else { Write-Host "MySQL chua healthy, van tiep tuc thu..." -ForegroundColor Yellow }
 
+Write-Host "== 3.1. Nap anh phan khu vao MinIO (project-images-source/) ==" -ForegroundColor Cyan
+& "$root\.venv\Scripts\python.exe" "$root\scripts\upload_project_images.py"
+
 Write-Host "== 4. Khoi dong Backend (cua so rieng) ==" -ForegroundColor Cyan
 $backendCmd = "cd `"$root`"; `$env:DATABASE_URL='mysql+pymysql://salesmate:salesmate@localhost:3307/salesmate_db'; .\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd

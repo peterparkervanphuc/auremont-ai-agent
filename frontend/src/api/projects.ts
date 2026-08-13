@@ -1,6 +1,38 @@
 import { api } from "./client";
 import { PROJECT_ID, type CategoryDetail, type CategorySummary } from "../types/project";
 
+// ---- Danh sách rút gọn TOAN BO du an (dung cho trang catalog nhieu du an) ----
+
+export interface ProjectListItem {
+  id: string;
+  name: string;
+  location: string | null;
+  type: string;
+  priceFrom: string | null;
+  coverImage: string | null;
+}
+
+interface ApiProjectListItem {
+  id: string;
+  name: string;
+  location: string | null;
+  type: string;
+  price_from: string | null;
+  cover_image: string | null;
+}
+
+export async function fetchAllProjects(): Promise<ProjectListItem[]> {
+  const rows = await api.get<ApiProjectListItem[]>("/projects");
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    location: r.location,
+    type: r.type,
+    priceFrom: r.price_from,
+    coverImage: r.cover_image,
+  }));
+}
+
 interface ApiCategorySummary {
   slug: string;
   name: string;
@@ -103,5 +135,114 @@ export async function fetchProjectOverview(): Promise<ProjectOverview> {
     description: row.description ?? "",
     highlights: row.highlights,
     gallery: row.gallery,
+  };
+}
+
+// ---- Trang chi tiết 1 dự án con thật (The Beverly, The Sapphire...) ----
+// Khác voi fetchCategoryDetail/fetchProjectOverview (luon dung PROJECT_ID co dinh
+// "vinhomes-ocean-park"), day la ham DUY NHAT nhan projectId dong theo tham so —
+// dung cho tung du an con rieng trong catalog nhieu du an.
+
+export interface ProjectPricingRow {
+  category: string;
+  apartmentType: string;
+  sizeRange: string;
+  priceRange: string;
+  description?: string;
+  storeys?: string;
+  sizeMinSqm?: number;
+  sizeMaxSqm?: number;
+}
+
+export interface ProjectFullDetail {
+  id: string;
+  name: string;
+  location: string | null;
+  description: string | null;
+  type: string;
+  priceFrom: string | null;
+  coverImage: string | null;
+  developer: string | null;
+  highlights: string[];
+  pricing: ProjectPricingRow[];
+  amenities: string[];
+  gallery: string[];
+  contact: { hotline?: string; phone?: string; business_hours?: string } | null;
+}
+
+interface ApiPricingRow {
+  category?: string;
+  apartment_type?: string;
+  size_min_sqm?: number | null;
+  size_max_sqm?: number | null;
+  size_note?: string | null;
+  price_min?: number | null;
+  price_max?: number | null;
+  price_note?: string | null;
+  description?: string | null;
+  storeys?: string | null;
+}
+
+interface ApiAmenityRow {
+  name: string;
+}
+
+interface ApiFullProjectDetail {
+  id: string;
+  name: string;
+  location: string | null;
+  description: string | null;
+  type: string;
+  price_from: string | null;
+  cover_image: string | null;
+  developer: string | null;
+  highlights: string[];
+  pricing: ApiPricingRow[];
+  amenities: ApiAmenityRow[];
+  gallery: string[];
+  contact: { hotline?: string; phone?: string; business_hours?: string } | null;
+}
+
+function billions(value: number): string {
+  return `${(value / 1_000_000_000).toFixed(1)} tỷ`;
+}
+
+function toPricingRow(row: ApiPricingRow): ProjectPricingRow {
+  const sizeRange =
+    row.size_min_sqm != null && row.size_max_sqm != null
+      ? `${row.size_min_sqm} - ${row.size_max_sqm} m²`
+      : row.size_note ?? "—";
+  const priceRange =
+    row.price_min != null && row.price_max != null
+      ? `${billions(row.price_min)} - ${billions(row.price_max)}`
+      : row.price_note ?? "Liên hệ";
+  return {
+    category: row.category ?? "",
+    apartmentType: row.apartment_type ?? "",
+    sizeRange,
+    priceRange,
+    description: row.description ?? undefined,
+    storeys: row.storeys ?? undefined,
+    sizeMinSqm: row.size_min_sqm ?? undefined,
+    sizeMaxSqm: row.size_max_sqm ?? undefined,
+  };
+}
+
+export async function fetchProjectDetail(projectId: string): Promise<ProjectFullDetail> {
+  const row = await api.get<ApiFullProjectDetail>(`/projects/${projectId}`);
+  return {
+    id: row.id,
+    name: row.name,
+    location: row.location,
+    description: row.description,
+    type: row.type,
+    priceFrom: row.price_from,
+    coverImage: row.cover_image,
+    developer: row.developer,
+    highlights: row.highlights,
+    pricing: row.pricing.map(toPricingRow),
+    amenities: row.amenities.map((a) => a.name),
+    gallery: row.gallery,
+    contact: row.contact,
   };
 }

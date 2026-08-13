@@ -17,14 +17,14 @@ export function Footer() {
 
         <div className="site-footer-col">
           <h4>Công cụ</h4>
-          <Link to="/inventory">Tra cứu dự án</Link>
+          <Link to="/inventory/chung-cu">Tra cứu dự án</Link>
           <Link to="/chat">Chat với Auremont AI</Link>
         </div>
 
         <div className="site-footer-col">
           <h4>Tài nguyên</h4>
           <Link to="/home">Về Auremont</Link>
-          <Link to="/inventory">Danh sách dự án</Link>
+          <Link to="/inventory/chung-cu">Danh sách dự án</Link>
         </div>
 
         <div className="site-footer-col site-footer-contact">

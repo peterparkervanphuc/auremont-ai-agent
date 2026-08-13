@@ -1,8 +1,8 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useMatch, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import type { ChatSessionResponse } from "../../types";
-import { ChatIcon, PlusIcon, TrashIcon } from "../../components/Icons";
+import { ArrowLeftIcon, ChatIcon, PlusIcon, SearchIcon, TrashIcon } from "../../components/Icons";
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -27,6 +27,13 @@ export function SessionList({ sessions, loading, onChange }: Props) {
 
   const [naming, setNaming] = useState(false);
   const [customerName, setCustomerName] = useState("");
+  const [historyQuery, setHistoryQuery] = useState("");
+
+  const filteredSessions = useMemo(() => {
+    const q = historyQuery.trim().toLowerCase();
+    if (!q) return sessions;
+    return sessions.filter((s) => (s.customer_name ?? s.title ?? `Session: Khách #${s.id}`).toLowerCase().includes(q));
+  }, [sessions, historyQuery]);
 
   const closeNaming = () => {
     setNaming(false);
@@ -59,6 +66,11 @@ export function SessionList({ sessions, loading, onChange }: Props) {
   return (
     <aside className="chat-sidebar">
       <div className="chat-sidebar-head">
+        <Link to="/" className="chat-sidebar-home-link">
+          <ArrowLeftIcon size={14} />
+          Về trang chủ
+        </Link>
+
         <div className="chat-sidebar-brand">
           <ChatIcon size={18} />
           Đoạn chat
@@ -89,6 +101,15 @@ export function SessionList({ sessions, loading, onChange }: Props) {
             Phiên khách hàng mới
           </button>
         )}
+
+        <div className="chat-sidebar-search">
+          <SearchIcon size={15} />
+          <input
+            value={historyQuery}
+            onChange={(e) => setHistoryQuery(e.target.value)}
+            placeholder="Tìm trong lịch sử"
+          />
+        </div>
       </div>
 
       <div className="chat-conv-list">
@@ -104,8 +125,10 @@ export function SessionList({ sessions, loading, onChange }: Props) {
             <br />
             Bấm &ldquo;Phiên khách hàng mới&rdquo; để bắt đầu.
           </p>
+        ) : filteredSessions.length === 0 ? (
+          <p className="chat-conv-empty">Không tìm thấy phiên nào khớp &ldquo;{historyQuery}&rdquo;.</p>
         ) : (
-          sessions.map((s) => (
+          filteredSessions.map((s) => (
             <Link
               key={s.id}
               to={`/chat/sessions/${s.id}`}

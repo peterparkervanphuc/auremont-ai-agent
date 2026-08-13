@@ -2,9 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../hooks/useAuth";
-import { fetchCategories } from "../api/projects";
-import type { CategorySummary } from "../types/project";
-import { UPCOMING_PHASES } from "../types/project";
+import { CATALOG } from "../types/catalog";
 import type { UserRole } from "../types";
 import {
   AlertIcon,
@@ -39,9 +37,57 @@ const ADMIN_NAV: AdminNavEntry[] = [
   { to: "/settings", label: "Cài đặt chung", icon: SettingsIcon, roles: ["admin"] },
 ];
 
-function typeSlug(index: number) {
-  return `type-${index}`;
-}
+// Ocean Park 1 la khu do thi duy nhat da co du lieu — cac loai hinh (Chung cu/Biet
+// thu/Shop TMDV) cua no len thanh menu chinh, dropdown la danh sach phan khu that
+// theo dung menu web mau (khong con chia theo Studio/1PN/2PN nhu truoc).
+const OCEAN_PARK_1 = CATALOG[0];
+const OTHER_OCEAN_PARKS = CATALOG.slice(1);
+
+// Cac nhom (Chung cu VA Biet thu) da co san section rieng ngay trong trang
+// /inventory/<category-slug> (xem CategoryDetailPage) — bam vao thi cuon toi
+// thang section do (neo id trung slug) thay vi mo trang /inventory/group/* rieng.
+const ANCHOR_GROUP_SLUGS = new Set([
+  "lumiere-orient-pearl",
+  "the-metropolitan",
+  "the-ocean-view",
+  "the-sapphire",
+  "the-senique-hanoi",
+  "tieu-khu-ngoc-trai",
+  "tieu-khu-hai-au",
+  "tieu-khu-sao-bien",
+  "shop-sh09",
+  "shop-sb11a",
+  "shop-ha08",
+  "shop-bh9b",
+]);
+
+// Slug nhom nay thuoc category nao — vi ANCHOR_GROUP_SLUGS dung chung cho ca
+// Chung cu lan Biet thu, can biet dung /inventory/<slug-nay> de ghep href.
+const ANCHOR_GROUP_CATEGORY: Record<string, string> = {
+  "lumiere-orient-pearl": "chung-cu",
+  "the-metropolitan": "chung-cu",
+  "the-ocean-view": "chung-cu",
+  "the-sapphire": "chung-cu",
+  "the-senique-hanoi": "chung-cu",
+  "tieu-khu-ngoc-trai": "biet-thu",
+  "tieu-khu-hai-au": "biet-thu",
+  "tieu-khu-sao-bien": "biet-thu",
+  "shop-sh09": "shophouse",
+  "shop-sb11a": "shophouse",
+  "shop-ha08": "shophouse",
+  "shop-bh9b": "shophouse",
+};
+
+// The Senique Hanoi khong co san "sub-project" that trong catalog (chi 1
+// project gop chung, khong tach S1/S2 trong DB nhu Metropolitan) — nhung UI
+// van can flyout 2 muc con nhu anh mau, tro toi 2 neo id lam thu cong trong
+// CategoryDetailPage (#the-senique-1, #the-senique-2).
+const ANCHOR_SUBSECTIONS: Record<string, { label: string; anchorId: string }[]> = {
+  "the-senique-hanoi": [
+    { label: "Tòa The Senique 1", anchorId: "the-senique-1" },
+    { label: "Tòa The Senique 2", anchorId: "the-senique-2" },
+  ],
+};
 
 export function TopNavbar() {
   const { theme, toggleTheme } = useTheme();
@@ -49,11 +95,15 @@ export function TopNavbar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
 
-  // Trang chủ Sale có ảnh hero — menu nổi trong suốt lên trên thay vì tách rời.
-  const isOverlay = role === "sale" && location.pathname === "/home";
+  // Trang chủ va cac trang co hero banner (chi tiet loai hinh, chi tiet du an) —
+  // menu noi trong suot len tren anh thay vi tach roi. Tru rieng /inventory/group/*
+  // vi trang do khong co banner, menu trong suot se de tren nen trang bi mat chu.
+  const isOverlay =
+    role === "sale" &&
+    (location.pathname === "/home" ||
+      (location.pathname.startsWith("/inventory/") && !location.pathname.startsWith("/inventory/group/")));
 
   // Dropdown hiện qua hover (mouse enter/leave), không phải :hover CSS thuần —
   // vì con trỏ chuột vẫn nằm nguyên vị trí sau khi bấm điều hướng (SPA không
@@ -62,13 +112,6 @@ export function TopNavbar() {
   useEffect(() => {
     setOpenDropdown(null);
   }, [location.pathname]);
-
-  useEffect(() => {
-    if (role !== "sale") return;
-    fetchCategories()
-      .then(setCategories)
-      .catch(() => setCategories([]));
-  }, [role]);
 
   const handleLogout = () => {
     logout();
@@ -91,13 +134,15 @@ export function TopNavbar() {
 
         {role === "sale" && (
           <>
-            {categories.map((c) => (
+            {OCEAN_PARK_1.categories.map((c) => (
               <div
                 key={c.slug}
                 className="topnav-item"
                 onMouseEnter={() => setOpenDropdown(c.slug)}
                 onMouseLeave={() => setOpenDropdown(null)}
               >
+                {/* Moi loai hinh gio co URL rieng (/inventory/chung-cu, /inventory/biet-thu...)
+                    nen isActive tinh dung, khong con bi tren xanh ca 3 cung luc nhu truoc. */}
                 <NavLink
                   to={`/inventory/${c.slug}`}
                   onClick={(e) => {
@@ -107,29 +152,168 @@ export function TopNavbar() {
                   className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}
                 >
                   {c.name}
-                  {c.typeNames.length > 0 && <ChevronRightIcon size={12} className="topnav-caret" />}
+                  {c.groups.length > 0 && <ChevronRightIcon size={12} className="topnav-caret" />}
                 </NavLink>
-                {c.typeNames.length > 0 && (
+                {c.groups.length > 0 && (
                   <div className={`topnav-dropdown ${openDropdown === c.slug ? "topnav-dropdown--open" : ""}`}>
-                    {c.typeNames.map((t, i) => (
-                      <NavLink
-                        key={t}
-                        to={`/inventory/${c.slug}#${typeSlug(i)}`}
-                        onClick={(e) => {
-                          setOpenDropdown(null);
-                          e.currentTarget.blur();
-                        }}
-                        className="topnav-dropdown-item"
-                      >
-                        {t}
-                      </NavLink>
-                    ))}
+                    {c.groups.map((g) => {
+                      const isAnchorGroup = ANCHOR_GROUP_SLUGS.has(g.slug);
+                      const anchorCategorySlug = ANCHOR_GROUP_CATEGORY[g.slug] ?? c.slug;
+                      const subsections = isAnchorGroup ? ANCHOR_SUBSECTIONS[g.slug] : undefined;
+
+                      if (subsections) {
+                        // Flyout thu cong (khong lay tu g.projects vi day khong phai
+                        // sub-project that trong DB — chi la neo cuon trong cung 1 trang).
+                        return (
+                          <div key={g.slug} className="topnav-subitem">
+                            <NavLink
+                              to={`/inventory/${anchorCategorySlug}#${g.slug}`}
+                              onClick={(e) => {
+                                setOpenDropdown(null);
+                                e.currentTarget.blur();
+                              }}
+                              className="topnav-dropdown-item"
+                            >
+                              {g.name}
+                            </NavLink>
+                            <div className="topnav-submenu">
+                              {subsections.map((s) => (
+                                <NavLink
+                                  key={s.anchorId}
+                                  to={`/inventory/${anchorCategorySlug}#${s.anchorId}`}
+                                  onClick={(e) => {
+                                    setOpenDropdown(null);
+                                    e.currentTarget.blur();
+                                  }}
+                                  className="topnav-dropdown-item"
+                                >
+                                  {s.label}
+                                </NavLink>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (isAnchorGroup && g.projects.length > 1) {
+                        // Nhom co nhieu du an con VA da co section rieng trong trang (vd "The
+                        // Metropolitan" -> Zurich/Beverly/London/Paris) — flyout hover nhu cu,
+                        // nhung tung du an con cuon toi dung section thay vi mo trang rieng.
+                        return (
+                          <div key={g.slug} className="topnav-subitem">
+                            <NavLink
+                              to={`/inventory/${anchorCategorySlug}#${g.slug}`}
+                              onClick={(e) => {
+                                setOpenDropdown(null);
+                                e.currentTarget.blur();
+                              }}
+                              className="topnav-dropdown-item"
+                            >
+                              {g.name}
+                            </NavLink>
+                            <div className="topnav-submenu">
+                              {g.projects.map((p) =>
+                                p.projectId ? (
+                                  <NavLink
+                                    key={p.projectId}
+                                    to={`/inventory/${anchorCategorySlug}#${p.projectId}`}
+                                    onClick={(e) => {
+                                      setOpenDropdown(null);
+                                      e.currentTarget.blur();
+                                    }}
+                                    className="topnav-dropdown-item"
+                                  >
+                                    {p.name}
+                                  </NavLink>
+                                ) : (
+                                  <span key={p.name} className="topnav-dropdown-item topnav-link--disabled">
+                                    {p.name}
+                                  </span>
+                                )
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      if (isAnchorGroup) {
+                        // Da co section rieng trong trang — cuon toi thay vi mo trang khac.
+                        return (
+                          <NavLink
+                            key={g.slug}
+                            to={`/inventory/${anchorCategorySlug}#${g.slug}`}
+                            onClick={(e) => {
+                              setOpenDropdown(null);
+                              e.currentTarget.blur();
+                            }}
+                            className="topnav-dropdown-item"
+                          >
+                            {g.name}
+                          </NavLink>
+                        );
+                      }
+
+                      return g.projects.length > 1 ? (
+                        // Nhom co nhieu du an con nhung CHUA co section rieng trong trang -> mo
+                        // flyout thu 2 khi hover, giong menu web mau; bam thang vao ten nhom van
+                        // vao duoc trang liet ke ca nhom.
+                        <div key={g.slug} className="topnav-subitem">
+                          <NavLink
+                            to={`/inventory/group/${g.slug}`}
+                            onClick={(e) => {
+                              setOpenDropdown(null);
+                              e.currentTarget.blur();
+                            }}
+                            className="topnav-dropdown-item"
+                          >
+                            {g.name}
+                          </NavLink>
+                          <div className="topnav-submenu">
+                            {g.projects.map((p) =>
+                              p.projectId ? (
+                                <NavLink
+                                  key={p.projectId}
+                                  to={`/inventory/project/${p.projectId}`}
+                                  onClick={(e) => {
+                                    setOpenDropdown(null);
+                                    e.currentTarget.blur();
+                                  }}
+                                  className="topnav-dropdown-item"
+                                >
+                                  {p.name}
+                                </NavLink>
+                              ) : (
+                                <span key={p.name} className="topnav-dropdown-item topnav-link--disabled">
+                                  {p.name}
+                                </span>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <NavLink
+                          key={g.slug}
+                          to={
+                            g.projects[0]?.projectId
+                              ? `/inventory/project/${g.projects[0].projectId}`
+                              : `/inventory/group/${g.slug}`
+                          }
+                          onClick={(e) => {
+                            setOpenDropdown(null);
+                            e.currentTarget.blur();
+                          }}
+                          className="topnav-dropdown-item"
+                        >
+                          {g.name}
+                        </NavLink>
+                      );
+                    })}
                   </div>
                 )}
               </div>
             ))}
 
-            {UPCOMING_PHASES.map((p) => (
+            {OTHER_OCEAN_PARKS.map((p) => (
               <span key={p.slug} className="topnav-link topnav-link--disabled" title="Đang cập nhật dữ liệu">
                 {p.name}
               </span>
@@ -201,7 +385,7 @@ export function TopNavbar() {
 
           {role === "sale" && (
             <>
-              {categories.map((c) => (
+              {OCEAN_PARK_1.categories.map((c) => (
                 <div key={c.slug} className="topnav-mobile-group">
                   <NavLink
                     to={`/inventory/${c.slug}`}
@@ -210,21 +394,27 @@ export function TopNavbar() {
                   >
                     {c.name}
                   </NavLink>
-                  {c.typeNames.map((t, i) => (
+                  {c.groups.map((g) => (
                     <NavLink
-                      key={t}
-                      to={`/inventory/${c.slug}#${typeSlug(i)}`}
+                      key={g.slug}
+                      to={
+                        ANCHOR_GROUP_SLUGS.has(g.slug)
+                          ? `/inventory/${ANCHOR_GROUP_CATEGORY[g.slug] ?? c.slug}#${g.slug}`
+                          : g.projects.length === 1 && g.projects[0].projectId
+                            ? `/inventory/project/${g.projects[0].projectId}`
+                            : `/inventory/group/${g.slug}`
+                      }
                       onClick={() => setMobileOpen(false)}
                       className={({ isActive }) =>
                         `topnav-link topnav-mobile-sublink ${isActive ? "topnav-link--active" : ""}`
                       }
                     >
-                      {t}
+                      {g.name}
                     </NavLink>
                   ))}
                 </div>
               ))}
-              {UPCOMING_PHASES.map((p) => (
+              {OTHER_OCEAN_PARKS.map((p) => (
                 <span key={p.slug} className="topnav-link topnav-link--disabled">
                   {p.name} · sắp có
                 </span>

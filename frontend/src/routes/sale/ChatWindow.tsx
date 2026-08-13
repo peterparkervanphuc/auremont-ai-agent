@@ -3,8 +3,11 @@ import { useLocation, useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type { MessageResponse } from "../../types";
 import { HitlCard } from "./HitlCard";
-import { BotIcon, DocumentIcon, LoaderIcon, SendIcon, SparkleIcon, TrashIcon, UserIcon } from "../../components/Icons";
+import { BotIcon, DocumentIcon, LoaderIcon, SendIcon, TrashIcon, UserIcon } from "../../components/Icons";
 import { FeedbackButtons } from "../../components/FeedbackButtons";
+import { AuremontMascot } from "../../components/AuremontMascot";
+import { ChatContextPanel } from "./ChatContextPanel";
+import { ChatSuggestions } from "./ChatSuggestions";
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -115,7 +118,13 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
 
   const ready = Boolean(input.trim()) && !loading;
 
+  const pickSuggestion = (question: string) => {
+    setInput(question);
+    textareaRef.current?.focus();
+  };
+
   return (
+    <>
     <div className="chat-page">
       <header className="chat-topbar">
         <div className="chat-topbar-info">
@@ -140,16 +149,14 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
       <div className="chat-messages" ref={scrollRef}>
         <div className="chat-messages-inner">
           {messages.length === 0 && !loading && (
-            <div className="chat-empty">
-              <div className="chat-empty-icon">
-                <SparkleIcon size={26} />
-              </div>
-              <h2 className="chat-empty-title">Auremont có thể giúp gì?</h2>
+            <div className="chat-landing">
+              <AuremontMascot size={64} className="chat-landing-mascot" />
+              <h2 className="chat-empty-title">Hỏi Auremont bằng câu nói của bạn</h2>
               <p className="chat-empty-text">
-                Hỏi về bảng giá, mặt bằng, chính sách bán hàng hoặc tồn kho căn.
-                <br />
-                Mọi câu trả lời đều kèm trích nguồn tài liệu.
+                Ví dụ "bảng giá căn 2 ngủ The Zurich" hoặc "mặt bằng tòa BE1 The Beverly". Auremont tra tài liệu đang
+                có và trả lời kèm trích nguồn.
               </p>
+              <ChatSuggestions onPick={pickSuggestion} />
             </div>
           )}
 
@@ -239,5 +246,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
         </form>
       </div>
     </div>
+    <ChatContextPanel messages={messages} />
+    </>
   );
 }

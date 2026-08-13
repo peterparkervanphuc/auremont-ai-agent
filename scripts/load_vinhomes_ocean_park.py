@@ -9,16 +9,18 @@ import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# REPO_ROOT là P-110 — mọi nguồn dữ liệu seed phải nằm TRONG repo (seed-data/),
+# không được trỏ ra ngoài máy: máy khác clone repo về sẽ không có gì ngoài P-110/.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 from backend.core.minio_client import ensure_public_read_bucket, get_minio_client, public_object_url  # noqa: E402
 from backend.core.config import settings  # noqa: E402
 from backend.core.mysql_client import SessionLocal  # noqa: E402
 from backend.models.project import Project  # noqa: E402
 
-JSON_PATH = REPO_ROOT / "vinhomes_ocean_park.json"
-IMAGES_DIR = REPO_ROOT / "P-110" / "frontend" / "public"
+JSON_PATH = REPO_ROOT / "seed-data" / "vinhomes_ocean_park.json"
+IMAGES_DIR = REPO_ROOT / "frontend" / "public"
 IMAGE_PATTERN = re.compile(r"^003_Start-from-the-provided-parking-area-with-several-_(.+)\.jpg$")
 
 

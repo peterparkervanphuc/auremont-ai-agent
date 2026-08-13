@@ -73,20 +73,28 @@ export function Home() {
 
   const actions = [
     {
-      to: "/inventory",
-      icon: <SearchIcon size={22} />,
-      title: "Tra cứu dự án",
-      desc: "Duyệt dự án, lọc theo khu vực và loại căn",
-      primary: true,
-    },
-    {
       to: "/chat",
       icon: <ChatIcon size={22} />,
       title: "Chat với Auremont AI",
       desc: "Hỏi nhanh về bảng giá, mặt bằng và tồn kho",
+      primary: true,
+    },
+    {
+      // Cuon toi thang section "Tra cuu du an" (Loai hinh san pham) ngay trong
+      // trang chu — khong dieu huong sang trang khac, vi section do da co san
+      // o day (xem onClick ben duoi).
+      to: "#tra-cuu-du-an",
+      icon: <SearchIcon size={22} />,
+      title: "Tra cứu dự án",
+      desc: "Xem danh sách phân khu, mặt bằng và bảng giá từng loại hình",
       primary: false,
     },
   ];
+
+  const scrollToProjectLookup = (e: React.MouseEvent) => {
+    e.preventDefault();
+    document.getElementById("tra-cuu-du-an")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return (
     <div className="home home-compact">
@@ -110,7 +118,12 @@ export function Home() {
 
           <div className="hero-nav-cards home-action-grid">
             {actions.map((a) => (
-              <Link key={a.to} to={a.to} className={`hero-nav-card ${a.primary ? "hero-nav-card--primary" : ""}`}>
+              <Link
+                key={a.to}
+                to={a.to}
+                onClick={a.to.startsWith("#") ? scrollToProjectLookup : undefined}
+                className={`hero-nav-card ${a.primary ? "hero-nav-card--primary" : ""}`}
+              >
                 <div className="hero-nav-card-icon">{a.icon}</div>
                 <div>
                   <p className="hero-nav-card-title">{a.title}</p>
@@ -204,14 +217,14 @@ export function Home() {
         </div>
       </section>
 
-      <section className="home-featured">
+      <section className="home-featured" id="tra-cuu-du-an">
         <div className="container">
           <div className="home-featured-head">
             <div>
               <p className="section-eyebrow">Tra cứu dự án</p>
               <h2 className="home-section-title">Loại hình sản phẩm</h2>
             </div>
-            <Link to="/inventory" className="home-featured-viewall">
+            <Link to="/inventory/chung-cu" className="home-featured-viewall">
               Xem toàn bộ danh sách
               <ArrowRightIcon size={14} />
             </Link>
