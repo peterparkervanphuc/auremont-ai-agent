@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 from fastapi import (
@@ -12,6 +13,7 @@ from fastapi import (
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from backend.core.audit import log_event
 from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import DocumentStatus, DocumentVisibility, UserRole
@@ -117,6 +119,18 @@ async def upload_document(
         uploaded_by=admin.id,
     )
 
+    log_event(
+        "document.upload",
+        document_id=document.id,
+        filename=file.filename,
+        size_bytes=len(file_bytes),
+        content_type=file.content_type,
+        project_id=project_id,
+        visibility=visibility,
+        admin_id=admin.id,
+    )
+
+    started = time.perf_counter()
     try:
         document = ingest_uploaded_document(
             db,
@@ -127,6 +141,13 @@ async def upload_document(
         )
     except PromptInjectionError:
         # ingestion_service has already moved the document to BLOCKED.
+        log_event(
+            "document.ingest.blocked",
+            document_id=document.id,
+            status=DocumentStatus.BLOCKED,
+            reason="prompt_injection",
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
         return IngestResponse(
             document_id=document.id,
             status=DocumentStatus.BLOCKED,
@@ -134,6 +155,12 @@ async def upload_document(
         )
     except DocumentIngestionError as exc:
         # ingestion_service has already moved the document to FAILED.
+        log_event(
+            "document.ingest.failure",
+            document_id=document.id,
+            status=DocumentStatus.FAILED,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Document ingestion failed. Check server logs.",
@@ -141,6 +168,12 @@ async def upload_document(
     finally:
         await file.close()
 
+    log_event(
+        "document.ingest.success",
+        document_id=document.id,
+        status=document.status,
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
     return IngestResponse(
         document_id=document.id,
         status=document.status,
@@ -196,8 +229,8 @@ async def get_document_view_url(
     document_id: int,
     db: Session = Depends(get_db),
 ) -> dict:
-    """Link tạm thời (có chữ ký, hết hạn sau vài phút) để xem file gốc —
-    bucket tài liệu là private nên không thể link thẳng object key."""
+    """Temporary signed link (expires after a few minutes) to view the original file —
+    the document bucket is private, so the object key cannot be linked to directly."""
     document = get_document(db, document_id)
     if document is None or not document.file_path:
         raise HTTPException(

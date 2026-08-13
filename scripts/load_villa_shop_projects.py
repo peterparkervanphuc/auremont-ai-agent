@@ -1,16 +1,16 @@
-"""Nap 7 du an moi crawl (3 tieu khu Biet thu + 4 Shop TMDV) vao bang `projects`.
+"""Load 7 newly crawled projects (3 Villa sub-zones + 4 Retail Shop units) into the `projects` table.
 
-Nguon: seed-data/villas-shops/ (Hai Au, Ngoc Trai, Sao Bien, Shop BH9B/HA08/SB11A/SH09)
-— moi file JSON dung dinh dang giong het the_zurich.json/the_sapphire.json...
-(project/pricing/amenities/images/contact), anh da duoc copy vao
-project-images-source/<slug>/ (xem upload_project_images.py).
+Source: seed-data/villas-shops/ (Hai Au, Ngoc Trai, Sao Bien, Shop BH9B/HA08/SB11A/SH09)
+— each JSON file follows the same shape as the_zurich.json/the_sapphire.json...
+(project/pricing/amenities/images/contact); images have already been copied into
+project-images-source/<slug>/ (see upload_project_images.py).
 
-File JSON nam TRONG repo (khong phai duong dan ngoai may) de may nao clone repo
-ve chay script nay cung ra ket qua giong nhau.
+The JSON files live INSIDE the repo (not an external path) so that cloning the repo
+on any machine and running this script produces identical results.
 
-Chay THEO THU TU:
-    1. python scripts/upload_project_images.py   (nap anh len MinIO truoc)
-    2. python scripts/load_villa_shop_projects.py (nap JSON + gan gallery URL)
+Run IN ORDER:
+    1. python scripts/upload_project_images.py   (upload images to MinIO first)
+    2. python scripts/load_villa_shop_projects.py (load JSON + attach gallery URLs)
 """
 
 import json
@@ -28,8 +28,8 @@ from backend.models.project import Project  # noqa: E402
 SOURCE_JSON_DIR = REPO_ROOT / "seed-data" / "villas-shops"
 IMAGES_SOURCE_DIR = REPO_ROOT / "project-images-source"
 
-# (ten file json, slug du an — phai KHOP dung id "project.id" ben trong file
-# va ten thu muc trong project-images-source/ da copy anh vao).
+# (json filename, project slug — MUST match "project.id" inside the file
+# and the folder name in project-images-source/ where images were copied).
 PROJECTS = [
     ("hai_au.json", "hai-au"),
     ("ngoc_trai.json", "ngoc-trai"),
@@ -51,7 +51,7 @@ def main() -> None:
 
             project_info = details["project"]
             if project_info["id"] != slug:
-                raise ValueError(f"Slug lech: config={slug} nhung json project.id={project_info['id']}")
+                raise ValueError(f"Slug mismatch: config={slug} but json project.id={project_info['id']}")
 
             images_dir = IMAGES_SOURCE_DIR / slug
             gallery = [
@@ -68,11 +68,11 @@ def main() -> None:
             if row is None:
                 row = Project(id=slug)
                 db.add(row)
-            # 3 tieu khu Biet thu co full_name da bat dau bang "Tieu khu ..." —
-            # FE (TowerSpotlight) tu them chu "Tieu khu" truoc ten khi hien thi,
-            # dung full_name se bi lap ("Tieu khu Tieu khu Hai Au..."). Dung ten
-            # ngan + hau to du an cho nhat quan voi cac du an khac (vd "The
-            # Zurich - Vinhomes Ocean Park").
+            # The 3 Villa sub-zones have full_name already starting with "Tieu khu ..." —
+            # the FE (TowerSpotlight) prepends "Tieu khu" itself when rendering, so using
+            # full_name as-is would duplicate it ("Tieu khu Tieu khu Hai Au..."). Use the
+            # short name + project suffix instead, for consistency with other projects
+            # (e.g. "The Zurich - Vinhomes Ocean Park").
             short_name = project_info.get("name") or ""
             row.name = (
                 f"{short_name} - Vinhomes Ocean Park"

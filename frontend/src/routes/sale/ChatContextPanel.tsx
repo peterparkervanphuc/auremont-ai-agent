@@ -5,10 +5,10 @@ interface Props {
   messages: MessageResponse[];
 }
 
-// Panel ben phai kieu "MOSO hieu ban dang tim" — vi Auremont la tro ly noi bo
-// tra cuu tai lieu (khong phai AI search khach hang), noi dung THAT o day la
-// liet ke nguon tai lieu (citations) da dung cho cau tra loi gan nhat, khong
-// bia ra 1 tinh nang "hieu y dinh" chua co that.
+// Right-hand panel modeled on MOSO's "understanding your search" pattern — since
+// Auremont is an internal document-lookup assistant (not a customer-facing AI
+// search), the actual content here is the list of citations used for the most
+// recent answer, not a fabricated "intent understanding" feature.
 export function ChatContextPanel({ messages }: Props) {
   const lastBotWithCitations = [...messages].reverse().find((m) => m.sender !== "sale" && m.citations && m.citations.length > 0);
 

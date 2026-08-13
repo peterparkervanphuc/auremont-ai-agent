@@ -70,7 +70,7 @@ def _to_summary(row: Project) -> ProjectSummary:
 
 @router.get("", response_model=list[ProjectSummary])
 def get_projects(db: Session = Depends(get_db)) -> list[ProjectSummary]:
-    # Bỏ qua các row chưa có `details` — project rỗng (chưa nạp catalog) không đáng hiển thị để duyệt.
+    # Skip rows without `details` — an empty project (catalogue not loaded yet) is not worth browsing.
     return [_to_summary(row) for row in list_projects(db) if row.details]
 
 
@@ -140,9 +140,10 @@ def _get_project_or_404(db: Session, project_id: str) -> Project:
 
 
 def _group_pricing_by_category(details: dict) -> dict[str, list[dict]]:
-    """Giữ nguyên thứ tự xuất hiện trong `pricing` — dùng chung để cả 2 endpoint
-    (list + detail) suy ra CÙNG một index cho từng category, nhờ đó chọn đúng ảnh
-    đại diện nhất quán giữa danh sách và trang chi tiết (không bị trùng ảnh)."""
+    """Preserves the order categories first appear in `pricing` — shared by both
+    endpoints (list + detail) so they derive the SAME index per category, which
+    keeps the cover image consistent between the list and the detail page
+    (no mismatched images)."""
     groups: dict[str, list[dict]] = {}
     for tier in details.get("pricing", []):
         groups.setdefault(tier["category"], []).append(tier)

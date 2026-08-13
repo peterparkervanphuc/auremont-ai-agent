@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from qdrant_client import models
@@ -5,6 +6,8 @@ from qdrant_client import models
 from backend.core.config import settings
 from backend.core.qdrant_client import get_qdrant_client
 from backend.services.chunking_service import DocumentChunk
+
+logger = logging.getLogger(__name__)
 
 
 class VectorStoreError(RuntimeError):
@@ -94,6 +97,10 @@ def index_document_chunks(
             wait=True,
         )
     except Exception as exc:
+        logger.exception(
+            "Ghi vector vao Qdrant that bai.",
+            extra={"event": "vector_store.upsert.failed", "point_count": len(points)},
+        )
         raise VectorStoreError("Could not upsert vectors into Qdrant.") from exc
 
     return len(points)
@@ -117,6 +124,11 @@ def delete_document_vectors(document_id: int) -> None:
             wait=True,
         )
     except Exception as exc:
+        logger.exception(
+            "Xoa vector cua tai lieu %s that bai.",
+            document_id,
+            extra={"event": "vector_store.delete.failed", "document_id": document_id},
+        )
         raise VectorStoreError(
             f"Could not delete vectors for document {document_id}."
         ) from exc

@@ -17,10 +17,11 @@ interface Props {
   onChange: (next: ChatSessionResponse[]) => void;
 }
 
-// Sidebar: nút tạo Session mới + danh sách "Session: Khách...".
+// Sidebar: "new Session" button + list of "Session: Customer...".
 export function SessionList({ sessions, loading, onChange }: Props) {
-  // Nằm ngoài <Route path="sessions/:sessionId">, nên useParams() sẽ luôn undefined —
-  // dùng useMatch để đọc sessionId trực tiếp từ URL hiện tại.
+  // This component sits outside <Route path="sessions/:sessionId">, so useParams()
+  // would always be undefined here — use useMatch to read sessionId directly from
+  // the current URL instead.
   const match = useMatch("/chat/sessions/:sessionId");
   const sessionId = match?.params.sessionId;
   const navigate = useNavigate();
@@ -139,7 +140,7 @@ export function SessionList({ sessions, loading, onChange }: Props) {
         </div>
       </div>
 
-      {/* README §5.2a — no project data means Sale cannot consult anything yet. */}
+      {/* Spec §5.2a — no project data means Sale cannot consult anything yet. */}
       {projects.length === 0 && !loading && (
         <p className="chat-conv-empty">Chưa có dữ liệu dự án, vui lòng báo Admin cập nhật.</p>
       )}

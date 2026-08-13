@@ -1,6 +1,6 @@
 /* ══════════════════════════════════════════════════════════
-   SALESMATE — module bổ sung
-   Dùng lại toàn bộ token của RegWatch design system.
+   SALESMATE — supplemental module
+   Reuses all design tokens from the RegWatch design system.
    ══════════════════════════════════════════════════════════ */
 
 /* ── Page shell ─────────────────────────────────────────── */
@@ -44,7 +44,7 @@
   margin-bottom: 14px;
 }
 
-/* Khoi "Gioi thieu" rieng cho tab Chung cu — 2 cot: chu ben trai, anh tu luot ben phai. */
+/* "Introduction" block for the Apartment tab — 2 columns: text on the left, image carousel on the right. */
 .intro-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
@@ -107,8 +107,8 @@
   opacity: 1;
 }
 
-/* Khoi "Dien tich va gia ban" — card trang noi giua, anh nen ho ra o tren/2 ben,
-   giong mau thiet ke tham khao. */
+/* "Area and price" block — white card centered, background image showing at
+   top/sides, matching the reference design. */
 .pricing-hero {
   position: relative;
   display: flex;
@@ -174,8 +174,9 @@
   color: var(--text-2);
 }
 
-/* Ban do vi tri phan khu — anh full-width, cac the chu thich dat tuyet doi theo %
-   toa do (uoc luong bang mat tren anh khong nhan), nut lien he/hotline noi goc trai duoi. */
+/* Zone location map — full-width image, caption pins positioned absolutely by
+   percentage coordinates (eyeballed against the unlabeled image), contact/hotline
+   button in the bottom-left corner. */
 .location-map-title {
   text-align: center;
   text-transform: uppercase;
@@ -186,8 +187,8 @@
   margin-bottom: 18px;
 }
 
-/* Banner "Tong mat bang cac phan khu Biet thu" — nen xanh nhe nhang (thay cho
-   vang chói ban dau), pin so tron, di chuot vao moi hien ten khu (tooltip). */
+/* "Villa zones overview" banner — soft blue background (replacing the original
+   glaring yellow), round numbered pins, zone name shown on hover (tooltip). */
 .villa-map-banner {
   background: #eaf2ff;
   border-radius: var(--radius);
@@ -245,8 +246,8 @@
   transform: translateX(-50%) translateY(0);
 }
 
-/* Neo cuon toi tung phan khu tu dropdown menu (TopNavbar) — tru chieu cao
-   navbar co dinh (68px) de tieu de khong bi che khi cuon toi. */
+/* Scroll anchor for jumping to a zone from the dropdown menu (TopNavbar) — offset
+   by the fixed navbar height (68px) so the heading isn't hidden after scrolling. */
 .anchor-section {
   scroll-margin-top: 84px;
 }
@@ -298,8 +299,8 @@
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
-/* Khoi spotlight 1 phan khu (vd Lumiere Orient Pearl) — chu ben trai, anh bo dang
-   huu co ben phai, giong mau tham khao (Sapphire). */
+/* Single-zone spotlight block (e.g. Lumiere Orient Pearl) — text on the left,
+   organic-shaped image on the right, matching the reference (Sapphire). */
 .zone-spotlight-title {
   text-align: center;
   text-transform: uppercase;
@@ -391,13 +392,13 @@
   aspect-ratio: 5 / 4;
   object-fit: cover;
   display: block;
-  /* Oval can doi 4 goc deu nhau — giong khung anh mau tham khao (khong meo lech). */
+  /* Symmetric oval on all 4 corners — matches the reference image frame (no skew). */
   border-radius: 50% / 40%;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
 }
 
-/* Bien the khong oval (vd Ngoc Trai — da co khoi vi tri/phoi canh rieng ben
-   duoi) — anh chu nhat bo goc binh thuong, thu nho hon (80% do rong) cho gon. */
+/* Non-oval variant (e.g. Ngoc Trai — already has its own location/perspective
+   block below) — plain rounded-corner rectangular image, sized down (80% width) for a tighter fit. */
 .zone-spotlight-media--rect {
   max-width: 80%;
   margin-left: auto;
@@ -409,7 +410,7 @@
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16);
 }
 
-/* Bien the toi mau (vd The Metropolitan) — nen xam-xanh dam, chu trang. */
+/* Dark-color variant (e.g. The Metropolitan) — dark blue-gray background, white text. */
 .zone-spotlight--dark {
   background: #4a4a5c;
   border-radius: var(--radius);
@@ -417,9 +418,9 @@
   margin: 0 -44px 28px;
 }
 
-/* Banner nen dam gon (chi tieu de + subtitle) danh dau dau moi tieu khu/day
-   shop — dung lai .zone-spotlight--dark nhung padding/margin nho hon vi
-   khong chua anh/grid ben trong nhu MetropolitanSpotlight. */
+/* Compact dark banner (title + subtitle only) marking the start of each
+   sub-zone/shop row — reuses .zone-spotlight--dark but with smaller
+   padding/margin since it holds no image/grid content like MetropolitanSpotlight. */
 .zone-header-banner {
   padding: 22px 28px;
   margin: 0 0 20px;
@@ -435,9 +436,9 @@
   margin-bottom: 6px;
 }
 
-/* Mau rieng cho tieu de "phan khu cha" (vd The Ocean View) — khac mau xanh cua
-   .intro-title dung o cac "tieu khu con" ben duoi (Zenpark/Pavilion...) de
-   khong bi nham lan 2 cap thong tin voi nhau. */
+/* Distinct color for "parent zone" titles (e.g. The Ocean View) — differs from
+   the blue used by .intro-title on the "sub-zones" below (Zenpark/Pavilion...)
+   to avoid confusing the two information levels. */
 .zone-spotlight-title--amber {
   color: #f5a623;
 }
@@ -459,7 +460,7 @@
   color: rgba(255, 255, 255, 0.85);
 }
 
-/* Ban do vi tri phien ban toi mau, tai su dung cau truc .location-map-wrap/-img/-pin. */
+/* Dark-color variant of the location map, reusing the .location-map-wrap/-img/-pin structure. */
 .location-map-section--dark {
   background: #2c2c3a;
   border-radius: var(--radius);
@@ -467,11 +468,11 @@
   margin: 0 -44px 28px;
 }
 
-/* Gallery layout can ho (vd Zurich) — luoi the anh + chu thich, tai su dung duoc
-   cho cac tieu khu khac sau nay. */
+/* Apartment layout gallery (e.g. Zurich) — grid of image cards + captions, reusable
+   for other sub-zones later. */
 .layout-gallery {
   display: grid;
-  /* Luon co dinh 3 the/hang cho de nhin, khong tu do auto-fit theo do rong man hinh. */
+  /* Always fixed at 3 cards/row for readability, not auto-fit based on screen width. */
   grid-template-columns: repeat(3, 1fr);
   gap: 18px;
 }
@@ -504,8 +505,8 @@
   color: var(--text-1);
 }
 
-/* Bien the thumbnail dang <button> (vd VillaOverviewIntro) — luot/bam vao doi
-   anh lon tuong ung, vien sang mau khi dang active. */
+/* Thumbnail variant as a <button> (e.g. VillaOverviewIntro) — clicking swaps the
+   corresponding large image; bright colored border when active. */
 .layout-gallery-card--thumb {
   padding: 0;
   cursor: pointer;
@@ -521,9 +522,9 @@
   border-width: 2px;
 }
 
-/* Layout can ho kieu sidebar doc (vd The Senique Hanoi) — gon hon luoi 3 cot:
-   danh sach loai can ben trai, anh mat bang day du (da co san bang thong tin +
-   key plan trong chinh file anh) ben phai. */
+/* Vertical-sidebar apartment layout (e.g. The Senique Hanoi) — more compact than
+   the 3-column grid: unit-type list on the left, full floor plan image (info
+   table + key plan already baked into the image file) on the right. */
 .layout-sidebar {
   display: flex;
   align-items: flex-start;
@@ -591,9 +592,9 @@
   display: block;
 }
 
-/* Banner tien ich anh (thay chip "Diem noi bat"/"Tien ich" o cuoi tab Chung
-   cu) — nen nau/olive, tieu de + mo ta trang, luoi 3 cot anh + chu thich, dung
-   mau thiet ke tham khao vinhomeoceanpark.com.vn. */
+/* Amenities image banner (replacing the "Highlights"/"Amenities" chips at the
+   end of the Apartment tab) — brown/olive background, title + white description,
+   3-column image + caption grid, following the vinhomeoceanpark.com.vn reference design. */
 .amenity-banner {
   background: #8a7256;
   border-radius: var(--radius);
@@ -649,8 +650,8 @@
   display: block;
 }
 
-/* Bien the "contain" — dung cho anh dang graphic/poster vuong co chu sat vien
-   (vd bo anh tien ich Biet thu), tranh bi cat mat chu khi ep vao khung 4:3. */
+/* "Contain" variant — for square graphic/poster images with text close to the
+   edge (e.g. the Villa amenities image set), avoids cropping text when forced into a 4:3 frame. */
 .amenity-banner-card--contain img {
   aspect-ratio: 1 / 1;
   object-fit: contain;
@@ -664,10 +665,10 @@
   color: var(--text-1);
 }
 
-/* Bang gia mau nau/olive (vd Lumiere Orient Pearl) — khac voi .pricing-card
-   (mau xanh Chung cu) de phan biet ro dang o phan khu con. */
+/* Brown/olive price table (e.g. Lumiere Orient Pearl) — distinct from
+   .pricing-card (blue, used for Apartments) to clearly signal a sub-zone context. */
 .price-table-brown {
-  /* Doi tong nau/olive sang xanh nhat cho hop tone chung cua trang. */
+  /* Swapped the original brown/olive tone for a light blue to match the page's overall tone. */
   background: var(--bg-glass);
   border-radius: var(--radius);
   padding: 32px 36px;
@@ -677,7 +678,7 @@
 .price-table-brown-title {
   text-align: center;
   text-transform: uppercase;
-  /* Bo font Georgia — thieu dau tieng Viet (vd "ằ", "ặ") nen render loi ky tu. */
+  /* Dropped the Georgia font — it lacks Vietnamese diacritics (e.g. "ằ", "ặ") and renders them as broken glyphs. */
   font-family: var(--font-display);
   font-weight: 800;
   font-size: 1.3rem;
@@ -716,7 +717,7 @@
   font-weight: 700;
 }
 
-/* Tab mat bang tang The Palma 1/2 */
+/* Floor plan tabs for The Palma 1/2 */
 .floor-plan-tabs-title {
   text-align: center;
   text-transform: uppercase;
@@ -820,7 +821,7 @@
   border-color: rgba(190, 18, 60, 0.28);
 }
 
-/* ── Buttons bổ sung ────────────────────────────────────── */
+/* ── Additional buttons ─────────────────────────────────── */
 .btn-danger {
   border: 1px solid rgba(190, 18, 60, 0.35);
   color: var(--rose);
@@ -905,7 +906,7 @@
   color: var(--text-3);
 }
 
-/* ── Data list (bảng tài liệu / cảnh báo) ───────────────── */
+/* ── Data list (document table / alerts) ────────────────── */
 .data-list {
   display: flex;
   flex-direction: column;
@@ -990,7 +991,7 @@
   flex-shrink: 0;
 }
 
-/* Select phân quyền RBAC trong bảng tài liệu */
+/* RBAC visibility select in the document table */
 .doc-visibility-select {
   padding: 7px 11px;
   font: inherit;
@@ -1056,7 +1057,7 @@
   border-radius: var(--radius-sm);
 }
 
-/* ── Stat grid (Dashboard đánh giá AI) ──────────────────── */
+/* ── Stat grid (AI evaluation dashboard) ────────────────── */
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
@@ -1132,7 +1133,7 @@
 }
 
 /* ── HITL card ──────────────────────────────────────────── */
-/* Bọc thẻ HITL để gắn kèm timestamp + nút Feedback như bong bóng chat thường. */
+/* Wraps the HITL card to attach a timestamp + Feedback button, matching regular chat bubbles. */
 .chat-hitl-row {
   display: flex;
   flex-direction: column;
@@ -1338,7 +1339,7 @@
   color: var(--text-2);
 }
 
-/* ── Upload zone phụ trợ ────────────────────────────────── */
+/* ── Supplemental upload zone ────────────────────────────── */
 .upload-zone-icon {
   width: 64px;
   height: 64px;
@@ -1418,7 +1419,7 @@
   flex-wrap: wrap;
 }
 
-/* ── Kho tài liệu: bộ chọn collection (theo ảnh mẫu) ────── */
+/* ── Document library: collection picker (per reference mockup) ── */
 .kb-picker {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -1496,7 +1497,7 @@
   color: var(--accent);
 }
 
-/* ── Tra cứu dự án ────────────────────────────────────── */
+/* ── Project lookup ──────────────────────────────────────── */
 .inv-page {
   max-width: 1360px;
 }
@@ -1611,7 +1612,7 @@
   box-shadow: 0 14px 34px rgba(10, 46, 122, 0.14);
 }
 
-/* Nhóm/dự án chưa được crawl dữ liệu — vẫn bấm vào được để xem trang trống, chỉ mờ đi để phân biệt. */
+/* Groups/projects with no crawled data yet — still clickable to view an empty page, just dimmed to signal that. */
 .project-card--disabled {
   opacity: 0.55;
 }
@@ -1624,8 +1625,8 @@
 
 .project-card-media {
   position: relative;
-  /* Do dung ty le anh thuc te cua masteri-grand-coast-bg-homepage.jpg (1920x1080 = 16/9) —
-     ca 3 the Chung cu/Biet thu/Shophouse dung chung khung nay nen luon bang chan nhau. */
+  /* Matches the actual aspect ratio of masteri-grand-coast-bg-homepage.jpg (1920x1080 = 16/9) —
+     the Apartment/Villa/Shophouse cards all share this frame so their heights stay aligned. */
   aspect-ratio: 16 / 9;
   display: flex;
   flex-direction: column;
@@ -1728,8 +1729,8 @@
 
 .inv-assist-panel {
   position: sticky;
-  /* Navbar fixed cao 68px — de sticky tu 20px se bi navbar de len tren khi cuon,
-     lam mat/khuat mot phan panel. Day xuong duoi navbar de luon hien day du. */
+  /* The fixed navbar is 68px tall — sticking from 20px would let the navbar cover the
+     top of the panel when scrolling, hiding part of it. Pushed down below the navbar so it's always fully visible. */
   top: 88px;
   background: var(--bg-2);
   border: 1px solid var(--border);
@@ -1825,7 +1826,7 @@
   }
 }
 
-/* ── Chi tiết dự án ─────────────────────────────────────── */
+/* ── Project detail ──────────────────────────────────────── */
 .detail-back {
   display: inline-flex;
   align-items: center;
@@ -1843,24 +1844,24 @@
 
 .detail-banner {
   position: relative;
-  /* Full-bleed: thoát khỏi max-width/padding của .page để to sát 2 mép màn hình như trang tham khảo. */
+  /* Full-bleed: breaks out of .page's max-width/padding to span edge-to-edge like the reference page. */
   width: 100vw;
   left: 50%;
   right: 50%;
   margin-left: -50vw;
   margin-right: -50vw;
-  /* Hero banner chuan: chieu cao co dinh, anh crop cover vua khung — khong de banner
-     cao lo lam day noi dung ben duoi xuong qua xa. */
+  /* Standard hero banner: fixed height, image cover-cropped to fit the frame — avoids
+     an oversized banner pushing the content below too far down. */
   height: 656px;
   min-height: 400px;
-  /* .app-content co padding-top:68px (chieu cao navbar) + .page co padding-top:40px
-     — tru am ca 2 de banner day sat len trang trinh duyet, khong con khoang trang
-     trang xen giua Navbar (dang overlay) va banner. */
+  /* .app-content has padding-top:68px (navbar height) + .page has padding-top:40px
+     — negate both so the banner sits flush against the browser top, with no gap
+     left between the (overlay) navbar and the banner. */
   margin-top: -108px;
   color: #fff;
   margin-bottom: 28px;
   overflow: hidden;
-  /* Fallback khi không có ảnh nào (gallery + coverImage đều rỗng). */
+  /* Fallback when there are no images at all (gallery and coverImage both empty). */
   background: linear-gradient(135deg, #0050ef, #0a2e7a);
 }
 
@@ -1879,9 +1880,9 @@
   z-index: 1;
   opacity: 0;
   transition: opacity 1s ease;
-  /* Anh nguon chi ~900x506 nhung banner render toi >1900px ngang — cover phong to
-     lam vo net/rang cua anh. Blur nhe + tang tuong phan de che vien pixel, nhin
-     mem hon thay vi "vo" ro net. */
+  /* Source images are only ~900x506 but the banner renders at >1900px wide — cover
+     scaling blows up the pixelation. A slight blur + boosted contrast/saturation
+     masks the jagged edges, reading as soft rather than visibly "broken up". */
   filter: blur(0.6px) saturate(1.08) contrast(1.03);
   transform: scale(1.02);
 }
@@ -1932,9 +1933,9 @@
   z-index: 3;
 }
 
-/* Anh gio chiem khong gian thuc trong luong (khong con la background) — bo phan chu
-   (meta + title) phai tach ra 1 khoi position:absolute rieng de nam de len tren anh,
-   thay vi dua vao flex/justify-content cua .detail-banner nhu truoc. */
+/* The image now occupies real space in the flow (no longer a background) — the text
+   block (meta + title) has to be split into its own position:absolute block to sit
+   on top of the image, instead of relying on .detail-banner's flex/justify-content as before. */
 .detail-banner-content {
   position: absolute;
   left: 0;

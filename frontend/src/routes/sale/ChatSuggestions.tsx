@@ -11,8 +11,8 @@ interface Props {
   onPick: (question: string) => void;
 }
 
-// Card "Thu hoi" kieu MOSO — goi y san 4 cau hoi thuong gap cho sale, bam vao
-// se dien vao o nhap (khong tu gui, de sale kip chinh sua truoc khi hoi).
+// MOSO-style "suggested questions" card — 4 preset questions for the Sale rep;
+// clicking one fills the input (does not auto-send, so the Sale can edit before asking).
 export function ChatSuggestions({ onPick }: Props) {
   return (
     <div className="chat-suggest-card">

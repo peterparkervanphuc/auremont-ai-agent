@@ -13,10 +13,11 @@ export function ChatWidget() {
   const [messages, setMessages] = useState<MessageResponse[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  // Hoi ten khach NGAY LUC gui cau hoi dau tien (khong hoi ngay khi vua mo
-  // panel) — de session list ben sale hien ten khach thay vi tu dong lay noi
-  // dung cau hoi dau tien lam tieu de. pendingMessage giu lai cau hoi dang go
-  // do, gui that su sau khi qua buoc nay (dien ten hoac bo qua).
+  // Ask for the customer's name at the moment they send their first message (not
+  // right when the panel opens), so the Sale-side session list shows the customer's
+  // name instead of defaulting to the first question's text as the title.
+  // pendingMessage holds the in-flight question and is actually sent once this
+  // step is resolved (name entered or skipped).
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [askedName, setAskedName] = useState(false);
   const [customerName, setCustomerName] = useState("");
@@ -24,15 +25,16 @@ export function ChatWidget() {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Widget không unmount khi đổi trang (chỉ ẩn/hiện qua showChatWidget ở App.tsx),
-  // nên panel mở ở trang này sẽ dính nguyên sang trang khác nếu không tự đóng.
-  // Đóng panel thì hợp lý, nhưng phiên chat vẫn giữ nguyên (sessionId/messages)
-  // để quay lại widget không mất hội thoại đang hỏi dở.
+  // The widget never unmounts on page change (App.tsx only toggles it via
+  // showChatWidget), so a panel left open on one page would stay open when
+  // navigating to another unless closed explicitly. Closing the panel is fine,
+  // but the session state (sessionId/messages) is preserved so reopening the
+  // widget doesn't lose an in-progress conversation.
   useEffect(() => {
     setOpen(false);
   }, [location.pathname]);
 
-  // Bấm ra ngoài panel thì đóng lại, giống mọi popover/dropdown khác trong app.
+  // Clicking outside the panel closes it, matching every other popover/dropdown in the app.
   useEffect(() => {
     if (!open) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -59,10 +61,10 @@ export function ChatWidget() {
     const trimmed = content.trim();
     if (!trimmed || loading) return;
 
-    // Lan gui dau tien (chua co session, chua qua buoc hoi ten): tam giu cau
-    // hoi lai, hien form hoi ten thay vi gui luon. skipNameGate=true khi goi
-    // lai tu confirmName (vua qua buoc hoi ten trong cung 1 lan bam, state
-    // askedName chua kip cap nhat lai trong closure nay).
+    // First send (no session yet, name gate not passed): hold the question and
+    // show the name form instead of sending immediately. skipNameGate=true when
+    // called back from confirmName (the name step was just completed within the
+    // same click, and the askedName state hasn't updated in this closure yet).
     if (!sessionId && !askedName && !skipNameGate) {
       setPendingMessage(trimmed);
       setInput("");

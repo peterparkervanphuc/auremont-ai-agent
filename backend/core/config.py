@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, ge=1, le=65535)
     app_host: str = "0.0.0.0"
     log_level: str = "INFO"
+    # None = auto-select: JSON in production/staging (machine-readable), plain
+    # text in dev (human-readable). Set LOG_JSON=true/false to force one mode
+    # regardless of environment.
+    log_json: bool | None = None
+    # Logs the first 200 characters of a Sale's question to the audit log. This is
+    # the single most valuable field when reproducing a wrong answer, and it is
+    # text the Sale typed, not customer PII. Still toggleable without a code change.
+    log_query_text: bool = True
 
     # Authentication
     secret_key: str = Field(default="dev-secret-key-change-in-production", description="Secret key for JWT signing")
@@ -43,8 +51,8 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     qdrant_collection: str = "salesmate_documents"
 
-    # Minimum Verifier confidence (0-1). Below this the Sale sees
-    # "Không đủ thông tin, liên hệ Admin" instead of the answer.
+    # Minimum Verifier confidence (0-1). Below this the Sale sees the
+    # "Không đủ thông tin, liên hệ Admin" notice instead of the answer.
     verifier_threshold_sale: float = 0.7
 
     # Object storage (MinIO) — document originals
@@ -61,6 +69,18 @@ class Settings(BaseSettings):
     # address. Left blank it falls back to minio_endpoint, which is correct when
     # running the backend outside Docker.
     minio_public_endpoint: str = ""
+    # Base URL of the bucket/CDN holding the original project images (~58 MB, not
+    # checked into git). On startup the backend downloads <base_url>/<path> for
+    # each entry in seed-data/project_images_manifest.json into MinIO. Left blank,
+    # the image-loading step is skipped — the catalogue still works, minus images.
+    project_images_base_url: str = ""
+    # URL of a single .tar.gz archive holding all project images (e.g. GitHub
+    # Releases). Preferred over project_images_base_url: one request instead of ~180.
+    project_images_archive_url: str = ""
+    # Auto-loads demo data (images + project catalogue) on startup if the DB is
+    # still empty. Enabled so `docker compose up` works out of the box, with no
+    # manual script to run. Set to false once an environment has real data.
+    auto_load_demo_data: bool = True
 
     # Inventory API — real-time unit availability from the company's internal API
     inventory_api_url: str = ""
@@ -70,6 +90,13 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
     upload_max_bytes: int = 20 * 1024 * 1024
+
+    @model_validator(mode="after")
+    def _resolve_log_json(self) -> "Settings":
+        if self.log_json is None:
+            self.log_json = self.app_env.lower() not in {"development", "dev", "test", "testing"}
+        return self
+
 
 
 @lru_cache

@@ -35,8 +35,11 @@ data/
 *.db
 *.sqlite3
 
-# Project images (loaded by scripts/upload_project_images.py & scripts/load_*.py)
+# Ảnh dự án (~58MB) — sống trên S3/CDN, không trong git.
+# Backend tự tải về MinIO lúc khởi động theo seed-data/project_images_manifest.json.
 project-images-source/
+# Archive dong goi tu thu muc tren de upload len GitHub Releases.
+project-images.tar.gz
 
 # Logs
 logs/
@@ -64,10 +67,6 @@ node_modules/
 .next/
 out/
 .nuxt/
-
-# Build
-*.pyc
-*.pyo
 
 # AI logs — tracked structure, ignored content
 .ai-log/*.jsonl

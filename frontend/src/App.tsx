@@ -18,19 +18,19 @@ import { ConflictsTab } from "./routes/admin/ConflictsTab";
 import { SettingsTab } from "./routes/admin/SettingsTab";
 import { NotFound } from "./routes/NotFound";
 
-/** Admin có bảng điều khiển riêng; Sale thấy trang chủ hướng chat tư vấn. */
+/** Admin gets its own dashboard; Sale sees the chat-oriented home page. */
 function HomeRoute() {
   const { role } = useAuth();
   return role === "admin" ? <AdminHome /> : <Home />;
 }
 
-/** Shell chung: thanh menu ngang trên đầu + vùng nội dung, dùng cho cả SALE và ADMIN. */
+/** Shared shell: top nav bar plus content area, used by both SALE and ADMIN. */
 function AppShell() {
   const { role } = useAuth();
   const location = useLocation();
   const showChatWidget = role === "sale" && !location.pathname.startsWith("/chat");
-  // Chat là UI dạng app full-height (ChatGPT-style, không cuộn trang) — thêm Footer
-  // vào đó sẽ đội chiều cao vượt 100vh và phá layout cố định của khung chat.
+  // Chat is a full-height, app-style UI (ChatGPT-style, no page scroll) — adding the
+  // Footer there would push the height past 100vh and break the chat's fixed layout.
   const showFooter = !location.pathname.startsWith("/chat");
 
   return (
@@ -40,7 +40,7 @@ function AppShell() {
         <Routes>
           <Route path="/home" element={<HomeRoute />} />
 
-          {/* Chat tư vấn khách hàng — chỉ dành cho SALE, ADMIN không trực tiếp tư vấn khách. */}
+          {/* Customer consultation chat — SALE only; ADMIN doesn't consult customers directly. */}
           <Route
             path="/chat/*"
             element={
@@ -50,8 +50,8 @@ function AppShell() {
             }
           />
 
-          {/* Tra cứu dự án theo loại hình — vào thẳng qua dropdown menu TopNavbar,
-              không còn trang mục lục /inventory riêng (trùng lặp với menu). */}
+          {/* Project lookup by product type — reached directly via the TopNavbar dropdown;
+              there is no separate /inventory index page anymore (it duplicated the menu). */}
           <Route
             path="/inventory/:categorySlug"
             element={
@@ -60,7 +60,7 @@ function AppShell() {
               </ProtectedRoute>
             }
           />
-          {/* Nhóm/phân khu trong catalog nhiều dự án (vd "The Metropolitan" gồm Beverly/London/Paris/Zurich). */}
+          {/* Group/sub-zone within the multi-project catalog (e.g. "The Metropolitan" = Beverly/London/Paris/Zurich). */}
           <Route
             path="/inventory/group/:groupSlug"
             element={
@@ -69,8 +69,8 @@ function AppShell() {
               </ProtectedRoute>
             }
           />
-          {/* Trang chi tiết 1 dự án con thật (The Beverly, The Sapphire...), khác với CategoryDetailPage
-              ở trên vốn chỉ hiển thị tổng quan CỦA RIÊNG Vinhomes Ocean Park theo loại hình. */}
+          {/* Detail page for one real sub-project (The Beverly, The Sapphire...), distinct from
+              CategoryDetailPage above, which only shows Vinhomes Ocean Park's overview by product type. */}
           <Route
             path="/inventory/project/:projectId"
             element={
@@ -80,7 +80,7 @@ function AppShell() {
             }
           />
 
-          {/* Khu vực chỉ dành cho ADMIN */}
+          {/* ADMIN-only area */}
           <Route
             path="/documents"
             element={
@@ -124,7 +124,7 @@ function AppShell() {
   );
 }
 
-// 1 điểm truy cập chung; sau đăng nhập routing theo role (SALE / ADMIN).
+// Single entry point; routing after login branches by role (SALE / ADMIN).
 function App() {
   return (
     <Routes>

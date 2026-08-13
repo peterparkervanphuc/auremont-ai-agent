@@ -5,8 +5,8 @@ import { AuremontLogoIcon, LogInIcon } from "../components/Icons";
 const HERO_IMAGE_URL =
   "http://localhost:9000/project-images/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
 
-// Màn hình công khai đầu tiên khi chưa đăng nhập — chỉ có branding + nút vào hệ thống,
-// không lộ nội dung tra cứu/chat nội bộ ra ngoài.
+// First public screen before login — branding and an entry button only,
+// so internal lookup/chat content is never exposed to unauthenticated visitors.
 export function Landing() {
   const { isAuthenticated } = useAuth();
   if (isAuthenticated) return <Navigate to="/home" replace />;

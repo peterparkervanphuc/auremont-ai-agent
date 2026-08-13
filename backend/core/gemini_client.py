@@ -1,7 +1,11 @@
+import logging
+
 import google.genai as genai
 from google.genai import types
 
 from backend.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 _client: genai.Client | None = None
 
@@ -79,6 +83,10 @@ def _embed(
             config=types.EmbedContentConfig(**config_kwargs),
         )
     except Exception as exc:
+        logger.exception(
+            "Goi Gemini embedding that bai.",
+            extra={"event": "gemini.embed.failed", "model": settings.embedding_model, "input_count": len(texts)},
+        )
         raise GeminiEmbeddingError("Gemini embedding request failed.") from exc
 
     vectors = [embedding.values for embedding in response.embeddings]

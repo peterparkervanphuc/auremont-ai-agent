@@ -19,20 +19,21 @@ import {
   SparkleIcon,
 } from "../../components/Icons";
 
-// categorySlug tren URL la slug suy ra tu field `category` trong pricing (qua
-// slugify o backend, vd "Shophouse" -> "shophouse") — phai KHOP dung voi
-// CatalogCategory.slug trong catalog.ts moi tim dung duoc nhom phan khu de hien thi.
+// categorySlug in the URL is derived from the `category` field in pricing (via
+// backend slugify, e.g. "Shophouse" -> "shophouse") — it must match
+// CatalogCategory.slug in catalog.ts exactly, otherwise the group lookup fails.
 const CATEGORY_SLUG_TO_CATALOG_SLUG: Record<string, string> = {
   "chung-cu": "chung-cu",
   "biet-thu": "biet-thu",
   shophouse: "shophouse",
 };
 
-// Anh rieng cho banner "Chung cu" theo yeu cau — khong lay tu API nhu cac loai hinh khac.
+// Dedicated background image for the "Chung cư" (apartment) banner, per spec —
+// not fetched from the API like other category types.
 const CHUNG_CU_BANNER_IMAGE = "/the-paris-background.jpg";
 
-// Anh nen tu luot cho banner dau trang "Chung cu" — 4 anh theo dung yeu cau,
-// da co san tren MinIO tu cac du an the-london/the-paris/the-zurich.
+// Auto-rotating background slides for the "Chung cư" page banner — 4 images per
+// spec, already available on MinIO from the-london/the-paris/the-zurich projects.
 const CHUNG_CU_BANNER_SLIDES = [
   "http://localhost:9000/project-images/the-london/phong-dance-phan-khu-the-london-vinhomes-ocean-park.jpg",
   "http://localhost:9000/project-images/the-london/phong-giai-tri-phan-khu-the-london-vinhomes-ocean-park.jpg",
@@ -40,15 +41,15 @@ const CHUNG_CU_BANNER_SLIDES = [
   "http://localhost:9000/project-images/the-zurich/canh-quan-the-zurich.jpg",
 ];
 
-// Anh nen tu luot cho banner dau trang "Biet thu" — 3 anh theo dung yeu cau,
-// da co san tren MinIO tu cac du an hai-au/ngoc-trai.
+// Auto-rotating background slides for the "Biệt thự" (villa) page banner — 3
+// images per spec, already available on MinIO from the hai-au/ngoc-trai projects.
 const BIET_THU_BANNER_SLIDES = [
   "http://localhost:9000/project-images/hai-au/lien-ke-vinhomes-ocean-park.jpg",
   "http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-shop-house.jpg",
   "http://localhost:9000/project-images/hai-au/song-lap-hai-au.jpg",
 ];
 
-// 4 anh tu luot cho khoi gioi thieu rieng cua tab "Chung cu".
+// 4 auto-rotating images for the "Chung cư" tab's intro section.
 const CHUNG_CU_INTRO_IMAGES = [
   "/masterise-vinhomes-ocean-park-night.jpg",
   "/masteri-grand-coast-bg-homepage.jpg",
@@ -80,9 +81,9 @@ function IntroCarousel({ images }: { images: string[] }) {
   );
 }
 
-// Vi tri (uoc luong theo % chieu rong/cao anh) cua tung khu mau tren
-// cac-phan-khu-chung-cu-vinhomes-ocean-park.jpg — anh nay von la ban KHONG co nhan,
-// nen toa do la uoc luong bang mat theo dung tam khu mau trong anh, khong phai so do.
+// Position (as % of image width/height) of each colored zone on
+// cac-phan-khu-chung-cu-vinhomes-ocean-park.jpg — this source image has no labels,
+// so coordinates are visually estimated against each zone's center, not a survey.
 const CHUNG_CU_LOCATIONS = [
   { number: 1, name: "The Sapphire", left: "32%", top: "48%" },
   { number: 2, name: "The Ocean View", left: "41%", top: "17%" },
@@ -111,8 +112,8 @@ function LocationMap() {
   );
 }
 
-// Noi dung mo ta Lumiere Orient Pearl / The Palma lay tu du lieu THAT cua project
-// "the-palma" (developer, overview, location_sides...) da doc truoc do — khong bia.
+// Lumière Orient Pearl / The Palma copy is sourced from the real "the-palma"
+// project data (developer, overview, location_sides...) read earlier — not invented.
 function LumiereOrientPearlSpotlight() {
   return (
     <section className="zone-spotlight">
@@ -153,10 +154,10 @@ function LumiereOrientPearlSpotlight() {
   );
 }
 
-// Noi dung "Phan khu The Ocean View" lay tu anh mau tham khao nguoi dung gui
-// (khong bia) — day la nhom cha (The Zenpark/The Pavilion/The Bayfront), khong
-// phai 1 project rieng trong DB nen KHONG the fetch API, giong cach lam voi
-// MetropolitanSpotlight.
+// "The Ocean View" copy is sourced from the reference mockup provided by the user
+// (not invented) — this is a parent group (The Zenpark/The Pavilion/The Bayfront),
+// not a standalone project in the DB, so it cannot be fetched from the API; same
+// approach as MetropolitanSpotlight.
 function OceanViewSpotlight() {
   return (
     <section className="zone-spotlight">
@@ -198,9 +199,9 @@ function OceanViewSpotlight() {
   );
 }
 
-// Du 6 anh layout can ho The Zenpark theo dung danh sach duoc gui — khong co
-// dien tich xac nhan rieng cho tung anh nen de trong nhan (giong cach lam voi
-// ZURICH_LAYOUTS), tranh bia so.
+// All 6 The Zenpark unit layout images per the provided list — no confirmed size
+// per image, so the label is left blank (same approach as ZURICH_LAYOUTS) to
+// avoid inventing figures.
 const ZENPARK_LAYOUTS = [
   { label: "Căn Studio", src: "http://localhost:9000/project-images/the-zenpark/can-ho-studio-r1-01-vinhomes-ocean-park.jpg" },
   { label: "Căn 1 ngủ", src: "http://localhost:9000/project-images/the-zenpark/can-ho-1-ngu-r1-01-vinhomes-ocean-park.jpg" },
@@ -226,9 +227,8 @@ function ZenparkLayoutGallery() {
   );
 }
 
-// Du 6 anh layout can ho The Pavilion theo dung danh sach duoc gui — khong co
-// dien tich xac nhan rieng cho tung anh nen de trong nhan, giong cach lam voi
-// ZENPARK_LAYOUTS.
+// All 6 The Pavilion unit layout images per the provided list — no confirmed
+// size per image, so the label is left blank, same approach as ZENPARK_LAYOUTS.
 const PAVILION_LAYOUTS = [
   { label: "Căn Studio", src: "http://localhost:9000/project-images/the-pavilion/can-ho-studio-p1-vinhomes-ocean-park.jpg" },
   { label: "Căn 1 ngủ", src: "http://localhost:9000/project-images/the-pavilion/can-ho-1-ngu-p1-vinhomes-ocean-park.jpg" },
@@ -254,10 +254,10 @@ function PavilionLayoutGallery() {
   );
 }
 
-// Noi dung "Phan khu The Sapphire" theo dung mau thiet ke nguoi dung gui (khac
-// voi "description" ngan trong the_sapphire.json) — Sapphire la 1 PHAN KHU (khong
-// phai tieu khu con cua phan khu nao khac), nen dung style "zone-spotlight" tieu
-// de giua trang giong OceanViewSpotlight, kem nut CTA, thay vi TowerSpotlight.
+// "The Sapphire" copy follows the mockup provided by the user (longer than the
+// short "description" in the_sapphire.json) — Sapphire is a top-level zone (not
+// a sub-zone of another), so it uses the "zone-spotlight" style with a centered
+// heading like OceanViewSpotlight, plus a CTA button, rather than TowerSpotlight.
 function SapphireSpotlight() {
   return (
     <section className="zone-spotlight">
@@ -302,11 +302,10 @@ function SapphireSpotlight() {
   );
 }
 
-// Noi dung "Phan khu The Senique Hanoi" lay THAT tu the_senique_hanoi.json
-// (developer, overview: 3 toa, 2152 can, 37 tang, ban giao Q2/2027, gia tu 68
-// trieu/m2, mo hinh Compound dau tien tai Ocean Park) — khong bia, giong cach
-// lam voi SapphireSpotlight vi day cung la 1 PHAN KHU doc lap (khong phai tieu
-// khu con).
+// "The Senique Hanoi" copy is sourced directly from the_senique_hanoi.json
+// (developer, overview: 3 towers, 2,152 units, 37 floors, handover Q2/2027, price
+// from 68M/m2, first Compound model in Ocean Park) — not invented; same approach
+// as SapphireSpotlight since this is also an independent zone (not a sub-zone).
 function SeniqueSpotlight() {
   return (
     <section className="zone-spotlight">
@@ -342,10 +341,10 @@ function SeniqueSpotlight() {
   );
 }
 
-// Du 22 anh layout can ho The Senique Hanoi — dien tich suy tu chinh ten file
-// (vd "813" = 81,3m²) va doi chieu khop voi khoang dien tich that trong
-// the_senique_hanoi.json (2PN 54-81m², 3PN 83-108m², 4PN 154-188m², Duplex
-// 118-190m²) — khong bia so.
+// All 22 The Senique Hanoi unit layout images — size is derived from the file
+// name itself (e.g. "813" = 81.3m²) and cross-checked against the real size
+// ranges in the_senique_hanoi.json (2BR 54-81m², 3BR 83-108m², 4BR 154-188m²,
+// Duplex 118-190m²) — figures are not invented.
 const SENIQUE_LAYOUTS = [
   { label: "Căn 1PN | 42m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-1PN-medium-42-m2-the-senique-hanoi.jpg" },
   { label: "Căn 2PN | 53,5m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-2PN-small-535-m2-the-senique-hanoi.jpg" },
@@ -371,9 +370,10 @@ const SENIQUE_LAYOUTS = [
   { label: "Duplex 189,5m² | Tầng 1", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-duplex-medium-1895-m2-tang-1-the-senique-hanoi.jpg" },
 ];
 
-// Anh layout can ho da co san day du bang thong tin (loai can, toa, tang, so
-// can, DTSD/DTXD) + key plan ngay trong anh — chi can doi bo cuc hien thi sang
-// sidebar doc (gon hon luoi 3 cot cu) chu khong can them du lieu gi.
+// The layout images already contain full info (unit type, tower, floor, unit
+// count, usable/construction area) plus a key plan baked in — only the display
+// layout needs to switch to a vertical sidebar (more compact than the old 3-column
+// grid); no extra data is needed.
 function SidebarLayoutTabs({ title, tabs }: { title: string; tabs: { label: string; src: string }[] }) {
   const [active, setActive] = useState(0);
 
@@ -405,9 +405,9 @@ function SeniqueLayoutGallery() {
   return <SidebarLayoutTabs title="Layout căn hộ tòa The Senique Hanoi" tabs={SENIQUE_LAYOUTS} />;
 }
 
-// Anh mat bang tang thuc te The Senique Hanoi — 3 toa (Senique 1, Senique 2,
-// Senique Premier), moi toa co nhieu nhom tang khac nhau (theo dung file anh
-// duoc upload san tren MinIO tu truoc, khong thieu toa nao).
+// Real per-floor floor-plan images for The Senique Hanoi — 3 towers (Senique 1,
+// Senique 2, Senique Premier), each with several floor-group variants (matching
+// the image files already uploaded to MinIO earlier; no tower is missing).
 const SENIQUE_1_FLOOR_PLANS = [
   { label: "Tầng 2-18", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-2-4-6-8-10-12-14-16-18-toa-the-senique-1-ocean-park-1.jpg" },
   { label: "Tầng 3-17", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-3-5-7-9-11-13-15-17-toa-the-senique-1-ocean-park.jpg" },
@@ -440,10 +440,10 @@ const SENIQUE_PREMIER_FLOOR_PLANS = [
   { label: "Tầng 37", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-37-toa-the-senique-premier.jpg" },
 ];
 
-// Anh mat bang thuc te The Sapphire — du an chia 2 khu (Sapphire 1: 12 toa,
-// Sapphire 2: 19 toa). Anh nguon chi co 9/12 toa S1 (thieu S1.01/03/04) va
-// 1/19 toa S2 (S2.17) — CHI liet ke dung so toa co anh that, khong bia them
-// toa chua co anh (tranh hien thi sai/gay nham lan cho sale).
+// Real floor-plan images for The Sapphire — the project is split into 2 zones
+// (Sapphire 1: 12 towers, Sapphire 2: 19 towers). The source images only cover
+// 9/12 S1 towers (missing S1.01/03/04) and 1/19 S2 towers (S2.17) — ONLY towers
+// with a real image are listed, to avoid showing wrong info or confusing the Sale rep.
 const SAPPHIRE_FLOOR_PLANS = [
   { label: "Khu Sapphire 1", src: "http://localhost:9000/project-images/the-sapphire/mat-bang-khu-sapphire-1-vinhomes-ocean-park.jpg" },
   { label: "Tòa S1.02", src: "http://localhost:9000/project-images/the-sapphire/mat-bang-toa-s1-02-vinhomes-ocean-park.jpg" },
@@ -459,8 +459,8 @@ const SAPPHIRE_FLOOR_PLANS = [
   { label: "Tòa S2.17", src: "http://localhost:9000/project-images/the-sapphire/mat-bang-toa-s2-17-vinhomes-ocean-park.jpg" },
 ];
 
-// Bang gia rieng cua The Palma, doc that qua API (khong code cung so lieu) —
-// dung chung logic voi trang chi tiet du an (fetchProjectDetail).
+// Pricing specific to The Palma, read live from the API (not hardcoded) — shares
+// the same logic as the project detail page (fetchProjectDetail).
 function PriceTable({ projectId }: { projectId: string }) {
   const [detail, setDetail] = useState<ProjectFullDetail | null>(null);
 
@@ -498,8 +498,8 @@ function PriceTable({ projectId }: { projectId: string }) {
   );
 }
 
-// Anh mat bang tang thuc te cua 2 toa The Palma — da co san tren MinIO tu luc
-// upload anh du an "the-palma" (khong can copy lai vao public/).
+// Real floor-plan images for The Palma's 2 towers — already on MinIO from when
+// the "the-palma" project images were uploaded (no need to copy into public/).
 const PALMA_FLOOR_PLANS = [
   {
     label: "Tòa PALMA 1",
@@ -511,8 +511,8 @@ const PALMA_FLOOR_PLANS = [
   },
 ];
 
-// Anh mat bang tang thuc te 4 toa The Beverly — da co san tren MinIO tu luc
-// upload anh du an "the-beverly".
+// Real floor-plan images for The Beverly's 4 towers — already on MinIO from when
+// the "the-beverly" project images were uploaded.
 const BEVERLY_FLOOR_PLANS = [
   { label: "Tòa BE1", src: "http://localhost:9000/project-images/the-beverly/mat-bang-toa-be1-vinhomes-ocean-park-2048x1447.jpg" },
   { label: "Tòa BE2", src: "http://localhost:9000/project-images/the-beverly/mat-bang-tang-3-24-toa-be2-phan-khu-the-beverly-vinhomes-ocean-park-2048x1447.jpg" },
@@ -520,8 +520,8 @@ const BEVERLY_FLOOR_PLANS = [
   { label: "Tòa BE4", src: "http://localhost:9000/project-images/the-beverly/mat-bang-toa-be4-the-beverly-vinhomes-ocean-park-2048x1447.jpg" },
 ];
 
-// Anh mat bang tang thuc te 4/5 toa The Paris co san tren MinIO (khong co mat
-// bang rieng cho PR6 trong danh sach anh duoc gui).
+// Real floor-plan images for 4 of The Paris's 5 towers, available on MinIO (no
+// dedicated floor-plan image for PR6 in the provided image list).
 const PARIS_FLOOR_PLANS = [
   { label: "Tòa PR1", src: "http://localhost:9000/project-images/the-paris/mat-bang-toa-pr1-the-paris-vinhomes-ocean-park-2048x1170.jpg" },
   { label: "Tòa PR2", src: "http://localhost:9000/project-images/the-paris/mat-bang-toa-pr2-the-paris-vinhomes-ocean-park-2048x1449.jpg" },
@@ -529,9 +529,10 @@ const PARIS_FLOOR_PLANS = [
   { label: "Tòa PR5", src: "http://localhost:9000/project-images/the-paris/mat-bang-toa-pr5-the-paris-vinhomes-ocean-park-2048x1170.jpg" },
 ];
 
-// Vi tri 5 toa tren anh vi-tri-the-paris-ocean-park-2048x1170.jpg — uoc luong
-// bang mat, doi chieu voi anh mau tham khao co san nhan (PR1..PR6, danh so 1-5
-// theo dung thu tu nhan trong anh mau: PR6=5, PR1=1, PR5=4, PR2=2, PR3=3).
+// Position of the 5 towers on vi-tri-the-paris-ocean-park-2048x1170.jpg —
+// visually estimated, cross-checked against the labeled reference mockup
+// (PR1..PR6, numbered 1-5 following the label order in the mockup:
+// PR6=5, PR1=1, PR5=4, PR2=2, PR3=3).
 const PARIS_LOCATIONS = [
   { number: 1, name: "Tòa PR1", left: "40%", top: "46%" },
   { number: 2, name: "Tòa PR2", left: "45%", top: "53%" },
@@ -560,8 +561,8 @@ function ParisLocationMap() {
   );
 }
 
-// Tab mat bang tang — tai su dung cho Palma (2 toa), Beverly (4 toa) va cac
-// tieu khu khac sau nay, chi can doi title + danh sach tabs.
+// Floor-plan tab component — reused for Palma (2 towers), Beverly (4 towers),
+// and other sub-zones going forward; just swap the title + tab list.
 function FloorPlanTabs({
   title,
   tabs,
@@ -569,8 +570,9 @@ function FloorPlanTabs({
 }: {
   title: string;
   tabs: { label: string; src: string }[];
-  /** true = gioi han chieu cao anh, dung cho anh vi tri/phoi canh kho dung/doc
-   * de tranh chiem qua nhieu khong gian (vd Vi tri & Phoi canh Ngoc Trai). */
+  /** true = cap the image height, for location/rendering images that are
+   * unusually wide or tall, to avoid taking up too much vertical space
+   * (e.g. Ngọc Trai's "Location & Rendering" section). */
   compact?: boolean;
 }) {
   const [active, setActive] = useState(0);
@@ -601,11 +603,12 @@ function FloorPlanTabs({
   );
 }
 
-// "The Metropolitan" la nhom cha (4 tieu khu Beverly/London/Paris/Zurich), khong
-// phai 1 project rieng trong DB nen KHONG the fetch API — noi dung o day la viet
-// tay, dua tren so lieu that da xac minh: Beverly 4 toa (BE1-BE4), London 3 toa
-// (LD1-LD3), Paris 5 toa (PR1,PR2,PR3,PR5,PR6), Zurich 3 toa (ZR1-ZR3) = 15 toa,
-// developer Vingroup + Mitsubishi Corporation (tu the_beverly/the_zurich...json).
+// "The Metropolitan" is a parent group (4 sub-zones: Beverly/London/Paris/
+// Zurich), not a standalone project in the DB, so it CANNOT be fetched from the
+// API — this copy is hand-written, based on verified real figures: Beverly 4
+// towers (BE1-BE4), London 3 towers (LD1-LD3), Paris 5 towers (PR1,PR2,PR3,
+// PR5,PR6), Zurich 3 towers (ZR1-ZR3) = 15 towers total, developer Vingroup +
+// Mitsubishi Corporation (from the_beverly/the_zurich...json).
 function MetropolitanSpotlight() {
   return (
     <section className="zone-spotlight zone-spotlight--dark">
@@ -648,18 +651,20 @@ function MetropolitanSpotlight() {
   );
 }
 
-// Vi tri 4 tieu khu tren anh vi-tri-the-metropolitan-vinhomes-ocean-park.jpg —
-// CHI CHAC CHAN "The Zurich" (khop dung anh mau tham khao co ghi nhan). 3 khu con
-// lai (Beverly/London/Paris) la UOC LUONG theo mo ta vi tri thuc te trong data
-// (Beverly o vi tri trung tam, Paris tiep giap Zurich) — can ban xac nhan lai.
-// Chi giu "The Zurich" — day la vi tri DUY NHAT khop voi anh mau tham khao (khu
-// mau xanh). 3 khu con lai (Beverly/London/Paris) chua co nguon xac nhan vi tri
-// nen KHONG danh dau (tranh ghi sai), se bo sung khi co du lieu chac chan hon.
+// Position of the 4 sub-zones on vi-tri-the-metropolitan-vinhomes-ocean-park.jpg
+// — ONLY "The Zurich" is confirmed (matches the labeled reference mockup exactly).
+// The other 3 (Beverly/London/Paris) would only be ESTIMATES based on the
+// location description in the data (Beverly is central, Paris borders Zurich) —
+// pending reconfirmation. Only "The Zurich" is kept here since it is the ONLY
+// position that matches the reference mockup (the blue zone). The other 3
+// (Beverly/London/Paris) have no confirmed position source, so they are
+// deliberately NOT marked (to avoid showing wrong info) — to be added once more
+// reliable data is available.
 const METROPOLITAN_LOCATIONS = [{ number: 1, name: "The Zurich", left: "72%", top: "34%" }];
 
-// Vi tri "The Beverly" — khop voi khu mau VANG trong anh mau tham khao
-// vi-tri-the-metropolitan-vinhomes-ocean-park.jpg (rieng biet voi khu mau xanh
-// cua Zurich). Dung mau vang (#ffd400) cho dot so 2 de khop dung mau khu tren anh.
+// Position of "The Beverly" — matches the YELLOW zone in the reference mockup
+// vi-tri-the-metropolitan-vinhomes-ocean-park.jpg (distinct from Zurich's blue
+// zone). Uses yellow (#ffd400) for pin #2 to match the zone color in the image.
 const BEVERLY_LOCATION = [{ number: 2, name: "The Beverly", left: "62%", top: "42%", color: "#ffd400" }];
 
 function MetropolitanLocationMap({
@@ -688,11 +693,11 @@ function MetropolitanLocationMap({
   );
 }
 
-// Banner nen dam danh dau diem bat dau 1 khu/tieu khu moi (tai su dung mau dark
-// da co san o MetropolitanSpotlight) — dat o DAU moi block tieu khu/day shop de
-// nguoi dung de nhan biet ranh gioi khi cuon qua khu khac, khong can doi lai
-// toan bo phan noi dung ben duoi (van giu nen sang nhu cu, tranh phai re-theme
-// lai FloorPlanTabs/PriceTable... cho nen toi).
+// Dark banner marking the start of a new zone/sub-zone (reuses the dark theme
+// already built for MetropolitanSpotlight) — placed at the TOP of each sub-zone
+// or shop-row block so users can tell zones apart while scrolling, without
+// re-theming the content below (which keeps its light background, avoiding a
+// full re-theme of FloorPlanTabs/PriceTable etc. for a dark background).
 function ZoneHeaderBanner({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="zone-spotlight--dark zone-header-banner">
@@ -702,10 +707,10 @@ function ZoneHeaderBanner({ title, subtitle }: { title: string; subtitle?: strin
   );
 }
 
-// Spotlight 1 tieu khu con (khac Lumiere/Metropolitan — day la TIEU KHU, dung
-// lai dung "detail.description" THAT tu API thay vi viet tay, vi mo ta trong
-// data da rat day du (khop gan nguyen van nguon tham khao). Tai su dung duoc
-// cho Beverly/London/Paris sau nay, chi can doi projectId + image.
+// Spotlight for a sub-zone (unlike Lumière/Metropolitan, which are zones) —
+// reuses the real "detail.description" from the API instead of hand-written copy,
+// since the API description is already thorough (closely matches the reference
+// source). Reused for Beverly/London/Paris below by swapping projectId + image.
 function TowerSpotlight({
   projectId,
   image,
@@ -714,11 +719,11 @@ function TowerSpotlight({
 }: {
   projectId: string;
   image: string;
-  /** false = anh chu nhat bo goc binh thuong, thu nho hon oval — dung khi da
-   * co san 1 khoi anh vi tri/phoi canh rieng ngay ben duoi (vd Ngoc Trai), oval
-   * to lai thanh thua. */
+  /** false = plain rounded-corner rectangular image, smaller than the oval —
+   * used when a separate location/rendering image block already follows right
+   * below (e.g. Ngọc Trai), where an oval would look redundant. */
   oval?: boolean;
-  /** true = an han khoi anh ben phai, chi hien text gioi thieu. */
+  /** true = hide the image block on the right, showing only the intro text. */
   hideImage?: boolean;
 }) {
   const [detail, setDetail] = useState<ProjectFullDetail | null>(null);
@@ -751,9 +756,9 @@ function TowerSpotlight({
   );
 }
 
-// Du 9 file anh thuc te cua The Zurich (theo dung danh sach ban gui). Size chi
-// dien khi da doi chieu khop voi anh mau tham khao thuc; 2 file khong co size
-// xac nhan (studio-zr2, 3-ngu-zr1) de trong theo yeu cau, khong bia so.
+// All 9 real The Zurich unit images per the provided list. Size is only filled
+// in once cross-checked against the real reference mockup; 2 files with no
+// confirmed size (studio-zr2, 3-bed-zr1) are left blank per spec, not invented.
 const ZURICH_LAYOUTS = [
   { label: "Căn Studio", size: "36m²", src: "http://localhost:9000/project-images/the-zurich/can-ho-studio-zr1-vinhomes-ocean-park.jpg" },
   { label: "Căn Studio", size: "", src: "http://localhost:9000/project-images/the-zurich/can-ho-studio-zr2-vinhomes-ocean-park.jpg" },
@@ -782,8 +787,8 @@ function ZurichLayoutGallery() {
   );
 }
 
-// Anh mat bang tang thuc te 3 toa The London — da co san tren MinIO tu luc
-// upload anh du an "the-london".
+// Real floor-plan images for The London's 3 towers — already on MinIO from when
+// the "the-london" project images were uploaded.
 const LONDON_FLOOR_PLANS = [
   {
     label: "Tòa LD1",
@@ -799,10 +804,11 @@ const LONDON_FLOOR_PLANS = [
   },
 ];
 
-// Banner vang "TONG MAT BANG CAC PHAN KHU BIET THU" dung dung anh mau tham
-// khao nguoi dung gui (co san pin so tren anh mau) — toa do pin doc lai truc
-// tiep tu vi tri pin trong chinh anh mau do (khong con doan qua mau khac nhu
-// truoc), theo dung mapping: 1 Ngoc Trai, 2 San Ho, 3 Hai Au, 4 Sao Bien.
+// Yellow "OVERALL VILLA ZONE MASTER PLAN" banner using the exact reference
+// mockup provided by the user (numbered pins already on the mockup) — pin
+// coordinates are read directly from the pin positions in that same mockup (no
+// longer estimated against a different image as before), per the mapping:
+// 1 Ngọc Trai, 2 San Hô, 3 Hải Âu, 4 Sao Biển.
 const VILLA_LOCATIONS = [
   { number: 1, name: "Ngọc Trai", left: "34%", top: "43%" },
   { number: 2, name: "San Hô", left: "40%", top: "20%" },
@@ -831,9 +837,9 @@ function VillaLocationMap() {
   );
 }
 
-// 4 anh "anh-biet-thu-1..4" theo dung ten file nguoi dung yeu cau — dung lam
-// gallery: anh dau tien la anh lon mac dinh, lướt/bam vao 1 trong 4 thumbnail
-// se doi anh lon tuong ung (xem VillaOverviewIntro).
+// 4 images "anh-biet-thu-1..4" using the exact file names requested — used as a
+// gallery: the first image is the default large image; hovering/clicking one of
+// the 4 thumbnails swaps in the corresponding large image (see VillaOverviewIntro).
 const VILLA_OVERVIEW_PHOTOS = [
   "http://localhost:9000/project-images/ngoc-trai/anh-biet-thu-1.jpg",
   "http://localhost:9000/project-images/ngoc-trai/anh-biet-thu-2.jpg",
@@ -841,11 +847,10 @@ const VILLA_OVERVIEW_PHOTOS = [
   "http://localhost:9000/project-images/ngoc-trai/anh-biet-thu-4.jpg",
 ];
 
-// Noi dung phan text (so lieu quy mo/ban giao/phap ly) KHONG lay tu du lieu
-// crawl (hai_au.json/ngoc_trai.json/sao_bien.json khong co so luong can hay
-// nam khoi cong) — day la text go tay, chep dung nguyen van tu anh chup man
-// hinh trang mau nguoi dung gui truoc do, vi khong co truong API nao mang so
-// lieu nay ca.
+// The text content here (scale/handover/legal figures) is NOT sourced from the
+// crawled data (hai_au.json/ngoc_trai.json/sao_bien.json have no unit counts or
+// groundbreaking year) — it is hand-typed, transcribed verbatim from a reference
+// mockup screenshot provided earlier, since no API field carries these figures.
 function VillaOverviewIntro() {
   const [activePhoto, setActivePhoto] = useState(0);
 
@@ -923,16 +928,17 @@ function VillaOverviewIntro() {
   );
 }
 
-// Tab "Vi tri / Phoi canh" rieng cho Ngoc Trai — tham khao thiet ke trang mau
-// (co them tab "Vi tri cac Tieu khu" nhung da co san o VillaLocationMap phia
-// tren roi nen chi giu 2 tab con lai, tranh trung lap).
+// "Location / Rendering" tab specific to Ngọc Trai — follows the reference
+// mockup design (which also has a "Sub-zone Locations" tab, but that's already
+// covered by VillaLocationMap above, so only the remaining 2 tabs are kept here
+// to avoid duplication).
 const NGOC_TRAI_LOCATION_TABS = [
   { label: "Vị trí Tiểu khu Ngọc Trai", src: "http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-ngoc-trai.jpg" },
   { label: "Phối cảnh Ngọc Trai", src: "http://localhost:9000/project-images/ngoc-trai/phan-khu-ngoc-trai-vinhomes-ocean-park.jpg" },
 ];
 
-// Dien tich/so tang cac loai biet thu Ngoc Trai — lay dung tu pricing trong
-// ngoc_trai.json (size_min_sqm/size_max_sqm/storeys), khong bia them so lieu.
+// Size/storey figures for Ngọc Trai villa types — sourced directly from pricing
+// in ngoc_trai.json (size_min_sqm/size_max_sqm/storeys), no invented figures.
 const NGOC_TRAI_UNIT_TYPES = [
   { label: "Biệt thự đơn lập", size: "227,5 – 347,5m²", storeys: "3 tầng nổi và 1 tum" },
   { label: "Biệt thự song lập", size: "135 – 338m²", storeys: "3 tầng nổi và 1 tum" },
@@ -940,8 +946,8 @@ const NGOC_TRAI_UNIT_TYPES = [
   { label: "Nhà phố shophouse", size: "67,2 – 102m²", storeys: "4 tầng nổi và 1 tum" },
 ];
 
-// Anh phoi canh (ngoai that) tung loai biet thu Ngoc Trai — muc rieng ngay
-// duoi phan gioi thieu dien tich, TRUOC muc "mat bang" (ban ve ky thuat).
+// Exterior rendering images for each Ngọc Trai villa type — a dedicated section
+// right below the size intro, BEFORE the "floor plan" (technical drawing) section.
 const NGOC_TRAI_UNIT_PHOTOS = [
   { label: "Đơn lập", src: "http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-don-lap.jpg" },
   { label: "Song lập", src: "http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-song-lap.jpg" },
@@ -949,8 +955,8 @@ const NGOC_TRAI_UNIT_PHOTOS = [
   { label: "Shophouse", src: "http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-shop-house.jpg" },
 ];
 
-// Mat bang thuc te Ngoc Trai — co du don lap/song lap/lien ke/shophouse (theo
-// dung file anh duoc crawl, khong bia them loai chua co anh).
+// Real floor plans for Ngọc Trai — covers detached/semi-detached/townhouse/
+// shophouse types per the crawled image files; types without an image are not invented.
 const NGOC_TRAI_FLOOR_PLANS = [
   { label: "Đơn lập", src: "http://localhost:9000/project-images/ngoc-trai/don-lap-ngoc-trai-vinhomes-ocean-park-1500x925.jpg" },
   { label: "Song lập", src: "http://localhost:9000/project-images/ngoc-trai/song-lap-lap-ngoc-trai-vinhomes-ocean-park-1500x1024.jpg" },
@@ -960,7 +966,7 @@ const NGOC_TRAI_FLOOR_PLANS = [
   { label: "Shophouse (mẫu 2)", src: "http://localhost:9000/project-images/ngoc-trai/shophouse-2-ngoc-trai-vinhomes-ocean-park-1500x919.jpg" },
 ];
 
-// Mat bang thuc te Hai Au — moi loai co 2 mau (theo dung file anh duoc crawl).
+// Real floor plans for Hải Âu — each type has 2 variants, per the crawled image files.
 const HAI_AU_FLOOR_PLANS = [
   { label: "Đơn lập (mẫu 1)", src: "http://localhost:9000/project-images/hai-au/mat-bang-don-lap-1-hai-au-1202x1500.jpg" },
   { label: "Đơn lập (mẫu 2)", src: "http://localhost:9000/project-images/hai-au/mat-bang-don-lap-2-hai-au-1213x1500.jpg" },
@@ -970,40 +976,42 @@ const HAI_AU_FLOOR_PLANS = [
   { label: "Liền kề (mẫu 2)", src: "http://localhost:9000/project-images/hai-au/mat-bang-lien-ke-2-hai-au-1212x1500.jpg" },
 ];
 
-// Tab "Vi tri" cho Hai Au — chi co 1 anh vi tri tong the (khong co anh "phoi
-// canh tong the" rieng nhu Ngoc Trai; 3 anh phoi canh tung loai biet thu dung
-// rieng o HAI_AU_UNIT_PHOTOS, giong cach Ngoc Trai tach 2 muc).
+// "Location" tab for Hải Âu — only 1 overall location image (no separate
+// "overall rendering" image like Ngọc Trai has; the 3 per-type exterior images
+// live separately in HAI_AU_UNIT_PHOTOS, following the same 2-section split as
+// Ngọc Trai).
 const HAI_AU_LOCATION_TABS = [
   { label: "Vị trí Tiểu khu Hải Âu", src: "http://localhost:9000/project-images/hai-au/vinhomes-ocean-park-hai-au.jpg" },
 ];
 
-// Anh phoi canh (ngoai that) tung loai biet thu Hai Au — muc rieng ngay duoi
-// phan gioi thieu dien tich, TRUOC muc "mat bang" (ban ve ky thuat), giong cau
-// truc 2 muc cua Ngoc Trai (anh phoi canh vs ban ve mat bang).
+// Exterior rendering images for each Hải Âu villa type — a dedicated section
+// right below the size intro, BEFORE the "floor plan" (technical drawing)
+// section, following the same 2-section structure as Ngọc Trai (renderings vs.
+// floor plan drawings).
 const HAI_AU_UNIT_PHOTOS = [
   { label: "Đơn lập", src: "http://localhost:9000/project-images/hai-au/don-lap-hai-au.jpg" },
   { label: "Song lập", src: "http://localhost:9000/project-images/hai-au/song-lap-hai-au.jpg" },
   { label: "Liền kề", src: "http://localhost:9000/project-images/hai-au/lien-ke-vinhomes-ocean-park.jpg" },
 ];
 
-// Dien tich/so tang cac loai biet thu Hai Au — lay dung tu pricing trong
-// hai_au.json, khong bia them so lieu.
+// Size/storey figures for Hải Âu villa types — sourced directly from pricing in
+// hai_au.json, no invented figures.
 const HAI_AU_UNIT_TYPES = [
   { label: "Biệt thự đơn lập", size: "141,47 – 417,52m²", storeys: "3 tầng nổi và 1 tum" },
   { label: "Biệt thự song lập", size: "148 – 154,61m²", storeys: "3 tầng nổi và 1 tum" },
   { label: "Biệt thự liền kề", size: "89,96 – 145m²", storeys: "4 tầng nổi và 1 tum" },
 ];
 
-// Tab "Vi tri / Phoi canh" cho Sao Bien — chi co 2 anh tong the (khong co anh
-// phoi canh tung loai biet thu rieng nhu Hai Au, cung khong co anh mat bang
-// tung loai nhu Ngoc Trai/Hai Au vi nguon crawl khong co san).
+// "Location / Rendering" tab for Sao Biển — only 2 overall images (no per-type
+// exterior renderings like Hải Âu, and no per-type floor plans like Ngọc
+// Trai/Hải Âu, since the crawled source has none available).
 const SAO_BIEN_LOCATION_TABS = [
   { label: "Vị trí Tiểu khu Sao Biển", src: "http://localhost:9000/project-images/sao-bien/vinhomes-ocean-park-sao-bien.jpg" },
   { label: "Phối cảnh Sao Biển", src: "http://localhost:9000/project-images/sao-bien/phoi-canh-sao-bien-vinhomes-ocean-park.jpg" },
 ];
 
-// Dien tich/so tang cac loai biet thu Sao Bien — lay dung tu pricing trong
-// sao_bien.json, khong bia them so lieu.
+// Size/storey figures for Sao Biển villa types — sourced directly from pricing
+// in sao_bien.json, no invented figures.
 const SAO_BIEN_UNIT_TYPES = [
   { label: "Biệt thự đơn lập", size: "148,5 – 368,6m²", storeys: "3 tầng nổi và 1 tum" },
   { label: "Biệt thự song lập", size: "127,5 – 150m²", storeys: "3 tầng nổi và 1 tum" },
@@ -1011,12 +1019,13 @@ const SAO_BIEN_UNIT_TYPES = [
   { label: "Nhà phố shophouse", size: "67,5 – 173m²", storeys: "4 tầng nổi và 1 tum" },
 ];
 
-// Du lieu 4 day Shop thuong mai dich vu (SH09/SB11A/HA08/BH9B) — lay dung tu
-// 4 file JSON crawl rieng (shop_thuong_mai_*.json), KHONG dung chung 1 mau vi
-// moi day co dia chi/dien tich/tien ich rieng. Anh da kiem tra tung file thuc
-// te truoc khi gan (vi-tri = ban do vi tri, mat-bang = so do phan lo, con lai
-// la anh thuc te/phoi canh ngoai that — vai file ten "mat_b1/mat_b2" (HA08)
-// tuong tu la anh thuc te du ten goi de gay nham).
+// Data for the 4 commercial shophouse rows (SH09/SB11A/HA08/BH9B) — sourced
+// directly from 4 separate crawled JSON files (shop_thuong_mai_*.json); NOT
+// unified into a shared template because each row has its own address/size/
+// amenities. Each image file was individually checked before assignment
+// (vi-tri = location map, mat-bang = plot layout, the rest are exterior/
+// rendering photos — a couple of files named "mat_b1/mat_b2" (HA08) are also
+// exterior photos despite the misleading name).
 interface ShopTmdvProject {
   projectId: string;
   code: string;
@@ -1085,8 +1094,8 @@ const SHOP_TMDV_PROJECTS: ShopTmdvProject[] = [
       handover: "Nhận nhà ngay",
       ownership: "Sở hữu 50 năm, làm ngay sổ hồng",
     },
-    // Nguon crawl SB11A khong co anh "vi tri" rieng — dung anh tong quan/phoi
-    // canh de thay the, khong bia anh vi tri khong co thuc.
+    // The SB11A crawled source has no dedicated "location" image — an overview/
+    // rendering image is used instead, rather than fabricating one that doesn't exist.
     locationTabs: [
       { label: "Tổng quan Thương mại dịch vụ", src: "http://localhost:9000/project-images/shop-thuong-mai-sb11a/Tong-quan-Thuong-mai-dich-vu-Vinhomes-Ocean-Park.jpg" },
     ],
@@ -1156,9 +1165,9 @@ const SHOP_TMDV_PROJECTS: ShopTmdvProject[] = [
   },
 ];
 
-// Chinh sach ban hang chung — 7 dieu GIONG NHAU o ca 4 day shop (doi chieu tung
-// file JSON, chi khac ten du an trong "content"), nen gop thanh 1 khoi chung
-// thay vi lap lai 4 lan.
+// Shared sales policy — 7 clauses IDENTICAL across all 4 shop rows (verified
+// against each JSON file; only the project name in "content" differs), so
+// merged into one shared block instead of repeating it 4 times.
 const SHOP_TMDV_SALES_POLICIES = [
   "Thanh toán sớm 100% giá trị hợp đồng: chiết khấu 7,5% giá bán",
   "Hỗ trợ vay 70% giá trị, lãi suất 0%, ân hạn nợ gốc và không phạt trả nợ trước hạn trong 36 tháng",
@@ -1169,8 +1178,9 @@ const SHOP_TMDV_SALES_POLICIES = [
   "Voucher Vinmec trị giá 100 triệu đồng",
 ];
 
-// Anh nen tu luot cho banner dau trang "Shophouse" — 1 anh thuc te dai dien
-// cho moi day shop (SH09/SB11A/HA08/BH9B), da co san tu du lieu crawl.
+// Auto-rotating background slides for the "Shophouse" page banner — 1
+// representative exterior photo per shop row (SH09/SB11A/HA08/BH9B), already
+// available from the crawled data.
 const SHOPHOUSE_BANNER_SLIDES = [
   "http://localhost:9000/project-images/shop-thuong-mai-sh09/shop-tmdv-sh09.jpg",
   "http://localhost:9000/project-images/shop-thuong-mai-sb11a/shop-tmdv-sb11a-vinhomes-ocean-park.jpg",
@@ -1178,9 +1188,10 @@ const SHOPHOUSE_BANNER_SLIDES = [
   "http://localhost:9000/project-images/shop-thuong-mai-bh9b/shop-thuong-mai-dich-vu-bien-ho-9b-vinhomes-ocean-park.jpg",
 ];
 
-// 2 banner tien ich anh (thay cho chip "Diem noi bat"/"Tien ich" mac dinh) —
-// chi dung cho tab Chung cu, theo dung mau thiet ke nguoi dung gui. Anh THAT
-// da co san tu du lieu crawl (Senique Hanoi + Zurich + London), khong bia.
+// 2 amenity-photo banners (replacing the default "Highlights"/"Amenities" chip
+// list) — used only for the Chung cư (apartment) tab, per the mockup provided
+// by the user. Images are real, already available from the crawled data
+// (Senique Hanoi + Zurich + London), not invented.
 interface AmenityPhoto {
   label: string;
   src: string;
@@ -1195,8 +1206,9 @@ function AmenityPhotoBanner({
   title: string;
   paragraphs: string[];
   photos: AmenityPhoto[];
-  /** "contain" cho anh dang graphic/poster co chu o sat vien (vd bo anh Biet
-   * thu) — "cover" (mac dinh) cat cho vua khung, hop voi anh chup thuc te. */
+  /** "contain" for graphic/poster-style images with text close to the edge
+   * (e.g. the Villa photo set) — "cover" (default) crops to fill the frame,
+   * which suits real photographs. */
   fit?: "cover" | "contain";
 }) {
   return (
@@ -1221,9 +1233,10 @@ function AmenityPhotoBanner({
   );
 }
 
-// Tien ich chung cua ca Khu do thi Ocean Park (giao duc, y te, giai tri) — anh
-// that lay tu bo anh crawl The Senique Hanoi (du an co crawl day du nhat bo
-// anh tien ich toan khu, dung chung cho moi phan khu Chung cu).
+// Amenities shared across the whole Ocean Park district (education, healthcare,
+// entertainment) — real photos taken from The Senique Hanoi's crawled image set
+// (the project with the most complete district-amenity photo set), reused for
+// every Chung cư zone.
 const DISTRICT_AMENITY_PHOTOS: AmenityPhoto[] = [
   { label: "Vincom Mega Mall", src: "http://localhost:9000/project-images/the-senique-hanoi/tttm-vincom-mega-mall-ocean-park.jpg" },
   { label: "Phòng khám Vinmec", src: "http://localhost:9000/project-images/the-senique-hanoi/vinmec-ocean-park.jpg" },
@@ -1233,10 +1246,10 @@ const DISTRICT_AMENITY_PHOTOS: AmenityPhoto[] = [
   { label: "Đại học VinUni", src: "http://localhost:9000/project-images/the-senique-hanoi/dai-hoc-vinuni.jpg" },
 ];
 
-// Tien ich noi khu tieu bieu cac toa can ho (gym/yoga/be boi/khu vui choi tre
-// em/phong sinh hoat cong dong/phong dance) — anh that tu Zurich + London,
-// dai dien chung cho cac toa can ho trong tab Chung cu (khong gan rieng 1 du
-// an cu the vi day la section o cap category).
+// Representative in-tower amenities for apartment buildings (gym/yoga/pool/
+// indoor kids' play area/community room/dance room) — real photos from Zurich +
+// London, used generically for the Chung cư tab (not tied to one specific
+// project since this section sits at the category level).
 const TOWER_AMENITY_PHOTOS: AmenityPhoto[] = [
   { label: "Phòng gym", src: "http://localhost:9000/project-images/the-zurich/phong-gym-the-zurich.jpg" },
   { label: "Phòng yoga", src: "http://localhost:9000/project-images/the-zurich/phong-yoga-the-zurich.jpg" },
@@ -1246,8 +1259,9 @@ const TOWER_AMENITY_PHOTOS: AmenityPhoto[] = [
   { label: "Phòng dance / aerobic", src: "http://localhost:9000/project-images/the-london/phong-dance-phan-khu-the-london-vinhomes-ocean-park.jpg" },
 ];
 
-// Tien ich & dich vu rieng cho tab Biet thu — dung anh tu bo anh crawl Tieu khu Ngoc Trai
-// (cac anh nay phu hop hon vi la anh tien ich chung khu, khong bi trung voi Chung cu).
+// Amenities & services specific to the Villa tab — uses photos from the Ngọc
+// Trai sub-zone's crawled image set (these fit better as district-wide amenity
+// photos, and don't overlap with the ones used for Chung cư).
 const BIET_THU_AMENITY_PHOTOS: AmenityPhoto[] = [
   { label: "Vincom Mega Mall", src: "http://localhost:9000/project-images/ngoc-trai/vincom-mega-mall-768x768.jpg" },
   { label: "Đại học VinUni", src: "http://localhost:9000/project-images/ngoc-trai/vinuni-768x768-1.jpg" },
@@ -1335,13 +1349,14 @@ export function CategoryDetailPage() {
       .finally(() => setLoading(false));
   }, [categorySlug]);
 
-  // Cuon toi dung phan khu khi vao trang qua link co #hash (dropdown menu
-  // TopNavbar) — thay vi mo trang rieng cho tung nhom nhu truoc. Cac khoi phia
-  // tren (TowerSpotlight/PriceTable...) tu fetch API rieng va render dan dan
-  // sau khi "category" da load xong, nen chi cuon 1 lan la khong du — trang
-  // con gian chieu cao SAU do, day lech vi tri khu can toi (dac biet ro voi
-  // Senique Hanoi vi no nam cuoi trang, sau rat nhieu khoi async khac). Cuon
-  // lai vai lan trong ~1.6s de bu vao, huy neu nguoi dung tu cuon tay giua chung.
+  // Scroll to the right zone when entering via a #hash link (TopNavbar dropdown
+  // menu) — instead of opening a separate page per group as before. The blocks
+  // above (TowerSpotlight/PriceTable...) each fetch their own API data and render
+  // progressively after "category" has loaded, so a single scroll isn't enough —
+  // the page keeps growing in height AFTER that, pushing the target zone out of
+  // position (most noticeable with Senique Hanoi since it sits at the bottom of
+  // the page, after many async blocks). Re-scroll several times over ~1.6s to
+  // compensate, canceling early if the user scrolls manually in the meantime.
   useEffect(() => {
     if (loading || !location.hash) return;
     const id = location.hash.slice(1);

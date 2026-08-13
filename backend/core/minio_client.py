@@ -25,9 +25,10 @@ def ensure_bucket(bucket: str) -> None:
 
 
 def ensure_public_read_bucket(bucket: str) -> None:
-    """Bucket cho ảnh marketing dự án — public GetObject để frontend load ảnh trực tiếp.
+    """Bucket for project marketing images — public GetObject so the frontend can
+    load images directly.
 
-    Khác với bucket tài liệu nội bộ (`minio_bucket_documents`), vốn phải giữ private.
+    Unlike the internal document bucket (`minio_bucket_documents`), which must stay private.
     """
     ensure_bucket(bucket)
     client = get_minio_client()
@@ -46,13 +47,14 @@ def ensure_public_read_bucket(bucket: str) -> None:
 
 
 def public_object_url(bucket: str, object_name: str) -> str:
-    """URL cong khai cho object — DUNG CHO TRINH DUYET, khong phai cho backend.
+    """Public URL for an object — FOR THE BROWSER, not for the backend.
 
-    Dung `minio_public_endpoint` chu khong phai `minio_endpoint`: trong Docker,
-    backend noi toi MinIO qua service name `minio:9000`, nhung URL nay duoc tra
-    ve cho frontend va render trong the <img>, ma trinh duyet tren may host
-    khong phan giai duoc hostname `minio` — anh se hong. Khong dat bien thi quay
-    ve `minio_endpoint` (dung khi chay backend ngoai Docker).
+    Uses `minio_public_endpoint` rather than `minio_endpoint`: inside Docker the
+    backend reaches MinIO via the service name `minio:9000`, but this URL is
+    returned to the frontend and rendered in an <img> tag, and a browser on the
+    host machine cannot resolve the hostname `minio` — the image would break. If
+    the variable is unset, falls back to `minio_endpoint` (correct when running
+    the backend outside Docker).
     """
     settings = get_settings()
     scheme = "https" if settings.minio_secure else "http"
@@ -61,7 +63,7 @@ def public_object_url(bucket: str, object_name: str) -> str:
 
 
 def presigned_get_url(bucket: str, object_name: str, expires_minutes: int = 10) -> str:
-    """Link tạm thời có chữ ký để xem file trong bucket private (kho tài liệu nội bộ)
-    mà không cần đổi bucket sang public-read."""
+    """Temporary signed link to view a file in a private bucket (internal document
+    store) without switching the bucket to public-read."""
     client = get_minio_client()
     return client.presigned_get_object(bucket, object_name, expires=timedelta(minutes=expires_minutes))

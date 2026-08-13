@@ -200,7 +200,7 @@ html {
   font-size: 16px;
 }
 
-/* Smooth scroll chỉ khi user click anchor link (#), không ảnh hưởng navigation */
+/* Smooth scroll only on anchor-link (#) clicks — doesn't affect regular navigation */
 html:focus-within {
   scroll-behavior: smooth;
 }
@@ -529,7 +529,7 @@ code {
   overflow: hidden;
 }
 
-/* Kéo hero lên tràn dưới thanh menu cố định (trong suốt) — ảnh chạy tới sát mép trên màn hình. */
+/* Pull the hero up under the fixed (transparent) menu bar — image runs flush to the top edge of the screen. */
 .home-hero {
   margin-top: -68px;
   padding-top: 176px;
@@ -550,7 +550,7 @@ code {
   display: none;
 }
 
-/* Ảnh nền hero — mặc định gradient thương hiệu, thay bằng ảnh thật qua --hero-image-url */
+/* Hero background image — defaults to the brand gradient, swapped for a real image via --hero-image-url */
 .hero-media {
   position: absolute;
   inset: 0;
@@ -642,13 +642,13 @@ code {
   text-align: center;
 }
 
-/* Trang chủ: bố cục canh trái kiểu editorial, giống web tham khảo — thay vì căn giữa. */
+/* Home page: left-aligned editorial-style layout, matching the reference site — instead of centered. */
 .home-hero .hero-inner {
   align-items: flex-start;
   text-align: left;
 }
 
-/* Container mặc định tự canh giữa trang (margin:auto) — hero cần bám sát mép trái thật sự. */
+/* The default container auto-centers the page (margin:auto) — the hero needs to hug the true left edge instead. */
 .home-hero .container {
   max-width: none;
   margin: 0;
@@ -1205,9 +1205,9 @@ code {
   margin-bottom: 12px;
 }
 
-/* Tiêu đề lớn riêng cho các section ở Home — đặt tên riêng để không đụng
-   .section-title (dùng chung, cỡ nhỏ hơn nhiều) ở Admin/Inventory/CategoryDetail;
-   trước đây trùng tên khiến salesmate.css nạp sau đè mất cỡ chữ lớn này. */
+/* Large heading dedicated to Home sections — named separately to avoid colliding
+   with .section-title (shared, much smaller size) used in Admin/Inventory/CategoryDetail;
+   previously sharing the name let salesmate.css, loaded later, override this larger font size. */
 .home-section-title {
   font-family: var(--font-display);
   font-size: clamp(1.875rem, 3.5vw, 2.5rem);
@@ -2931,8 +2931,8 @@ code {
 }
 .chat-empty-text { font-size: 0.9375rem; color: var(--text-2); line-height: 1.6; }
 
-/* Landing state (chua co tin nhan) — kieu MOSO: avatar phat sang giua trang +
-   card goi y "Thu hoi" ben duoi. */
+/* Landing state (no messages yet) — MOSO-style: glowing avatar centered on the
+   page, with a "Try asking" suggestion card below. */
 .chat-landing {
   text-align: center;
   padding: 40px 0 20px;
@@ -2941,8 +2941,9 @@ code {
   animation: fade-up 0.4s var(--ease) both;
 }
 
-/* Bo khung tron/vien hao quang cu — chi hien dung hinh linh vat (nen trong
-   suot san co trong PNG), giong cach da sua o nut chat noi (.chat-widget-fab). */
+/* Removed the old circular frame/glow border — shows just the mascot artwork
+   (transparent background already baked into the PNG), matching the fix already
+   applied to the floating chat button (.chat-widget-fab). */
 .chat-landing-mascot {
   margin-bottom: 16px;
   filter: drop-shadow(0 10px 20px rgba(0, 80, 239, 0.3));
@@ -3311,9 +3312,9 @@ code {
 }
 .chat-sidebar-search input::placeholder { color: var(--text-3); }
 
-/* Panel ben phai: ngu canh/nguon tai lieu dang dung — kieu "MOSO hieu ban dang
-   tim" nhung thay bang du lieu THAT (citations) thay vi bia 1 tinh nang AI
-   hieu y dinh chua co. */
+/* Right-side panel: current context/document sources — a "MOSO understands what
+   you're looking for" style panel, but backed by REAL data (citations) instead
+   of faking an AI intent-understanding feature that doesn't exist. */
 .chat-context-panel {
   border-left: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg-2) 82%, transparent);
@@ -3822,7 +3823,7 @@ code {
 .login-submit { width: 100%; justify-content: center; padding: 12px; font-size: 0.9375rem; margin-top: 4px; }
 .login-hint { text-align: center; font-size: 0.8rem; color: var(--text-3); margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
 
-/* Tài khoản seed cho dev — bấm để điền sẵn form. Chỉ render khi import.meta.env.DEV. */
+/* Seed accounts for dev — click to auto-fill the form. Only rendered when import.meta.env.DEV. */
 .login-devbox { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; padding: 12px; background: var(--bg-2); border: 1px dashed var(--border); border-radius: var(--radius-sm); }
 .login-devbox-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); }
 .login-devbox-row {
@@ -4281,7 +4282,7 @@ code {
 }
 
 /* ── Top navbar ────────────────────────────────────────── */
-/* Fixed để logo/menu luôn nổi trên đầu; mặc định nền đặc (an toàn trên mọi trang phẳng). */
+/* Fixed so the logo/menu always float on top; solid background by default (safe on any flat-color page). */
 .topnav {
   position: fixed;
   top: 0;
@@ -4299,7 +4300,7 @@ code {
   transition: background var(--t-base), border-color var(--t-base);
 }
 
-/* Chỉ dùng trên trang chủ — nổi trong suốt trên ảnh hero, không tách rời khỏi ảnh. */
+/* Used only on the home page — floats transparently over the hero image instead of visually separating from it. */
 .topnav--overlay {
   background: rgba(8, 16, 26, 0.28);
   border-bottom-color: rgba(255, 255, 255, 0.1);
@@ -4376,8 +4377,8 @@ code {
   position: relative;
 }
 
-/* Gach chan mong duoi tab dang chon — dung currentColor de tu doi mau theo ngu canh
-   (xanh tren nen trang thuong, trang khi topnav dang o che do overlay tren banner toi). */
+/* Thin underline below the active tab — uses currentColor so it adapts to context
+   (blue on the regular light background, white when the topnav is in overlay mode over a dark banner). */
 .topnav-link--active::after {
   content: "";
   position: absolute;
@@ -5268,7 +5269,7 @@ code {
 }
 
 /* ══════════════════════════════════════════════════════════
-   CHAT WIDGET — nổi góc phải, luôn dễ bấm
+   CHAT WIDGET — floats in the corner, always easy to tap
    ══════════════════════════════════════════════════════════ */
 .chat-widget {
   position: fixed;
@@ -5281,15 +5282,15 @@ code {
   gap: 14px;
 }
 
-/* Linh vat Auremont (anh 3D) — dung yen, khong animate. */
+/* Auremont mascot (3D artwork) — held static, no animation. */
 .auremont-mascot-greet {
   display: block;
   margin: 0 auto;
 }
 
-/* Trang thai dong (chua bam): BO han khung tron/nen/border/shadow — chi hien
-   dung hinh linh vat (nen trong suot san co trong PNG), phong to len de nguoi
-   dung de chu y hon la 1 nut bam mo nhat truoc day. */
+/* Closed state (not yet clicked): fully removed the circular frame/background/
+   border/shadow — shows just the mascot artwork (transparent background already
+   baked into the PNG), enlarged to catch the user's eye rather than the faint button it was before. */
 .chat-widget-fab {
   width: 72px;
   height: 72px;
@@ -5308,8 +5309,8 @@ code {
   filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.32));
 }
 
-/* Trang thai dang mo (nut X dong lai) — giu nguyen khung tron nhu cu vi day la
-   1 icon dong, khong phai anh linh vat, can nen de de nhin va bam trung. */
+/* Open state (X button to close) — keeps the original circular frame since this
+   is a close icon, not the mascot artwork, and needs a background to stay legible and easy to hit. */
 .chat-widget-fab--open {
   width: 56px;
   height: 56px;
@@ -5502,7 +5503,7 @@ code {
 }
 
 /* ══════════════════════════════════════════════════════════
-   TOP NAVBAR — dropdown loại hình (Chung cư/Biệt thự/Shophouse)
+   TOP NAVBAR — property-type dropdown (Apartment/Villa/Shophouse)
    ══════════════════════════════════════════════════════════ */
 .topnav-item {
   position: relative;
@@ -5539,9 +5540,9 @@ code {
   z-index: 310;
 }
 
-/* Bắc cầu vô hình qua khoảng margin-top phía trên — không có nó, di chuột từ
-   link xuống dropdown sẽ đi qua vùng "trống" không thuộc topnav-item, khiến
-   dropdown đóng lại trước khi chuột kịp chạm vào. */
+/* Invisible bridge spanning the margin-top gap above — without it, moving the
+   mouse from the link down to the dropdown crosses "empty" space outside
+   topnav-item, causing the dropdown to close before the cursor reaches it. */
 .topnav-dropdown::before {
   content: "";
   position: absolute;
@@ -5574,8 +5575,8 @@ code {
   color: var(--accent);
 }
 
-/* Muc trong dropdown co danh sach con (vd "The Metropolitan" -> Beverly/London/Paris/Zurich)
-   mo ra 1 flyout thu 2 sang ben phai khi hover, giong menu web mau. */
+/* Dropdown items with a sub-list (e.g. "The Metropolitan" -> Beverly/London/Paris/Zurich)
+   open a second flyout to the right on hover, matching the reference site's menu. */
 .topnav-subitem {
   position: relative;
 }
@@ -5600,10 +5601,10 @@ code {
   z-index: 320;
 }
 
-/* Bắc cầu vô hình qua khoảng margin-left phía trái — khong co no, di chuot
-   (thuong la di cheo) tu "The Metropolitan" sang flyout se di qua vung
-   "trong" 6px khong thuoc topnav-subitem, khien flyout dong lai truoc khi
-   chuot kip cham vao (giong ly do co san .topnav-dropdown::before). */
+/* Invisible bridge spanning the margin-left gap on the left — without it, moving
+   the mouse (usually diagonally) from "The Metropolitan" to the flyout crosses
+   a 6px "empty" zone outside topnav-subitem, closing the flyout before the
+   cursor reaches it (same reasoning as .topnav-dropdown::before above). */
 .topnav-submenu::before {
   content: "";
   position: absolute;
@@ -5619,7 +5620,7 @@ code {
   animation: fade-up 0.15s var(--ease) both;
 }
 
-/* Điều hướng bằng #hash từ dropdown tới đúng dòng giá trong bảng loại hình */
+/* #hash navigation from the dropdown to the matching price row in the unit-type table */
 .data-row--anchor {
   scroll-margin-top: 84px;
 }
@@ -5631,7 +5632,7 @@ code {
 }
 
 /* ══════════════════════════════════════════════════════════
-   HOME — GIỚI THIỆU DỰ ÁN (2 cột: chữ trái, ảnh phải)
+   HOME — PROJECT INTRODUCTION (2 columns: text left, image right)
    ══════════════════════════════════════════════════════════ */
 .home-intro {
   padding: 56px 0;
@@ -5724,7 +5725,7 @@ code {
 }
 
 /* ══════════════════════════════════════════════════════════
-   HOME — TỔNG MẶT BẰNG DỰ ÁN
+   HOME — PROJECT MASTER PLAN
    ══════════════════════════════════════════════════════════ */
 .home-plan {
   padding: 0 0 56px;
@@ -5763,7 +5764,7 @@ code {
 }
 
 /* ══════════════════════════════════════════════════════════
-   HOME — BẢN ĐỒ GIAO THÔNG
+   HOME — TRANSPORT MAP
    ══════════════════════════════════════════════════════════ */
 .home-map {
   padding-bottom: 56px;
@@ -5803,7 +5804,7 @@ code {
   border-radius: var(--radius-sm);
 }
 
-/* ── Fallback khi ảnh MinIO tải lỗi (offline / MinIO chưa chạy) ── */
+/* ── Fallback for when the MinIO image fails to load (offline / MinIO not running) ── */
 .home-intro-media--fallback {
   min-height: 280px;
   display: flex;
@@ -5820,7 +5821,7 @@ code {
   padding: 0 20px;
 }
 
-/* ── Khoảng cách section dùng chung (thay inline style={{ marginBottom: 28 }}) ── */
+/* ── Shared section spacing (replaces inline style={{ marginBottom: 28 }}) ── */
 .section-block {
   margin-bottom: 28px;
 }

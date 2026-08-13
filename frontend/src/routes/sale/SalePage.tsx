@@ -9,8 +9,8 @@ import { ChatSuggestions } from "./ChatSuggestions";
 import { AuremontMascot } from "../../components/AuremontMascot";
 import { useAuth } from "../../hooks/useAuth";
 
-// Shell kiểu ChatGPT: sidebar Session bên trái + khung chat chính + panel ngữ
-// cảnh bên phải.
+// ChatGPT-style shell: Session sidebar on the left, main chat panel, and a
+// context panel on the right.
 export function SalePage() {
   const { username } = useAuth();
   const navigate = useNavigate();
@@ -27,8 +27,8 @@ export function SalePage() {
 
   useEffect(reload, [reload]);
 
-  // Man hinh chua chon phien: tao phien moi ngay khi go/chon goi y, giong trai
-  // nghiem "go la bat dau" cua mau thiet ke MOSO.
+  // Before a session is selected: create a new session as soon as the user types
+  // or picks a suggestion, matching the "type to start" flow of the MOSO design.
   const startSession = useCallback(
     async (prefill?: string) => {
       const session = await api.post<ChatSessionResponse>("/sale/sessions", {});

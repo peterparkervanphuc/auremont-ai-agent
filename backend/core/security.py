@@ -1,9 +1,12 @@
+import logging
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from jose import JWTError, jwt
 
 from backend.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def hash_password(plain: str) -> str:
@@ -35,5 +38,12 @@ def create_refresh_token(subject: str) -> str:
 def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-    except JWTError:
+    except JWTError as exc:
+        # Chi log LOAI loi (ExpiredSignatureError vs JWTError) de phan biet token
+        # het han voi token gia mao. Tuyet doi khong log token, ke ca prefix:
+        # phan dau JWT la header + payload, decode duoc ra thong tin that.
+        logger.warning(
+            "Token bi tu choi.",
+            extra={"event": "auth.token.rejected", "reason": type(exc).__name__},
+        )
         return None

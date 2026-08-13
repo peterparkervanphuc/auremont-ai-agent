@@ -60,7 +60,7 @@ const FEATURES = [
   },
 ];
 
-// Trang chủ dành riêng cho SALE — ADMIN dùng AdminHome (bảng điều khiển quản trị).
+// Home page for SALE only — ADMIN uses AdminHome (the admin dashboard) instead.
 export function Home() {
   const { username } = useAuth();
   const [categories, setCategories] = useState<CategorySummary[]>([]);
@@ -80,9 +80,8 @@ export function Home() {
       primary: true,
     },
     {
-      // Cuon toi thang section "Tra cuu du an" (Loai hinh san pham) ngay trong
-      // trang chu — khong dieu huong sang trang khac, vi section do da co san
-      // o day (xem onClick ben duoi).
+      // Scrolls straight to the "Project lookup" section on this same page instead
+      // of navigating away, since that section already lives here (see onClick below).
       to: "#tra-cuu-du-an",
       icon: <SearchIcon size={22} />,
       title: "Tra cứu dự án",

@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
 """Extract user prompts for this repository from local Claude Code transcripts.
 
-Claude Code ghi transcript của mỗi phiên vào
-    ~/.claude/projects/<slug-duong-dan>/<session-id>.jsonl
-trong đó mỗi dòng là một record JSON. Prompt người dùng thật sự gõ nằm ở record
-`type == "user"` với `message.content[*].type == "text"`.
+Claude Code writes a transcript for each session to
+    ~/.claude/projects/<path-slug>/<session-id>.jsonl
+where every line is a JSON record. The prompt the user actually typed lives in
+the `type == "user"` record, under `message.content[*].type == "text"`.
 
-Vì sao cần script này khi đã có hook `log_hook.py`?
-  - Hook chỉ chạy đúng lúc gõ, và chỉ khi Claude Code được mở ở thư mục có
-    `.claude/settings.json`. Mở nhầm thư mục cha là mất trắng cả phiên.
-  - Script này quét ngược từ transcript trên đĩa nên vớt lại được cả những phiên
-    hook không bắt kịp — giống cách `log_codex.py` và `log_antigravity.py` làm
-    cho Codex và Antigravity.
-Hai đường ghi này khử trùng lặp lẫn nhau qua `entry_id`, chạy cả hai vẫn an toàn.
+Why is this script needed when there's already a `log_hook.py` hook?
+  - The hook only fires at the moment of typing, and only when Claude Code is opened
+    in a directory that has `.claude/settings.json`. Opening a parent directory by
+    mistake loses the whole session.
+  - This script scans transcripts on disk instead, so it can recover sessions the
+    hook missed — the same way `log_codex.py` and `log_antigravity.py` do for
+    Codex and Antigravity.
+Both write paths de-duplicate against each other via `entry_id`, so running both is safe.
 
 Usage:
-  python scripts/log_claude.py --auto            # mặc định: 24h gần nhất
+  python scripts/log_claude.py --auto            # default: last 24h
   python scripts/log_claude.py --hours 72
-  python scripts/log_claude.py --all             # mọi phiên, không giới hạn
-  python scripts/log_claude.py --dry-run         # xem trước, không ghi
+  python scripts/log_claude.py --all             # every session, no time limit
+  python scripts/log_claude.py --dry-run         # preview only, no write
 
 Env overrides:
-  CLAUDE_PROJECTS_DIR   trỏ tới thư mục projects/ khác
-  AI_LOG_DIR            nơi ghi session.jsonl (mặc định: .ai-log)
+  CLAUDE_PROJECTS_DIR   point to a different projects/ directory
+  AI_LOG_DIR            where session.jsonl is written (default: .ai-log)
 """
 
 import argparse
@@ -46,8 +47,8 @@ SECRET_PATTERNS = (
     re.compile(r"(?i)\b(api[ _-]?key|token|secret|password)\s*([=:])\s*\S+"),
 )
 
-# Khối do IDE/harness chèn vào lượt của user, không phải chữ student gõ ra.
-# Giữ lại sẽ làm log đầy nhiễu và sai lệch bằng chứng "student đã hỏi gì".
+# Blocks injected by the IDE/harness into the user's turn, not text the student typed.
+# Keeping them would pollute the log and misrepresent the record of "what the student asked".
 _INJECTED_BLOCKS = re.compile(
     r"<(ide_opened_file|ide_selection|system-reminder|command-name|command-message|"
     r"command-args|local-command-stdout)>.*?</\1>",
@@ -67,11 +68,11 @@ def normalize(path: str) -> str:
 
 
 def matches_repo(session_cwd: str, repo_root: str) -> bool:
-    """Phiên thuộc về repo này khi cwd trùng, nằm trong, hoặc là thư mục cha của repo.
+    """A session belongs to this repo when its cwd matches, is nested inside, or is a parent of the repo.
 
-    Nhánh "thư mục cha" là chỗ quan trọng: mở Claude Code ở thư mục bao ngoài rồi
-    làm việc trong repo con là tình huống thường gặp, và đó chính là lúc hook
-    không chạy nên càng cần script này vớt lại.
+    The "parent directory" branch matters: opening Claude Code in an enclosing directory
+    and then working inside a sub-repo is a common scenario, and it's exactly when the
+    hook doesn't fire — which is why this script needs to recover it.
     """
     session_cwd, repo_root = normalize(session_cwd), normalize(repo_root)
     return bool(
@@ -97,7 +98,7 @@ def logged_ids(log_dir: Path) -> set[str]:
     archive_dir = log_dir / "archive"
     if archive_dir.is_dir():
         files.extend(archive_dir.glob("*.jsonl"))
-    # Batch đang chờ gửi lại cũng tính là đã log, nếu không lần quét sau sẽ nhân đôi.
+    # Batches pending resend also count as logged, otherwise the next scan would duplicate them.
     files.extend(log_dir.glob("session.pending.*.jsonl"))
     for log_file in files:
         if not log_file.exists():
@@ -120,7 +121,7 @@ def parse_timestamp(value: str) -> datetime | None:
 
 
 def user_text(content) -> str:
-    """Ghép các mảnh text của một lượt user, bỏ tool_result và block do IDE chèn."""
+    """Join the text fragments of a user turn, dropping tool_result and IDE-injected blocks."""
     if not isinstance(content, list):
         return ""
     parts = []
@@ -175,10 +176,10 @@ def iter_prompts(repo_root: str, cutoff: datetime | None):
 
 
 def main() -> None:
-    # stderr trên Windows mặc định là code page hệ thống (cp1252), làm prompt
-    # tiếng Việt ở bản xem trước hiện ra thành dấu hỏi. Dữ liệu ghi xuống file
-    # vẫn đúng, chỉ phần hiển thị hỏng — nhưng --dry-run mà không đọc được thì
-    # coi như mất tác dụng.
+    # stderr on Windows defaults to the system code page (cp1252), which turns
+    # Vietnamese prompts in the preview into question marks. The data written to
+    # file is still correct — only the display breaks — but --dry-run is useless
+    # if it can't be read.
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 

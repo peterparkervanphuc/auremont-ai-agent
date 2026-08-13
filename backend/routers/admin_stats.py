@@ -15,7 +15,7 @@ TREND_DAYS = 14
 
 
 def _cumulative_counts(created_dates: list[date], days: int) -> list[int]:
-    """Tổng số dòng đã tồn tại tính đến hết mỗi ngày, dùng cho biểu đồ tăng trưởng."""
+    """Total rows that existed by the end of each day, used to render growth trend charts."""
     start = date.today() - timedelta(days=days - 1)
     per_day: dict[date, int] = {}
     for d in created_dates:
@@ -31,7 +31,7 @@ def _cumulative_counts(created_dates: list[date], days: int) -> list[int]:
 
 
 def _open_conflicts_trend(rows: list[tuple[date, date | None]], days: int) -> list[int]:
-    """Số cảnh báo còn mở tính đến hết mỗi ngày (đã tạo, chưa được resolve tới thời điểm đó)."""
+    """Number of flags still open as of the end of each day (created, not yet resolved by that point)."""
     start = date.today() - timedelta(days=days - 1)
     result = []
     for i in range(days):
@@ -43,8 +43,9 @@ def _open_conflicts_trend(rows: list[tuple[date, date | None]], days: int) -> li
 
 @router.get("/trends")
 async def get_admin_trends(db: Session = Depends(get_db)) -> dict:
-    """Sparkline data cho AdminHome — chỉ tính trên field có sẵn (created_at/resolved_at),
-    không suy diễn số liệu cho faithfulness/relevancy vì pipeline eval chưa được cài đặt thật."""
+    """Sparkline data for AdminHome — computed only from fields that actually exist
+    (created_at/resolved_at); does not fabricate numbers for faithfulness/relevancy
+    since the real eval pipeline is not wired up yet."""
     doc_dates = [row[0].date() for row in db.query(Document.created_at).all()]
     conflict_rows = [
         (row[0].date(), row[1].date() if row[1] else None)

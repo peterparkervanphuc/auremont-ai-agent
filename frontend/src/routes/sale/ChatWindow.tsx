@@ -15,11 +15,11 @@ function formatTime(iso: string): string {
 }
 
 interface Props {
-  /** Gọi lại khi danh sách phiên có thể đã đổi (ví dụ sau khi xoá lịch sử). */
+  /** Called when the session list may have changed (e.g. after clearing history). */
   onSessionsChange?: () => void;
 }
 
-// Agent Pipeline: text input -> câu trả lời + trích nguồn, hoặc Thẻ HITL.
+// Agent Pipeline: text input -> answer + citations, or a HITL card.
 export function ChatWindow({ onSessionsChange }: Props = {}) {
   const { sessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
@@ -40,12 +40,12 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
 .catch(() => setError("Không tải được lịch sử phiên tư vấn."));
   }, [sessionId]);
 
-  // Luôn cuộn xuống tin nhắn mới nhất.
+  // Always scroll to the latest message.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
 
-  // Textarea tự giãn theo nội dung, tối đa 160px.
+  // Auto-grow the textarea with content, capped at 160px.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -53,18 +53,20 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
-  // TODO: add voice input (STT provider TBD —).
+  // TODO: add voice input (STT provider TBD).
 
   const sendMessage = useCallback(async () => {
     if (!sessionId || !input.trim() || loading) return;
     const content = input.trim();
-    // Tin đầu tiên trong phiên -> backend tự đặt tên session từ nội dung này,
-    // báo cho SalePage load lại sidebar để tên mới hiện ra ngay.
+    // First message in the session -> the backend auto-names the session from this
+    // content, so notify SalePage to reload the sidebar so the new name shows up
+    // immediately.
     const isFirstMessage = messages.length === 0;
 
-    // Optimistic UI: server chỉ trả về câu trả lời của agent (response_model=MessageResponse,
-    // không phải list), nên tin của Sale phải tự thêm ngay — không thì user gõ xong sẽ không
-    // thấy gì cho tới khi AI trả lời xong, giống như tin nhắn "biến mất".
+    // Optimistic UI: the server only returns the agent's reply (response_model=
+    // MessageResponse, not a list), so the Sale's own message must be appended
+    // locally right away — otherwise it would appear to vanish until the AI
+    // finishes responding.
     const optimisticUser: MessageResponse = {
       id: -Date.now(),
       session_id: Number(sessionId) || null,
@@ -90,9 +92,10 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
     }
   }, [sessionId, input, loading, messages.length, onSessionsChange]);
 
-  // HitlCard tự giữ state "đã xác nhận" cục bộ, nhưng nếu danh sách messages
-  // re-render lại (đổi phiên rồi quay lại, v.v.) mà requires_hitl vẫn true trong
-  // state cha, thẻ HITL sẽ hiện lại nút xác nhận dù đã confirm rồi.
+  // HitlCard keeps its own local "confirmed" state, but if the messages list
+  // re-renders (e.g. switching sessions and back) while requires_hitl is still
+  // true in parent state, the card would show the confirm button again even
+  // though it was already confirmed — so clear the flag here once confirmed.
   const handleHitlConfirmed = useCallback((messageId: number) => {
     setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, requires_hitl: false } : m)));
   }, []);
@@ -162,7 +165,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
 
           {messages.map((m) => {
             if (m.requires_hitl) {
-              // Câu trả lời rủi ro vẫn nằm trong feedback loop như mọi câu khác.
+              // A risky answer still stays in the feedback loop like any other message.
               return (
                 <div key={m.id} className="chat-hitl-row">
                   <HitlCard message={m} onConfirmed={() => handleHitlConfirmed(m.id)} />

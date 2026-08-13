@@ -1,6 +1,6 @@
-"""Nạp dữ liệu mẫu Vinhomes Ocean Park: JSON -> MySQL (bảng projects), ảnh -> MinIO.
+"""Load Vinhomes Ocean Park sample data: JSON -> MySQL (projects table), images -> MinIO.
 
-Chạy một lần thủ công khi cần refresh dữ liệu demo:
+Run manually, once, whenever the demo data needs a refresh:
     python scripts/load_vinhomes_ocean_park.py
 """
 
@@ -9,8 +9,8 @@ import re
 import sys
 from pathlib import Path
 
-# REPO_ROOT là P-110 — mọi nguồn dữ liệu seed phải nằm TRONG repo (seed-data/),
-# không được trỏ ra ngoài máy: máy khác clone repo về sẽ không có gì ngoài P-110/.
+# REPO_ROOT is P-110 — all seed data sources must live INSIDE the repo (seed-data/),
+# never point outside the machine: another machine cloning the repo would have nothing but P-110/.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 

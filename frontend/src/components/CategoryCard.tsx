@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import type { CategorySummary } from "../types/project";
 import { BuildingHomeIcon } from "./Icons";
 
-// Anh rieng cho the "Chung cu" theo yeu cau — khong lay tu API nhu cac the khac.
+// Dedicated image for the "Apartments" card per requirement — not fetched from the API like the others.
 const CHUNG_CU_IMAGE = "/masteri-grand-coast-bg-homepage.jpg";
 
 export function CategoryCard({ category }: { category: CategorySummary }) {

@@ -28,8 +28,8 @@ def get_session(db: Session, session_id: int) -> ChatSession | None:
 
 
 def set_title_if_empty(db: Session, session: ChatSession, title: str) -> ChatSession:
-    """Tự đặt tên phiên từ câu hỏi đầu tiên của Sale — tránh danh sách toàn
-    "Session: Khách #N" không phân biệt được khi có nhiều phiên."""
+    """Auto-titles the session from the Sale's first question — avoids a session
+    list full of indistinguishable "Session: Khách #N" entries once there are many."""
     if session.title:
         return session
     session.title = title[:40] + ("…" if len(title) > 40 else "")

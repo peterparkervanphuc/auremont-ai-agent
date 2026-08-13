@@ -1,7 +1,7 @@
 import { api } from "./client";
 import { PROJECT_ID, type CategoryDetail, type CategorySummary } from "../types/project";
 
-// ---- Danh sách rút gọn TOAN BO du an (dung cho trang catalog nhieu du an) ----
+// ---- Condensed list of ALL projects (used by the multi-project catalog page) ----
 
 export interface ProjectListItem {
   id: string;
@@ -138,10 +138,10 @@ export async function fetchProjectOverview(): Promise<ProjectOverview> {
   };
 }
 
-// ---- Trang chi tiết 1 dự án con thật (The Beverly, The Sapphire...) ----
-// Khác voi fetchCategoryDetail/fetchProjectOverview (luon dung PROJECT_ID co dinh
-// "vinhomes-ocean-park"), day la ham DUY NHAT nhan projectId dong theo tham so —
-// dung cho tung du an con rieng trong catalog nhieu du an.
+// ---- Detail page for one real sub-project (The Beverly, The Sapphire...) ----
+// Unlike fetchCategoryDetail/fetchProjectOverview (which always use the fixed
+// PROJECT_ID "vinhomes-ocean-park"), this is the ONLY function that takes a dynamic
+// projectId — used for individual sub-projects in the multi-project catalog.
 
 export interface ProjectPricingRow {
   category: string;

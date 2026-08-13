@@ -22,14 +22,15 @@ function clearStoredSession() {
 }
 
 /**
- * Auth dùng chung cho toàn app — sidebar và các trang cùng đọc 1 nguồn state,
- * nên khi đăng xuất mọi nơi cập nhật đồng thời.
+ * App-wide auth state — the navbar and every page read from this single source,
+ * so logging out anywhere updates them all at once.
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState(() => {
-    // Access token còn trong localStorage nhưng đã hết hạn (từ phiên test cũ) vẫn
-    // để isAuthenticated=true nếu chỉ check sự tồn tại — trang sẽ nhảy vào /home rồi
-    // bị 401 đá ngược lại /login, không bao giờ thấy Landing. Check hạn ngay từ đầu.
+    // An access token can still sit in localStorage after expiring (e.g. from an old
+    // test session); checking only for its presence would set isAuthenticated=true,
+    // send the user to /home, then bounce them back to /login on the first 401 —
+    // they would never see Landing. Validate expiry up front instead.
     if (!isTokenValid(read("access_token"))) {
       clearStoredSession();
       return { isAuthenticated: false, role: null, username: null };
@@ -53,8 +54,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    // Báo server để ghi vết, nhưng không chờ: JWT stateless nên xoá token phía
-    // client mới là thứ thực sự kết thúc phiên. Lỗi mạng không được chặn logout.
+    // Notify the server for audit logging, but don't await it: JWTs are stateless,
+    // so clearing the client-side token is what actually ends the session. A network
+    // error here must never block logout.
     api.post("/auth/logout").catch(() => {});
     clearStoredSession();
     setState({ isAuthenticated: false, role: null, username: null });

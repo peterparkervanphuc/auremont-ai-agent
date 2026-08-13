@@ -1,5 +1,5 @@
-// Kiểu dữ liệu hiển thị cho trang Tra cứu — công cụ Sale nội bộ của MỘT đại đô thị (Vinhomes Ocean Park),
-// duyệt theo loại hình sản phẩm (Chung cư/Biệt thự/Shophouse), không phải nhiều dự án khác nhau.
+// Display types for the Lookup page — an internal Sale tool for ONE mega-project (Vinhomes Ocean
+// Park), browsed by product type (apartments/villas/shophouses), not across multiple projects.
 
 export const PROJECT_ID = "vinhomes-ocean-park";
 
@@ -34,7 +34,7 @@ export interface CategoryDetail {
   gallery: string[];
 }
 
-/** Phân khu/giai đoạn khác của đại đô thị — chưa có dữ liệu riêng, hiện dạng "sắp cập nhật". */
+/** Other sub-zones/phases of the mega-project — no dedicated data yet, shown as "coming soon". */
 export interface UpcomingPhase {
   slug: string;
   name: string;

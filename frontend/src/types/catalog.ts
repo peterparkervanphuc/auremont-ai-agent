@@ -1,9 +1,9 @@
-// Cây phân cấp danh mục dự án, khớp đúng menu web thật (vinhomeoceanpark.com.vn):
-// Ocean Park (1/2/3) -> Loại hình (Chung cư/Biệt thự/Shop TMDV) -> Nhóm/phân khu -> dự án con.
+// Catalog hierarchy, matching the real website's menu (vinhomeoceanpark.com.vn):
+// Ocean Park (1/2/3) -> product type (apartments/villas/shophouses) -> group/sub-zone -> sub-project.
 //
-// `projectId` gắn ở dự án con TRỎ ĐÚNG vào id thật trong bảng `projects` (DB) khi đã có dữ liệu.
-// Nhóm/dự án con nào chưa có `projectId` thì hiển thị trạng thái "chưa có dữ liệu" — không ẩn đi,
-// để đúng yêu cầu "trang trống chờ bù dữ liệu sau".
+// `projectId` on a sub-project points to the real id in the `projects` DB table once data exists.
+// A group/sub-project without a `projectId` is shown as "no data yet" rather than hidden, per the
+// requirement that empty pages stay visible while waiting for data to be filled in later.
 
 export interface CatalogProject {
   name: string;
@@ -106,9 +106,9 @@ export const CATALOG: CatalogMegaProject[] = [
         ],
       },
       {
-        // Slug PHAI khop voi slugify(pricing.category) = slugify("Shophouse") o
-        // backend ("shophouse") de fetchCategoryDetail tim dung category — dung
-        // "shop-tmdv" o day se lam trang chi tiet luon 404 "khong tim thay".
+        // Slug MUST match slugify(pricing.category) = slugify("Shophouse") on the
+        // backend ("shophouse") so fetchCategoryDetail finds the right category —
+        // using "shop-tmdv" here would make the detail page always 404.
         slug: "shophouse",
         name: "Shop TMDV",
         groups: [

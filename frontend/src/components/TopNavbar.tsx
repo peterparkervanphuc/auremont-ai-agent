@@ -29,7 +29,7 @@ interface AdminNavEntry {
   end?: boolean;
 }
 
-// ADMIN quản trị kho tài liệu + giám sát chất lượng AI, không có bảng hàng riêng.
+// ADMIN manages the document store and AI quality monitoring; no separate inventory menu.
 const ADMIN_NAV: AdminNavEntry[] = [
   { to: "/documents", label: "Kho tài liệu", icon: DocumentIcon, roles: ["admin"] },
   { to: "/eval", label: "Chất lượng trả lời", icon: ChartIcon, roles: ["admin"] },
@@ -37,15 +37,17 @@ const ADMIN_NAV: AdminNavEntry[] = [
   { to: "/settings", label: "Cài đặt chung", icon: SettingsIcon, roles: ["admin"] },
 ];
 
-// Ocean Park 1 la khu do thi duy nhat da co du lieu — cac loai hinh (Chung cu/Biet
-// thu/Shop TMDV) cua no len thanh menu chinh, dropdown la danh sach phan khu that
-// theo dung menu web mau (khong con chia theo Studio/1PN/2PN nhu truoc).
+// Ocean Park 1 is the only mega-project with real data so far — its product types
+// (apartments/villas/shophouses) become the top-level menu, and each dropdown lists
+// the actual sub-zones matching the reference site's menu (no longer grouped by
+// Studio/1BR/2BR like before).
 const OCEAN_PARK_1 = CATALOG[0];
 const OTHER_OCEAN_PARKS = CATALOG.slice(1);
 
-// Cac nhom (Chung cu VA Biet thu) da co san section rieng ngay trong trang
-// /inventory/<category-slug> (xem CategoryDetailPage) — bam vao thi cuon toi
-// thang section do (neo id trung slug) thay vi mo trang /inventory/group/* rieng.
+// These groups (apartments AND villas) already have their own section within the
+// /inventory/<category-slug> page (see CategoryDetailPage) — clicking scrolls to
+// that section (anchor id matches the slug) instead of opening a separate
+// /inventory/group/* page.
 const ANCHOR_GROUP_SLUGS = new Set([
   "lumiere-orient-pearl",
   "the-metropolitan",
@@ -61,8 +63,9 @@ const ANCHOR_GROUP_SLUGS = new Set([
   "shop-bh9b",
 ]);
 
-// Slug nhom nay thuoc category nao — vi ANCHOR_GROUP_SLUGS dung chung cho ca
-// Chung cu lan Biet thu, can biet dung /inventory/<slug-nay> de ghep href.
+// Maps each group slug to its parent category — since ANCHOR_GROUP_SLUGS is shared
+// across both apartments and villas, we need this to build the correct
+// /inventory/<slug> href.
 const ANCHOR_GROUP_CATEGORY: Record<string, string> = {
   "lumiere-orient-pearl": "chung-cu",
   "the-metropolitan": "chung-cu",
@@ -78,10 +81,10 @@ const ANCHOR_GROUP_CATEGORY: Record<string, string> = {
   "shop-bh9b": "shophouse",
 };
 
-// The Senique Hanoi khong co san "sub-project" that trong catalog (chi 1
-// project gop chung, khong tach S1/S2 trong DB nhu Metropolitan) — nhung UI
-// van can flyout 2 muc con nhu anh mau, tro toi 2 neo id lam thu cong trong
-// CategoryDetailPage (#the-senique-1, #the-senique-2).
+// The Senique Hanoi has no real "sub-project" split in the catalog (it's one
+// combined project, not separated into S1/S2 in the DB like Metropolitan) — but
+// the UI still needs a 2-item flyout matching the reference design, pointing to
+// two manually placed anchor ids in CategoryDetailPage (#the-senique-1, #the-senique-2).
 const ANCHOR_SUBSECTIONS: Record<string, { label: string; anchorId: string }[]> = {
   "the-senique-hanoi": [
     { label: "Tòa The Senique 1", anchorId: "the-senique-1" },
@@ -97,18 +100,19 @@ export function TopNavbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
 
-  // Trang chủ va cac trang co hero banner (chi tiet loai hinh, chi tiet du an) —
-  // menu noi trong suot len tren anh thay vi tach roi. Tru rieng /inventory/group/*
-  // vi trang do khong co banner, menu trong suot se de tren nen trang bi mat chu.
+  // On the home page and pages with a hero banner (category/project detail), the
+  // menu floats transparently over the image instead of sitting as a solid bar.
+  // Excludes /inventory/group/* specifically, since that page has no banner and a
+  // transparent menu there would sit on a plain background and become unreadable.
   const isOverlay =
     role === "sale" &&
     (location.pathname === "/home" ||
       (location.pathname.startsWith("/inventory/") && !location.pathname.startsWith("/inventory/group/")));
 
-  // Dropdown hiện qua hover (mouse enter/leave), không phải :hover CSS thuần —
-  // vì con trỏ chuột vẫn nằm nguyên vị trí sau khi bấm điều hướng (SPA không
-  // load lại trang), :hover CSS sẽ giữ dropdown mở đè lên nội dung trang mới.
-  // Reset theo route để đóng hẳn dropdown mỗi khi chuyển trang.
+  // Dropdown visibility is driven by mouse enter/leave state, not plain CSS :hover —
+  // because the cursor stays in the same position after a navigation click (SPA
+  // routing doesn't reload the page), so :hover would keep the dropdown open on top
+  // of the new page's content. Reset on route change to force it closed.
   useEffect(() => {
     setOpenDropdown(null);
   }, [location.pathname]);
@@ -141,8 +145,8 @@ export function TopNavbar() {
                 onMouseEnter={() => setOpenDropdown(c.slug)}
                 onMouseLeave={() => setOpenDropdown(null)}
               >
-                {/* Moi loai hinh gio co URL rieng (/inventory/chung-cu, /inventory/biet-thu...)
-                    nen isActive tinh dung, khong con bi tren xanh ca 3 cung luc nhu truoc. */}
+                {/* Each product type now has its own URL (/inventory/chung-cu, /inventory/biet-thu...)
+                    so isActive resolves correctly, instead of all three highlighting at once as before. */}
                 <NavLink
                   to={`/inventory/${c.slug}`}
                   onClick={(e) => {
@@ -162,8 +166,8 @@ export function TopNavbar() {
                       const subsections = isAnchorGroup ? ANCHOR_SUBSECTIONS[g.slug] : undefined;
 
                       if (subsections) {
-                        // Flyout thu cong (khong lay tu g.projects vi day khong phai
-                        // sub-project that trong DB — chi la neo cuon trong cung 1 trang).
+                        // Manually built flyout (not derived from g.projects, since these
+                        // aren't real sub-projects in the DB — just scroll anchors on the same page).
                         return (
                           <div key={g.slug} className="topnav-subitem">
                             <NavLink
@@ -196,9 +200,10 @@ export function TopNavbar() {
                       }
 
                       if (isAnchorGroup && g.projects.length > 1) {
-                        // Nhom co nhieu du an con VA da co section rieng trong trang (vd "The
-                        // Metropolitan" -> Zurich/Beverly/London/Paris) — flyout hover nhu cu,
-                        // nhung tung du an con cuon toi dung section thay vi mo trang rieng.
+                        // Group with multiple sub-projects AND its own in-page section (e.g. "The
+                        // Metropolitan" -> Zurich/Beverly/London/Paris) — same hover flyout as
+                        // before, but each sub-project scrolls to its section instead of opening
+                        // a separate page.
                         return (
                           <div key={g.slug} className="topnav-subitem">
                             <NavLink
@@ -237,7 +242,7 @@ export function TopNavbar() {
                       }
 
                       if (isAnchorGroup) {
-                        // Da co section rieng trong trang — cuon toi thay vi mo trang khac.
+                        // Already has its own in-page section — scroll to it instead of navigating away.
                         return (
                           <NavLink
                             key={g.slug}
@@ -254,9 +259,9 @@ export function TopNavbar() {
                       }
 
                       return g.projects.length > 1 ? (
-                        // Nhom co nhieu du an con nhung CHUA co section rieng trong trang -> mo
-                        // flyout thu 2 khi hover, giong menu web mau; bam thang vao ten nhom van
-                        // vao duoc trang liet ke ca nhom.
+                        // Group with multiple sub-projects but NO in-page section yet -> opens a
+                        // second-level flyout on hover, matching the reference site's menu; clicking
+                        // the group name itself still goes to the group listing page.
                         <div key={g.slug} className="topnav-subitem">
                           <NavLink
                             to={`/inventory/group/${g.slug}`}

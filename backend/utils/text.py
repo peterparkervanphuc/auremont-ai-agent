@@ -21,28 +21,29 @@ def strip_diacritics(text: str) -> str:
     return "".join(char for char in decomposed if not unicodedata.combining(char))
 
 
-# Ngôi sao/gạch dưới bao quanh một đoạn không chứa xuống dòng: **đậm**, *nghiêng*, __đậm__.
+# Asterisks/underscores wrapping a span with no line break: **bold**, *italic*, __bold__.
 _MD_EMPHASIS = re.compile(r"(\*{1,3}|_{1,3})(?=\S)(.+?)(?<=\S)\1", re.DOTALL)
-# Bullet đầu dòng ở mọi mức thụt lề: "  *   ", "- ", "+ " -> "- "
+# Leading bullet at any indent level: "  *   ", "- ", "+ " -> "- "
 _MD_BULLET = re.compile(r"^[ \t]*[*+-][ \t]+", re.MULTILINE)
-# Tiêu đề ATX: "### Tiện ích" -> "Tiện ích"
+# ATX heading: "### Tiện ích" -> "Tiện ích"
 _MD_HEADING = re.compile(r"^[ \t]*#{1,6}[ \t]*", re.MULTILINE)
-# Link/ảnh Markdown: [nhãn](url) -> nhãn
+# Markdown link/image: [label](url) -> label
 _MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 _MD_CODE_FENCE = re.compile(r"^[ \t]*```.*$", re.MULTILINE)
 _EXCESS_BLANK_LINES = re.compile(r"\n{3,}")
 
 
 def strip_markdown(text: str) -> str:
-    """Gỡ cú pháp Markdown khỏi câu trả lời của LLM, giữ nguyên nội dung chữ.
+    """Strip Markdown syntax from an LLM answer while preserving the text content.
 
-    Khung chat render câu trả lời bằng text thuần (`<p>{content}</p>` trong
-    frontend/src/routes/sale/ChatWindow.tsx), nên mọi ký tự Markdown mà model trả về sẽ
-    hiện nguyên dấu: "*   **Tiện ích:**" thay vì một gạch đầu dòng sạch sẽ.
+    The chat window renders answers as plain text (`<p>{content}</p>` in
+    frontend/src/routes/sale/ChatWindow.tsx), so any Markdown character the model
+    returns shows up literally: "*   **Tiện ích:**" instead of a clean bullet line.
 
-    Prompt đã yêu cầu model viết text thuần; hàm này là lớp chặn cuối cho những lần model
-    vẫn quen tay bỏ Markdown vào. Cố ý giữ lại "- " ở đầu dòng vì đó là gạch đầu dòng đọc
-    được ở dạng text thuần, không phải cú pháp cần gỡ.
+    The prompt already instructs the model to write plain text; this function is the
+    last line of defense for the times the model slips into Markdown out of habit.
+    Leading "- " is deliberately kept, since that reads as a plain-text bullet rather
+    than syntax that needs stripping.
     """
     if not text:
         return text
@@ -50,13 +51,14 @@ def strip_markdown(text: str) -> str:
     cleaned = _MD_CODE_FENCE.sub("", text)
     cleaned = _MD_LINK.sub(r"\1", cleaned)
     cleaned = _MD_HEADING.sub("", cleaned)
-    # Lặp tới khi ổn định: "***text***" cần nhiều lượt mới bóc hết các lớp lồng nhau.
+    # Loop until stable: "***text***" needs several passes to peel off all nested layers.
     for _ in range(3):
         stripped = _MD_EMPHASIS.sub(r"\2", cleaned)
         if stripped == cleaned:
             break
         cleaned = stripped
-    # Chuẩn hoá bullet sau khi đã gỡ nhấn mạnh, nếu không "*   **A**" sẽ còn sót dấu sao.
+    # Normalise bullets after emphasis has been stripped, otherwise "*   **A**" would
+    # still leave a stray asterisk behind.
     cleaned = _MD_BULLET.sub("- ", cleaned)
     cleaned = _EXCESS_BLANK_LINES.sub("\n\n", cleaned)
 

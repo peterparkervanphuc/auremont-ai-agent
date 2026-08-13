@@ -25,9 +25,9 @@ export function GroupCard({ group, projectsById }: Props) {
     .filter((p): p is string => !!p)
     .sort()[0];
 
-  // Nhom chi co DUY NHAT 1 du an that (vd "Lumiere Orient Pearl" chi co The Palma) -> bo qua
-  // trang nhom trung gian, vao thang trang du an luon — dong bo voi cach TopNavbar da lam,
-  // tranh nguoi dung phai bam 2 lan de xem 1 thu duy nhat.
+  // A group with exactly ONE real project (e.g. "Lumiere Orient Pearl" -> The Palma only) skips
+  // the intermediate group page and links straight to the project page — matches what TopNavbar
+  // already does, so the user isn't forced to click twice to see a single item.
   const singleProject = group.projects.length === 1 ? group.projects[0] : null;
   const linkTo = singleProject?.projectId ? `/inventory/project/${singleProject.projectId}` : `/inventory/group/${group.slug}`;
 

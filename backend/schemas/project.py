@@ -20,7 +20,7 @@ class ProjectResponse(BaseModel):
 
 
 class ProjectSummary(BaseModel):
-    """Dữ liệu rút gọn cho thẻ dự án ở trang Tra cứu dự án — suy ra từ `Project.details`."""
+    """Condensed data for a project card on the project lookup page — derived from `Project.details`."""
 
     id: str
     name: str
@@ -43,9 +43,9 @@ class ProjectDetail(ProjectSummary):
 
 
 class CategorySummary(BaseModel):
-    """Nhóm sản phẩm theo loại hình (Chung cư/Biệt thự/Shophouse) trong MỘT dự án —
-    dùng cho trang Tra cứu vì đây là công cụ Sale nội bộ của một đại đô thị duy nhất,
-    không phải sàn liệt kê nhiều dự án khác nhau."""
+    """Groups product types (Apartment/Villa/Shophouse) within a SINGLE project —
+    used on the lookup page because this is an internal Sale tool for one large
+    urban development, not a marketplace listing multiple different projects."""
 
     slug: str
     name: str

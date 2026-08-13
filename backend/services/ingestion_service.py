@@ -1,3 +1,4 @@
+import logging
 import re
 import uuid
 from io import BytesIO
@@ -20,6 +21,8 @@ from backend.services.chunking_service import chunk_sections
 from backend.services.parser_service import parse_document
 from backend.services.vector_store_service import index_document_chunks
 from backend.utils.text import strip_diacritics
+
+logger = logging.getLogger(__name__)
 
 
 class PromptInjectionError(ValueError):
@@ -121,8 +124,13 @@ def ingest_uploaded_document(
         # must not undo an ingest that already succeeded.
         try:
             flag_conflicts_for(db, completed)
-        except Exception as exc:  # pragma: no cover - advisory step, never fatal
-            print(f"Conflict detection skipped for document {completed.id}: {exc}")
+        except Exception:  # pragma: no cover - advisory step, never fatal
+            logger.warning(
+                "Bo qua quet mau thuan cho tai lieu %s.",
+                completed.id,
+                exc_info=True,
+                extra={"event": "document.conflict_scan.failed", "document_id": completed.id},
+            )
 
         return completed
 

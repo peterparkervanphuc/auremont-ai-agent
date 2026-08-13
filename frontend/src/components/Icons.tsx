@@ -440,7 +440,7 @@ export function SendIcon(p: IconProps) {
   return <Icon {...p}><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></Icon>
 }
 
-/* ── Auremont — icon bổ sung ─────────────────────────────── */
+/* ── Auremont — additional icons ─────────────────────────────── */
 
 export function BotIcon(p: IconProps) {
   return <Icon {...p}><rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="12" cy="5" r="2" /><path d="M12 7v4" /><line x1="8" y1="16" x2="8" y2="16" /><line x1="16" y1="16" x2="16" y2="16" /></Icon>

@@ -27,7 +27,7 @@ function ScoreCard({ label, value }: { label: string; value: number | null }) {
   );
 }
 
-// Điểm chất lượng trả lời (Verifier Agent chấm tự động) + top câu hỏi AI trả lời chưa tốt.
+// Verifier Agent scores (automated) plus the top questions the AI answered poorly.
 export function EvalTab() {
   const [scores, setScores] = useState<EvalScores | null>(null);
 

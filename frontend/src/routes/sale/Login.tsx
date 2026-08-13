@@ -15,12 +15,12 @@ interface TokenResponse {
 }
 
 function decodeRoleFromToken(accessToken: string): UserRole {
-  // backend/core/security.py create_access_token nhúng {"role":...} vào payload JWT.
+  // backend/core/security.py create_access_token embeds {"role":...} in the JWT payload.
   const payload = JSON.parse(atob(accessToken.split(".")[1])) as { role: UserRole };
   return payload.role;
 }
 
-// Màn hình ĐĂNG NHẬP nội bộ chung, sau xác thực routing theo role (SALE / ADMIN).
+// Shared internal login screen; routes to SALE or ADMIN flow after authentication.
 export function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -32,7 +32,8 @@ export function Login() {
 
   const canSubmit = Boolean(username.trim() && password) && !loading;
 
-  // POST /auth/login dùng OAuth2PasswordRequestForm nên phải gửi form-urlencoded, không phải JSON.
+  // POST /auth/login uses OAuth2PasswordRequestForm, so the body must be
+  // form-urlencoded, not JSON.
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;

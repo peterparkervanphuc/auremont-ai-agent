@@ -4,7 +4,7 @@ interface SparklineProps {
   height?: number;
 }
 
-// Đường xu hướng nhỏ dưới stat card — không dùng thư viện chart ngoài cho một biểu đồ đơn giản.
+// Small trend line under a stat card — skips an external chart library for a shape this simple.
 export function Sparkline({ values, width = 96, height = 28 }: SparklineProps) {
   if (values.length < 2) return null;
 

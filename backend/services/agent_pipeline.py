@@ -25,6 +25,7 @@ Two principles govern this whole file:
   flagged for HITL.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
@@ -36,6 +37,8 @@ from backend.services import cache_service, risk_service, verifier_service
 from backend.services.inventory_service import InventoryApiError, InventoryUnit, lookup_inventory
 from backend.services.rag_service import RetrievalError, retrieve
 from backend.utils.text import strip_diacritics, strip_markdown
+
+logger = logging.getLogger(__name__)
 
 RETRIEVAL_TOP_K = 5
 
@@ -72,10 +75,11 @@ _REALTIME_INTENT_KEYWORDS = (
     "suất nào",
 )
 
-# Thứ tự các khối là cố ý và không nên đảo: vai trò -> chiều sâu -> cấu trúc -> định dạng
-# -> ràng buộc grounding. Model đọc "chuyên viên bất động sản" rất dễ trượt sang giọng
-# chào hàng và tự bù số liệu thị trường mà nó "biết" từ pre-training, nên khối ràng buộc
-# grounding phải đặt cuối cùng và diễn đạt tuyệt đối để ghi đè mọi yêu cầu phía trên.
+# The order of these blocks is deliberate and should not be reshuffled: role -> depth ->
+# structure -> format -> grounding constraints. A model reading "senior real-estate
+# consultant" slides easily into a sales pitch and fills in market figures it "knows"
+# from pre-training, so the grounding-constraints block must come last and be phrased
+# absolutely, so it overrides every requirement stated above it.
 _SYSTEM_INSTRUCTION = (
     "Bạn là chuyên viên tư vấn bất động sản cao cấp với nhiều năm kinh nghiệm bán hàng dự án, "
     "đang hỗ trợ đồng nghiệp trong đội sale chuẩn bị nội dung tư vấn cho khách hàng. Đồng nghiệp "
@@ -210,6 +214,14 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     try:
         hits = retrieve(query, DocumentVisibility.INTERNAL, state.get("project_id"), RETRIEVAL_TOP_K)
     except RetrievalError:
+        logger.exception(
+            "Truy van Qdrant that bai — tra ve thong bao loi tra cuu.",
+            extra={
+                "event": "pipeline.retrieve.failed",
+                "project_id": state.get("project_id"),
+                "query_len": len(query),
+            },
+        )
         return {"notice": RETRIEVAL_ERROR_MESSAGE}
 
     needs_realtime = _needs_realtime(query)
@@ -235,6 +247,12 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
     try:
         units = lookup_inventory(project_id, state["query"])
     except InventoryApiError:
+        logger.warning(
+            "Goi API ton kho that bai cho du an %s.",
+            project_id,
+            exc_info=True,
+            extra={"event": "pipeline.inventory.failed", "project_id": project_id},
+        )
         return {"inventory_failed": True, "notice": INVENTORY_UNAVAILABLE_MESSAGE}
 
     # An empty `units` list is a valid answer ("no 2PN units left"), not a failure —
@@ -252,10 +270,20 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     try:
         answer = generate_text(prompt, system_instruction=_SYSTEM_INSTRUCTION)
     except Exception:
+        logger.exception(
+            "Sinh cau tra loi that bai.",
+            extra={
+                "event": "pipeline.generate.failed",
+                "project_id": state.get("project_id"),
+                "doc_count": len(docs),
+                "unit_count": len(units),
+            },
+        )
         return {"notice": GENERATION_ERROR_MESSAGE}
 
-    # Làm sạch trước khi kiểm tra rỗng: một câu trả lời chỉ gồm ký tự Markdown là rỗng
-    # trên màn hình, nên phải rơi vào nhánh lỗi thay vì gửi bong bóng chat trắng cho Sale.
+    # Strip before checking for emptiness: an answer made up of only Markdown characters
+    # renders as blank on screen, so it must fall into the error branch instead of
+    # sending the Sale an empty chat bubble.
     answer = strip_markdown(answer)
 
     if not answer:
@@ -394,6 +422,16 @@ def run_pipeline(query: str, project_id: str | None = None) -> PipelineResult:
         state = _get_graph().invoke(initial)
     except Exception:
         # Final safety net: an unexpected error inside the graph must not become a 500.
+        # Without this log the failure is completely invisible — the Sale just sees a
+        # generic message and nothing anywhere records why.
+        logger.exception(
+            "Pipeline sap — tra ve thong bao loi chung.",
+            extra={
+                "event": "pipeline.crash",
+                "project_id": project_id,
+                "query_len": len(query),
+            },
+        )
         return PipelineResult(GENERATION_ERROR_MESSAGE, [], 0.0, False)
 
     notice = state.get("notice")

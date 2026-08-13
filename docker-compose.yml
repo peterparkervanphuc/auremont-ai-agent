@@ -15,6 +15,11 @@ services:
       # Dia chi trinh duyet dung de tai anh cong khai. Phai la localhost, khong
       # phai `minio:9000` — the <img> chay tren may host, khong trong network Docker.
       MINIO_PUBLIC_ENDPOINT: localhost:9000
+      # Nguon anh du an (~58MB, khong nam trong git). Backend tai ve MinIO luc
+      # khoi dong. Dat gia tri trong .env — bo trong thi catalogue chay khong anh.
+      PROJECT_IMAGES_BASE_URL: ${PROJECT_IMAGES_BASE_URL:-}
+      # Mot file .tar.gz chua toan bo anh; mot request thay vi ~180.
+      PROJECT_IMAGES_ARCHIVE_URL: ${PROJECT_IMAGES_ARCHIVE_URL:-}
     depends_on:
       mysql:
         condition: service_healthy
