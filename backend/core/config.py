@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, ge=1, le=65535)
     app_host: str = "0.0.0.0"
     log_level: str = "INFO"
+    # One JSON object per log line (for collectors) vs. readable console text.
+    # Left as None it derives from app_env — see _default_log_json below.
+    log_json: bool | None = None
+    # Include the Sale's question text (truncated) in sale.query audit events.
+    # A switch so a compliance decision can turn it off without a code change.
+    log_query_text: bool = True
 
     # Authentication
     secret_key: str = Field(default="dev-secret-key-change-in-production", description="Secret key for JWT signing")
@@ -62,6 +68,16 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
     upload_max_bytes: int = 20 * 1024 * 1024
+
+    @model_validator(mode="after")
+    def _default_log_json(self) -> "Settings":
+        """JSON logs everywhere except local development and tests.
+
+        Explicit LOG_JSON always wins; this only fills in the unset case.
+        """
+        if self.log_json is None:
+            self.log_json = self.app_env not in ("development", "test")
+        return self
 
 
 @lru_cache

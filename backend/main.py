@@ -1,9 +1,11 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.core.config import get_settings
+from backend.core.logging_config import setup_logging
 from backend.core.seed import seed_projects, seed_users
 
 # Importing the models registers them on Base.metadata (ORM relationships +
@@ -32,18 +34,31 @@ from backend.routers import (
     users,
 )
 
+# Configure logging at import time, before the app object exists. Uvicorn applies
+# its own dictConfig *before* importing this module, so ours runs last and wins.
+# Doing it in `lifespan` would be too late: tests import `backend.main.app`
+# without ever entering lifespan, and import-time warnings would go unlogged.
+setup_logging()
+
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    print(f"Starting {settings.app_name} in {settings.app_env} mode")
+    logger.info(
+        "Starting %s in %s mode",
+        settings.app_name,
+        settings.app_env,
+        extra={"event": "app.startup", "app_env": settings.app_env, "log_json": settings.log_json},
+    )
     # The schema is owned by Alembic (`alembic upgrade head`), not create_all:
     # create_all only adds missing tables and never ALTERs existing ones, so a
     # column added later would silently be absent until a query blew up at runtime.
     seed_users()
     seed_projects()
     yield
-    print("Shutting down...")
+    logger.info("Shutting down", extra={"event": "app.shutdown"})
 
 
 app = FastAPI(
