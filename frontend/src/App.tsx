@@ -9,6 +9,7 @@ import { Home } from "./routes/Home";
 import { Login } from "./routes/sale/Login";
 import { SalePage } from "./routes/sale/SalePage";
 import { CategoryDetailPage } from "./routes/sale/CategoryDetailPage";
+import { ZoneDetailPage } from "./routes/sale/ZoneDetailPage";
 import { CatalogGroupPage } from "./routes/sale/CatalogGroupPage";
 import { ProjectOverviewPage } from "./routes/sale/ProjectOverviewPage";
 import { AdminHome } from "./routes/admin/AdminHome";
@@ -57,6 +58,16 @@ function AppShell() {
             element={
               <ProtectedRoute allowedRole="sale">
                 <CategoryDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          {/* One zone (phân khu) per page. Static segments above/below ("group", "project")
+              are more specific, so React Router still matches those first. */}
+          <Route
+            path="/inventory/:categorySlug/:zoneSlug"
+            element={
+              <ProtectedRoute allowedRole="sale">
+                <ZoneDetailPage />
               </ProtectedRoute>
             }
           />

@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../hooks/useAuth";
 import { CATALOG } from "../types/catalog";
+import { ZONES } from "../routes/sale/inventory/registry";
 import type { UserRole } from "../types";
 import {
   AlertIcon,
@@ -44,53 +45,9 @@ const ADMIN_NAV: AdminNavEntry[] = [
 const OCEAN_PARK_1 = CATALOG[0];
 const OTHER_OCEAN_PARKS = CATALOG.slice(1);
 
-// These groups (apartments AND villas) already have their own section within the
-// /inventory/<category-slug> page (see CategoryDetailPage) — clicking scrolls to
-// that section (anchor id matches the slug) instead of opening a separate
-// /inventory/group/* page.
-const ANCHOR_GROUP_SLUGS = new Set([
-  "lumiere-orient-pearl",
-  "the-metropolitan",
-  "the-ocean-view",
-  "the-sapphire",
-  "the-senique-hanoi",
-  "tieu-khu-ngoc-trai",
-  "tieu-khu-hai-au",
-  "tieu-khu-sao-bien",
-  "shop-sh09",
-  "shop-sb11a",
-  "shop-ha08",
-  "shop-bh9b",
-]);
-
-// Maps each group slug to its parent category — since ANCHOR_GROUP_SLUGS is shared
-// across both apartments and villas, we need this to build the correct
-// /inventory/<slug> href.
-const ANCHOR_GROUP_CATEGORY: Record<string, string> = {
-  "lumiere-orient-pearl": "chung-cu",
-  "the-metropolitan": "chung-cu",
-  "the-ocean-view": "chung-cu",
-  "the-sapphire": "chung-cu",
-  "the-senique-hanoi": "chung-cu",
-  "tieu-khu-ngoc-trai": "biet-thu",
-  "tieu-khu-hai-au": "biet-thu",
-  "tieu-khu-sao-bien": "biet-thu",
-  "shop-sh09": "shophouse",
-  "shop-sb11a": "shophouse",
-  "shop-ha08": "shophouse",
-  "shop-bh9b": "shophouse",
-};
-
-// The Senique Hanoi has no real "sub-project" split in the catalog (it's one
-// combined project, not separated into S1/S2 in the DB like Metropolitan) — but
-// the UI still needs a 2-item flyout matching the reference design, pointing to
-// two manually placed anchor ids in CategoryDetailPage (#the-senique-1, #the-senique-2).
-const ANCHOR_SUBSECTIONS: Record<string, { label: string; anchorId: string }[]> = {
-  "the-senique-hanoi": [
-    { label: "Tòa The Senique 1", anchorId: "the-senique-1" },
-    { label: "Tòa The Senique 2", anchorId: "the-senique-2" },
-  ],
-};
+// Zones that own a page at /inventory/<category>/<zone>. The registry is the single
+// source of truth, so a zone added there shows up here without touching this file.
+const ZONE_BY_SLUG = new Map(ZONES.map((z) => [z.slug, z]));
 
 export function TopNavbar() {
   const { theme, toggleTheme } = useTheme();
@@ -161,17 +118,40 @@ export function TopNavbar() {
                 {c.groups.length > 0 && (
                   <div className={`topnav-dropdown ${openDropdown === c.slug ? "topnav-dropdown--open" : ""}`}>
                     {c.groups.map((g) => {
-                      const isAnchorGroup = ANCHOR_GROUP_SLUGS.has(g.slug);
-                      const anchorCategorySlug = ANCHOR_GROUP_CATEGORY[g.slug] ?? c.slug;
-                      const subsections = isAnchorGroup ? ANCHOR_SUBSECTIONS[g.slug] : undefined;
+                      const zone = ZONE_BY_SLUG.get(g.slug);
 
-                      if (subsections) {
-                        // Manually built flyout (not derived from g.projects, since these
-                        // aren't real sub-projects in the DB — just scroll anchors on the same page).
+                      if (zone) {
+                        const zoneHref = `/inventory/${zone.categorySlug}/${zone.slug}`;
+                        // Sub-zones that still share the zone's page (Metropolitan's towers,
+                        // Senique's blocks) keep a #hash; the rest link straight to the page.
+                        const subLinks =
+                          zone.subAnchors ??
+                          (g.projects.length > 1
+                            ? g.projects
+                                .filter((p) => p.projectId)
+                                .map((p) => ({ label: p.name, anchorId: p.projectId as string }))
+                            : undefined);
+
+                        if (!subLinks || subLinks.length === 0) {
+                          return (
+                            <NavLink
+                              key={g.slug}
+                              to={zoneHref}
+                              onClick={(e) => {
+                                setOpenDropdown(null);
+                                e.currentTarget.blur();
+                              }}
+                              className="topnav-dropdown-item"
+                            >
+                              {g.name}
+                            </NavLink>
+                          );
+                        }
+
                         return (
                           <div key={g.slug} className="topnav-subitem">
                             <NavLink
-                              to={`/inventory/${anchorCategorySlug}#${g.slug}`}
+                              to={zoneHref}
                               onClick={(e) => {
                                 setOpenDropdown(null);
                                 e.currentTarget.blur();
@@ -181,10 +161,10 @@ export function TopNavbar() {
                               {g.name}
                             </NavLink>
                             <div className="topnav-submenu">
-                              {subsections.map((s) => (
+                              {subLinks.map((s) => (
                                 <NavLink
                                   key={s.anchorId}
-                                  to={`/inventory/${anchorCategorySlug}#${s.anchorId}`}
+                                  to={`${zoneHref}#${s.anchorId}`}
                                   onClick={(e) => {
                                     setOpenDropdown(null);
                                     e.currentTarget.blur();
@@ -196,65 +176,6 @@ export function TopNavbar() {
                               ))}
                             </div>
                           </div>
-                        );
-                      }
-
-                      if (isAnchorGroup && g.projects.length > 1) {
-                        // Group with multiple sub-projects AND its own in-page section (e.g. "The
-                        // Metropolitan" -> Zurich/Beverly/London/Paris) — same hover flyout as
-                        // before, but each sub-project scrolls to its section instead of opening
-                        // a separate page.
-                        return (
-                          <div key={g.slug} className="topnav-subitem">
-                            <NavLink
-                              to={`/inventory/${anchorCategorySlug}#${g.slug}`}
-                              onClick={(e) => {
-                                setOpenDropdown(null);
-                                e.currentTarget.blur();
-                              }}
-                              className="topnav-dropdown-item"
-                            >
-                              {g.name}
-                            </NavLink>
-                            <div className="topnav-submenu">
-                              {g.projects.map((p) =>
-                                p.projectId ? (
-                                  <NavLink
-                                    key={p.projectId}
-                                    to={`/inventory/${anchorCategorySlug}#${p.projectId}`}
-                                    onClick={(e) => {
-                                      setOpenDropdown(null);
-                                      e.currentTarget.blur();
-                                    }}
-                                    className="topnav-dropdown-item"
-                                  >
-                                    {p.name}
-                                  </NavLink>
-                                ) : (
-                                  <span key={p.name} className="topnav-dropdown-item topnav-link--disabled">
-                                    {p.name}
-                                  </span>
-                                )
-                              )}
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      if (isAnchorGroup) {
-                        // Already has its own in-page section — scroll to it instead of navigating away.
-                        return (
-                          <NavLink
-                            key={g.slug}
-                            to={`/inventory/${anchorCategorySlug}#${g.slug}`}
-                            onClick={(e) => {
-                              setOpenDropdown(null);
-                              e.currentTarget.blur();
-                            }}
-                            className="topnav-dropdown-item"
-                          >
-                            {g.name}
-                          </NavLink>
                         );
                       }
 
@@ -403,8 +324,8 @@ export function TopNavbar() {
                     <NavLink
                       key={g.slug}
                       to={
-                        ANCHOR_GROUP_SLUGS.has(g.slug)
-                          ? `/inventory/${ANCHOR_GROUP_CATEGORY[g.slug] ?? c.slug}#${g.slug}`
+                        ZONE_BY_SLUG.has(g.slug)
+                          ? `/inventory/${ZONE_BY_SLUG.get(g.slug)!.categorySlug}/${g.slug}`
                           : g.projects.length === 1 && g.projects[0].projectId
                             ? `/inventory/project/${g.projects[0].projectId}`
                             : `/inventory/group/${g.slug}`

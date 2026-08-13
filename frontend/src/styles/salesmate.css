@@ -1969,6 +1969,46 @@
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
 }
 
+.detail-banner-subtitle {
+  margin-top: 6px;
+  max-width: 60ch;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.9375rem;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Horizontal switcher between sibling zones, shown on a zone page so moving from
+   one phân khu to the next doesn't require a detour via the category page. */
+.zone-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 22px;
+}
+
+.zone-switcher-item {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-glass);
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+
+.zone-switcher-item:hover {
+  border-color: var(--border-h);
+  background: var(--bg-glass-h);
+  color: var(--text-1);
+}
+
+.zone-switcher-item--active {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+}
+
 .detail-gallery {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));

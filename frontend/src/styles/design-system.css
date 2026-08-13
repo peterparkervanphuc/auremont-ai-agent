@@ -5735,34 +5735,6 @@ code {
   margin-bottom: 28px;
 }
 
-.home-plan-image {
-  border-radius: var(--radius);
-  overflow: hidden;
-  box-shadow: 0 16px 40px rgba(8, 16, 26, 0.16);
-}
-
-.home-plan-image img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-.home-plan-image--fallback {
-  min-height: 320px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--grad-primary);
-}
-
-.home-plan-image--fallback::after {
-  content: 'Ảnh đang tải hoặc tạm thời không có sẵn';
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 0.875rem;
-  text-align: center;
-  padding: 0 20px;
-}
-
 /* ══════════════════════════════════════════════════════════
    HOME — TRANSPORT MAP
    ══════════════════════════════════════════════════════════ */

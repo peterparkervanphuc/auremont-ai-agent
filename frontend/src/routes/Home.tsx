@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { CategoryCard } from "../components/CategoryCard";
+import { FloorPlanTabs } from "./sale/inventory/shared";
 import { fetchCategories, fetchProjectOverview } from "../api/projects";
 import type { ProjectOverview } from "../api/projects";
 import type { CategorySummary } from "../types/project";
@@ -21,8 +22,16 @@ const HERO_IMAGE_URL =
 const OVERVIEW_IMAGE_URL =
   "http://localhost:9000/project-images/vinhomes-ocean-park/masterise-vinhomes-ocean-park-night.jpg";
 
-const PLAN_IMAGE_URL =
-  "http://localhost:9000/project-images/vinhomes-ocean-park/mat-bang-phan-khu-vinhomes-ocean-park.jpg";
+const PROJECT_IMG = "http://localhost:9000/project-images/vinhomes-ocean-park";
+
+const MASTER_PLAN_TABS = [
+  { label: "Mặt bằng phân khu", src: `${PROJECT_IMG}/mat-bang-phan-khu-vinhomes-ocean-park.jpg` },
+  { label: "Mặt bằng tiện ích", src: `${PROJECT_IMG}/mat-bang-tien-ich-ocean-park-2048x1024.jpg` },
+  { label: "Phân khu chung cư", src: `${PROJECT_IMG}/cac-phan-khu-chung-cu-vinhomes-ocean-park.jpg` },
+  { label: "Tổng thể dự án", src: `${PROJECT_IMG}/tong-the-vinhomes-ocean-park.jpg` },
+  { label: "Vị trí dự án", src: `${PROJECT_IMG}/vi-tri-vinhomes-ocean-park-moi.jpg` },
+  { label: "Kết nối vùng", src: `${PROJECT_IMG}/ket-noi-vung-vinhomes-ocean-park-1.jpg` },
+];
 
 const MAP_EMBED_SRC = "https://www.google.com/maps?q=Vinhomes+Ocean+Park,+Gia+L%C3%A2m,+H%C3%A0+N%E1%BB%99i&output=embed";
 
@@ -187,16 +196,7 @@ export function Home() {
               dịch vụ.
             </li>
           </ul>
-          <div className="home-plan-image">
-            <img
-              src={PLAN_IMAGE_URL}
-              alt="Tổng mặt bằng phân khu Vinhomes Ocean Park"
-              onError={(e) => {
-                e.currentTarget.style.display = "none";
-                e.currentTarget.parentElement?.classList.add("home-plan-image--fallback");
-              }}
-            />
-          </div>
+          <FloorPlanTabs title="Quy hoạch & Vị trí" tabs={MASTER_PLAN_TABS} />
         </div>
       </section>
 

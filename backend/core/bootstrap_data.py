@@ -208,10 +208,15 @@ def load_demo_data() -> None:
 
     # Import trong ham: cac script nay cham MinIO/MySQL ngay o module scope, khong
     # nen keo theo luc import app (test va alembic cung import backend.main).
+    from scripts.load_apartment_projects import main as load_apartments
     from scripts.load_villa_shop_projects import main as load_villas_and_shops
     from scripts.load_vinhomes_ocean_park import main as load_ocean_park
 
-    for label, loader in (("vinhomes-ocean-park", load_ocean_park), ("villas-shops", load_villas_and_shops)):
+    for label, loader in (
+        ("vinhomes-ocean-park", load_ocean_park),
+        ("villas-shops", load_villas_and_shops),
+        ("apartments", load_apartments),
+    ):
         try:
             loader()
             logger.info("Nap catalogue '%s' thanh cong.", label)

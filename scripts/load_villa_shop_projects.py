@@ -1,16 +1,11 @@
 """Load 7 newly crawled projects (3 Villa sub-zones + 4 Retail Shop units) into the `projects` table.
 
 Source: seed-data/villas-shops/ (Hai Au, Ngoc Trai, Sao Bien, Shop BH9B/HA08/SB11A/SH09)
-— each JSON file follows the same shape as the_zurich.json/the_sapphire.json...
-(project/pricing/amenities/images/contact); images have already been copied into
-project-images-source/<slug>/ (see upload_project_images.py).
+— each JSON file follows the same shape as the apartment files
+(project/pricing/amenities/images/contact).
 
-The JSON files live INSIDE the repo (not an external path) so that cloning the repo
-on any machine and running this script produces identical results.
-
-Run IN ORDER:
-    1. python scripts/upload_project_images.py   (upload images to MinIO first)
-    2. python scripts/load_villa_shop_projects.py (load JSON + attach gallery URLs)
+Gallery URLs come from seed-data/project_images_manifest.json — the images live on
+R2/MinIO and are not checked into git.
 """
 
 import json
@@ -20,13 +15,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from backend.core.config import get_settings  # noqa: E402
-from backend.core.minio_client import public_object_url  # noqa: E402
 from backend.core.mysql_client import SessionLocal  # noqa: E402
 from backend.models.project import Project  # noqa: E402
+from scripts._gallery import gallery_by_slug  # noqa: E402
 
 SOURCE_JSON_DIR = REPO_ROOT / "seed-data" / "villas-shops"
-IMAGES_SOURCE_DIR = REPO_ROOT / "project-images-source"
 
 # (json filename, project slug — MUST match "project.id" inside the file
 # and the folder name in project-images-source/ where images were copied).
@@ -42,7 +35,7 @@ PROJECTS = [
 
 
 def main() -> None:
-    settings = get_settings()
+    galleries = gallery_by_slug()
     db = SessionLocal()
     try:
         for json_name, slug in PROJECTS:
@@ -53,12 +46,7 @@ def main() -> None:
             if project_info["id"] != slug:
                 raise ValueError(f"Slug mismatch: config={slug} but json project.id={project_info['id']}")
 
-            images_dir = IMAGES_SOURCE_DIR / slug
-            gallery = [
-                public_object_url(settings.minio_bucket_project_images, f"{slug}/{p.name}")
-                for p in sorted(images_dir.glob("*"))
-                if p.is_file()
-            ]
+            gallery = galleries.get(slug, [])
             details.setdefault("images", {})["gallery"] = gallery
 
             location = project_info.get("location") or {}
