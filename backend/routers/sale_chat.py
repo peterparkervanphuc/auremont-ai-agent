@@ -88,7 +88,7 @@ async def ask_in_session(
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
 
     started = time.perf_counter()
-    result = agent_pipeline.run_pipeline(payload.content, project_id=session.project_id)
+    result = agent_pipeline.run_pipeline(payload.content, project_id=session.project_id, db=db)
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
 
     # The core business record for Admin Tab 2 (AI Evaluation): the Verifier score
@@ -114,6 +114,7 @@ async def ask_in_session(
         sender=MessageSender.AGENT,
         content=result.draft_answer,
         citations=result.citations,
+        images=result.images,
         verifier_score=result.verifier_score,
         requires_hitl=result.requires_hitl,
         faithfulness=result.faithfulness,

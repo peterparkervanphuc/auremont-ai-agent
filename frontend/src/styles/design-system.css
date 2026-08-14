@@ -3285,7 +3285,7 @@ code {
 
 .chat-shell {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) 280px;
+  grid-template-columns: 300px minmax(0, 1fr);
   height: calc(100vh - 68px);
   overflow: hidden;
   background:
@@ -3328,59 +3328,6 @@ code {
   font-family: inherit;
 }
 .chat-sidebar-search input::placeholder { color: var(--text-3); }
-
-/* Right-side panel: current context/document sources — a "MOSO understands what
-   you're looking for" style panel, but backed by REAL data (citations) instead
-   of faking an AI intent-understanding feature that doesn't exist. */
-.chat-context-panel {
-  border-left: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-2) 82%, transparent);
-  padding: 20px 16px;
-  overflow-y: auto;
-  min-width: 0;
-}
-
-.chat-context-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--text-1);
-  margin-bottom: 14px;
-}
-.chat-context-head svg { color: var(--accent); }
-
-.chat-context-hint {
-  font-size: 0.8125rem;
-  color: var(--text-3);
-  line-height: 1.6;
-}
-
-.chat-context-sources {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.chat-context-source {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--bg);
-  font-size: 0.8125rem;
-  color: var(--text-2);
-  line-height: 1.4;
-}
-.chat-context-source svg { flex-shrink: 0; margin-top: 2px; color: var(--accent); }
-
-@media (max-width: 1180px) {
-  .chat-shell { grid-template-columns: 300px minmax(0, 1fr); }
-  .chat-context-panel { display: none; }
-}
 
 .chat-sidebar {
   border-right: 1px solid var(--border);
