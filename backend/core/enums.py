@@ -44,3 +44,50 @@ class FeedbackType(StrEnum):
     HELPFUL = "helpful"
     WRONG = "wrong"  # the answer was incorrect
     INCOMPLETE = "incomplete"  # the answer was missing information
+
+class DocumentCategory(StrEnum):
+    """Nhóm nghiệp vụ của tài liệu trong kho tri thức."""
+
+    SALES_POLICY = "sales_policy"
+    PRICE_LIST = "price_list"
+    INVENTORY_SNAPSHOT = "inventory_snapshot"
+    SUBDIVISION_INFO = "subdivision_info"
+    BUILDING_INFO = "building_info"
+    FLOOR_PLAN = "floor_plan"
+    PAYMENT_SCHEDULE = "payment_schedule"
+    PROMOTION = "promotion"
+    LEGAL_DOCUMENT = "legal_document"
+    CONTRACT_TEMPLATE = "contract_template"
+    INTERNAL_GUIDE = "internal_guide"
+    OTHER = "other"
+
+
+class DocumentReviewStatus(StrEnum):
+    """Kết quả duyệt phân loại của Admin."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class LegalStatus(StrEnum):
+    """Chỉ áp dụng khi category là LEGAL_DOCUMENT."""
+
+    UNKNOWN = "unknown"
+    NOT_YET_EFFECTIVE = "not_yet_effective"
+    EFFECTIVE = "effective"
+    EXPIRED = "expired"
+    REPEALED = "repealed"
+    REPLACED = "replaced"
+
+
+class DocumentRelationType(StrEnum):
+    """Quan hệ giữa tài liệu mới và tài liệu đã tồn tại."""
+
+    REPLACES = "replaces"
+    AMENDS = "amends"
+    REPEALS = "repeals"
+    UPDATES = "updates"
+    SUPERSEDES = "supersedes"
+    GUIDES = "guides"
+    RELATED_TO = "related_to"

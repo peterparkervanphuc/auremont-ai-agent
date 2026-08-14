@@ -6,6 +6,8 @@ import { Home } from "./routes/Home";
 import { Login } from "./routes/sale/Login";
 import { SalePage } from "./routes/sale/SalePage";
 import { DocumentsTab } from "./routes/admin/DocumentsTab";
+import { DocumentReviewTab } from "./routes/admin/DocumentReviewTab";
+import { DocumentRelationsTab } from "./routes/admin/DocumentRelationsTab";
 import { EvalTab } from "./routes/admin/EvalTab";
 import { ConflictsTab } from "./routes/admin/ConflictsTab";
 import { ApiTestTab } from "./routes/admin/ApiTestTab";
@@ -47,6 +49,22 @@ function AppShell() {
             element={
               <ProtectedRoute allowedRole="admin">
                 <DocumentsTab />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/document-review"
+            element={
+              <ProtectedRoute allowedRole="admin">
+                <DocumentReviewTab />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/document-relations"
+            element={
+              <ProtectedRoute allowedRole="admin">
+                <DocumentRelationsTab />
               </ProtectedRoute>
             }
           />

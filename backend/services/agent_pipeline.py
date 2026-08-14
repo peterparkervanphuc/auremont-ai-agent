@@ -76,6 +76,26 @@ _REALTIME_INTENT_KEYWORDS = (
 # -> ràng buộc grounding. Model đọc "chuyên viên bất động sản" rất dễ trượt sang giọng
 # chào hàng và tự bù số liệu thị trường mà nó "biết" từ pre-training, nên khối ràng buộc
 # grounding phải đặt cuối cùng và diễn đạt tuyệt đối để ghi đè mọi yêu cầu phía trên.
+_DOCUMENT_INTENT_KEYWORDS = (
+    "chinh sach",
+    "chính sách",
+    "csbh",
+    "chiet khau",
+    "chiết khấu",
+    "uu dai",
+    "ưu đãi",
+    "khuyen mai",
+    "khuyến mại",
+    "thanh toan",
+    "thanh toán",
+    "phap ly",
+    "pháp lý",
+    "hop dong",
+    "hợp đồng",
+    "bang gia",
+    "bảng giá",
+)
+
 _SYSTEM_INSTRUCTION = (
     "Bạn là chuyên viên tư vấn bất động sản cao cấp với nhiều năm kinh nghiệm bán hàng dự án, "
     "đang hỗ trợ đồng nghiệp trong đội sale chuẩn bị nội dung tư vấn cho khách hàng. Đồng nghiệp "
@@ -163,7 +183,8 @@ class PipelineState(TypedDict, total=False):
     query: str
     project_id: str | None
     retrieved_docs: list[dict]
-    needs_realtime: bool
+    needs_inventory: bool
+    needs_document_retrieval: bool
     inventory_units: list[InventoryUnit]
     inventory_failed: bool
     draft_answer: str
@@ -207,19 +228,34 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     """
     query = state["query"]
 
-    try:
-        hits = retrieve(query, DocumentVisibility.INTERNAL, state.get("project_id"), RETRIEVAL_TOP_K)
-    except RetrievalError:
-        return {"notice": RETRIEVAL_ERROR_MESSAGE}
+    needs_inventory = _needs_inventory(query)
+    needs_document_retrieval = _needs_document_retrieval(query)
+    hits: list[dict] = []
 
-    needs_realtime = _needs_realtime(query)
+    if needs_document_retrieval:
+        try:
+            hits = retrieve(
+                query,
+                DocumentVisibility.INTERNAL,
+                state.get("project_id"),
+                RETRIEVAL_TOP_K,
+            )
+        except RetrievalError:
+            # A combined inventory + policy question can still answer from its
+            # live source when Qdrant is temporarily unavailable.
+            if not needs_inventory:
+                return {"notice": RETRIEVAL_ERROR_MESSAGE}
 
-    if not hits and not needs_realtime:
+    if not hits and not needs_inventory:
         # No documents ingested yet and the question is not an inventory lookup ->
         # Empty State, not a system error.
         return {"notice": EMPTY_STATE_MESSAGE}
 
-    return {"retrieved_docs": hits, "needs_realtime": needs_realtime}
+    return {
+        "retrieved_docs": hits,
+        "needs_inventory": needs_inventory,
+        "needs_document_retrieval": needs_document_retrieval,
+    }
 
 
 def _tool_call(state: PipelineState) -> dict[str, Any]:
@@ -230,11 +266,15 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
         # Without knowing which project's inventory to query there is nothing to look up.
         # Return the inventory message rather than quietly answering from static docs —
         # unit counts in a PDF are stale by definition.
+        if state.get("retrieved_docs"):
+            return {"inventory_failed": True, "inventory_units": []}
         return {"inventory_failed": True, "notice": INVENTORY_UNAVAILABLE_MESSAGE}
 
     try:
         units = lookup_inventory(project_id, state["query"])
     except InventoryApiError:
+        if state.get("retrieved_docs"):
+            return {"inventory_failed": True, "inventory_units": []}
         return {"inventory_failed": True, "notice": INVENTORY_UNAVAILABLE_MESSAGE}
 
     # An empty `units` list is a valid answer ("no 2PN units left"), not a failure —
@@ -247,7 +287,13 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     docs = state.get("retrieved_docs") or []
     units = state.get("inventory_units") or []
 
-    prompt = _build_prompt(state["query"], docs, units, state.get("needs_realtime", False))
+    prompt = _build_prompt(
+        state["query"],
+        docs,
+        units,
+        state.get("needs_inventory", False),
+        state.get("inventory_failed", False),
+    )
 
     try:
         answer = generate_text(prompt, system_instruction=_SYSTEM_INSTRUCTION)
@@ -267,6 +313,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
 def _verify(state: PipelineState) -> dict[str, Any]:
     """The Verifier Agent scores Faithfulness/Relevancy, independently of Generate."""
     context = [doc["content"] for doc in state.get("retrieved_docs") or []]
+    context.extend(_format_unit_for_verifier(unit) for unit in state.get("inventory_units") or [])
     result = verifier_service.score_answer(state["query"], state.get("draft_answer", ""), context)
 
     return {
@@ -291,7 +338,7 @@ def _route_after_cache(state: PipelineState) -> str:
 def _route_after_retrieve(state: PipelineState) -> str:
     if state.get("notice"):
         return "stop"
-    return "tool_call" if state.get("needs_realtime") else "generate"
+    return "tool_call" if state.get("needs_inventory") else "generate"
 
 
 def _route_after_tool_call(state: PipelineState) -> str:
@@ -446,7 +493,7 @@ def _threshold() -> float:
     return get_settings().verifier_threshold_sale
 
 
-def _needs_realtime(query: str) -> bool:
+def _needs_inventory(query: str) -> bool:
     """Diacritic-insensitive matching: a Sale typing fast on a phone rarely uses accents.
 
     "con can 2pn nao trong khong" must be recognised as an inventory question exactly
@@ -455,6 +502,15 @@ def _needs_realtime(query: str) -> bool:
     """
     normalized = strip_diacritics(query)
     return any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS)
+
+
+def _needs_document_retrieval(query: str) -> bool:
+    """Keep policy/legal RAG independent from the live-inventory decision."""
+    normalized = strip_diacritics(query)
+    return (
+        any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
+        or not _needs_inventory(query)
+    )
 
 
 def _build_citations(docs: list[dict]) -> list[dict]:
@@ -489,14 +545,20 @@ def _build_citations(docs: list[dict]) -> list[dict]:
     return citations
 
 
-def _build_prompt(query: str, docs: list[dict], units: list[InventoryUnit], needs_realtime: bool) -> str:
+def _build_prompt(
+    query: str,
+    docs: list[dict],
+    units: list[InventoryUnit],
+    needs_inventory: bool,
+    inventory_failed: bool,
+) -> str:
     sections = [f"CÂU HỎI CỦA SALE:\n{query}"]
 
     if docs:
         context = "\n\n".join(_format_doc_for_prompt(index, doc) for index, doc in enumerate(docs, start=1))
         sections.append(f"NGỮ CẢNH TỪ TÀI LIỆU DỰ ÁN:\n{context}")
 
-    if needs_realtime:
+    if needs_inventory and not inventory_failed:
         sections.append(f"TỒN KHO REAL-TIME:\n{_format_units(units)}")
 
     sections.append(
@@ -512,6 +574,12 @@ def _build_prompt(query: str, docs: list[dict], units: list[InventoryUnit], need
         "- Nêu rõ phần nào ngữ cảnh chưa có dữ liệu thay vì suy đoán, và gợi ý Sale cần xác nhận "
         "thêm điều gì với khách hoặc với Admin."
     )
+
+    if needs_inventory and inventory_failed:
+        sections.append(
+            "LIVE INVENTORY STATUS: unavailable. Do not infer stock from project documents; "
+            "state that live inventory could not be checked."
+        )
 
     return "\n\n".join(sections)
 
@@ -532,4 +600,12 @@ def _format_units(units: list[InventoryUnit]) -> str:
         f"- {unit.unit_code} | loại {unit.unit_type or 'không rõ'} | "
         f"giá {f'{unit.price:,.0f} VNĐ' if unit.price is not None else 'chưa có'} | {unit.status}"
         for unit in units
+    )
+
+
+def _format_unit_for_verifier(unit: InventoryUnit) -> str:
+    """Give the verifier the same live facts that were supplied to the LLM."""
+    return (
+        f"Live inventory: {unit.unit_code}; type {unit.unit_type or 'unknown'}; "
+        f"price {unit.price if unit.price is not None else 'unknown'}; status {unit.status}."
     )

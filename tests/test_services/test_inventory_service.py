@@ -74,7 +74,8 @@ def test_filters_by_unit_type_in_question(mock_get):
 
     result = lookup_inventory("ocean-park-3", "Còn căn 2PN nào trống không em?")
 
-    assert [unit.unit_code for unit in result] == ["OP3-A-0203", "OP3-B-1105"]
+    # "Còn căn" is an availability request, so reserved units are excluded.
+    assert [unit.unit_code for unit in result] == ["OP3-A-0203"]
     assert all(unit.unit_type == "2PN" for unit in result)
 
 
@@ -85,7 +86,8 @@ def test_returns_all_units_when_question_has_no_unit_type(mock_get):
 
     result = lookup_inventory("ocean-park-3", "Dự án còn hàng không?")
 
-    assert len(result) == 4
+    # "Còn hàng" is an availability request, so sold/reserved units are excluded.
+    assert [unit.unit_code for unit in result] == ["OP3-A-0102", "OP3-A-0203"]
 
 
 @patch("httpx.get")

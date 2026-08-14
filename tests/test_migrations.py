@@ -19,6 +19,7 @@ from backend.models import (  # noqa: F401  (đăng ký bảng vào Base.metadat
     chat_session,
     conflict_flag,
     document,
+    document_relation,
     feedback,
     hitl_log,
     message,
@@ -38,6 +39,7 @@ EXPECTED_TABLES = {
     "feedback",
     "hitl_logs",
     "conflict_flags",
+    "document_relations",
 }
 
 

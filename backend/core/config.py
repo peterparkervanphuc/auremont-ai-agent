@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     # "Không đủ thông tin, liên hệ Admin" instead of the answer.
     verifier_threshold_sale: float = 0.7
 
+    # Documents at or above this classification confidence are auto-approved.
+    classification_auto_approve_threshold: float = Field(
+        default=0.9, ge=0, le=1
+    )
+
     # Object storage (MinIO) — document originals
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"

@@ -21,14 +21,24 @@ from backend.repositories.document import (
     create_document,
     delete_document,
     list_documents,
+    list_documents_pending_review,
+    update_document_classification,
     update_document_visibility,
 )
-from backend.schemas.document import DocumentCreate, DocumentResponse
+from backend.schemas.document import (
+    DocumentClassificationUpdate,
+    DocumentCreate,
+    DocumentResponse,
+)
 from backend.services.ingestion_service import (
     DocumentIngestionError,
     PromptInjectionError,
     ingest_uploaded_document,
     sanitize_and_scan,
+)
+from backend.services.vector_store_service import (
+    VectorStoreError,
+    update_document_vector_metadata,
 )
 
 router = APIRouter(
@@ -223,4 +233,55 @@ async def remove_document(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
+        ) from exc
+
+@router.get(
+    "/pending-review",
+    response_model=list[DocumentResponse],
+)
+async def get_pending_review_documents(
+    db: Session = Depends(get_db),
+) -> list[DocumentResponse]:
+    """Danh sách file chờ Admin xác nhận phân loại."""
+
+    return list_documents_pending_review(db)
+
+
+@router.patch(
+    "/{document_id}/classification",
+    response_model=DocumentResponse,
+)
+async def approve_document_classification(
+    document_id: int,
+    payload: DocumentClassificationUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
+) -> DocumentResponse:
+    """Admin sửa metadata và duyệt file để bước sau cho phép RAG sử dụng."""
+
+    try:
+        document = update_document_classification(
+            db,
+            document_id=document_id,
+            payload=payload,
+            reviewed_by=admin.id,
+        )
+        update_document_vector_metadata(
+            document.id,
+            review_status=document.review_status,
+            legal_status=document.legal_status,
+            category=document.category,
+        )
+        return document
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except VectorStoreError as exc:
+        # The DB approval is committed first; leaving Qdrant pending is safe
+        # because RAG will keep excluding it until the sync is retried.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document was approved but vector metadata could not be synced.",
         ) from exc

@@ -18,6 +18,7 @@ from backend.models import (  # noqa: F401
     chat_session,
     conflict_flag,
     document,
+    document_relation,
     feedback,
     hitl_log,
     message,

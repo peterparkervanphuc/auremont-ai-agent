@@ -54,7 +54,17 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
     except GeminiEmbeddingError as exc:
         raise RetrievalError("Could not embed the query.") from exc
 
-    conditions: list[models.Condition] = [_visibility_condition(visibility)]
+    conditions: list[models.Condition] = [
+        _visibility_condition(visibility),
+        models.FieldCondition(
+            key="review_status",
+            match=models.MatchValue(value="approved"),
+        ),
+        models.FieldCondition(
+            key="is_current",
+            match=models.MatchValue(value=True),
+        ),
+    ]
     if project_id:
         conditions.append(models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id)))
 

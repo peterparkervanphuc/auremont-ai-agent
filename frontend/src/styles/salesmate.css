@@ -721,6 +721,68 @@
   color: var(--accent);
 }
 
+/* ── Duyệt phân loại tài liệu ──────────────────────────── */
+.review-layout {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.7fr) minmax(0, 1.3fr);
+  gap: 20px;
+  margin-top: 24px;
+}
+
+.review-list { align-content: start; }
+
+.review-item {
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  cursor: pointer;
+  color: inherit;
+}
+
+.review-item--active { border-color: var(--accent); }
+
+.review-form {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+
+.review-reason { color: var(--text-2); font-size: 0.875rem; }
+
+.review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.review-grid label, .review-summary {
+  display: grid;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+}
+
+.review-grid input, .review-grid select, .review-summary textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--text-1);
+  padding: 9px 10px;
+  font: inherit;
+}
+
+.review-summary { margin: 16px 0; }
+
+@media (max-width: 860px) {
+  .review-layout, .review-grid { grid-template-columns: 1fr; }
+}
+
 /* ── Responsive ─────────────────────────────────────────── */
 @media (max-width: 860px) {
   .page {

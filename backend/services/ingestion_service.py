@@ -13,10 +13,12 @@ from backend.models.document import Document
 from backend.repositories.conflict_flag import create_conflict
 from backend.repositories.document import (
     list_completed_siblings,
+    update_document_classification_suggestion,
     update_document_status,
     update_document_storage_path,
 )
 from backend.services.chunking_service import chunk_sections
+from backend.services.document_classification_service import classify_document
 from backend.services.parser_service import parse_document
 from backend.services.vector_store_service import index_document_chunks
 from backend.utils.text import strip_diacritics
@@ -31,7 +33,9 @@ class DocumentIngestionError(RuntimeError):
 
 
 SUSPICIOUS_PATTERNS = [
-    r"ignore\s+(all|any|previous|prior)\s+instructions",
+    # Includes both "ignore previous instructions" and "ignore all previous
+    # instructions". The latter has two words between ignore and instructions.
+    r"ignore\s+(?:(?:all|any|previous|prior)\s+){1,2}instructions",
     r"system\s+prompt",
     r"you\s+are\s+chatgpt",
     r"<\s*system\s*>",
@@ -76,6 +80,17 @@ def ingest_uploaded_document(
         raw_text = "\n\n".join(section.text for section in sections)
         sanitize_and_scan(raw_text)
 
+        classification = classify_document(filename, raw_text)
+        document = update_document_classification_suggestion(
+            db,
+            document_id=document.id,
+            classification=classification,
+            auto_approve=(
+                classification.confidence
+                >= settings.classification_auto_approve_threshold
+            ),
+        )
+
         object_key = _store_original_file(
             document_id=document.id,
             filename=filename,
@@ -108,6 +123,10 @@ def ingest_uploaded_document(
             visibility=document.visibility,
             chunks=chunks,
             vectors=vectors,
+            category=document.category,
+            review_status=document.review_status,
+            legal_status=document.legal_status,
+            is_current=document.is_current,
         )
 
         completed = update_document_status(
