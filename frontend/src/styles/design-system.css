@@ -37,6 +37,13 @@
   --glow-accent-2: 0 0 40px rgba(10, 46, 122, 0.12);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
 
+  /* Vertical rhythm between content blocks. Zone pages stack 20+ blocks in a
+     row, so a shared scale keeps the page breathing instead of each block
+     inventing its own margin. */
+  --space-block: 56px;
+  --space-block-sm: 36px;
+  --space-inner: 24px;
+
   --radius: 8px;
   --radius-sm: 6px;
   --radius-xs: 4px;
@@ -45,6 +52,16 @@
   --t-fast: 0.15s var(--ease);
   --t-base: 0.25s var(--ease);
   --t-slow: 0.4s var(--ease);
+}
+
+/* The desktop rhythm is too generous once the viewport narrows — scale the whole
+   scale down in one place rather than per-component. */
+@media (max-width: 800px) {
+  :root {
+    --space-block: 36px;
+    --space-block-sm: 24px;
+    --space-inner: 18px;
+  }
 }
 
 
@@ -3378,6 +3395,7 @@ code {
 .chat-sidebar-head {
   padding: 16px;
   border-bottom: 1px solid var(--border);
+  flex: none;
 }
 
 .chat-sidebar-brand {
@@ -3464,6 +3482,10 @@ code {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* A flex item's automatic minimum size is its content height; min-height:0
+     lets the list shrink and scroll inside the sidebar instead of overflowing. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .chat-conv-list::-webkit-scrollbar { width: 4px; }
 .chat-conv-list::-webkit-scrollbar-thumb { background: var(--border-h); border-radius: 8px; }
@@ -3542,48 +3564,6 @@ code {
   animation: shimmer 1.4s infinite;
 }
 
-/* Project picker shown before a new consultation session is created. */
-.chat-project-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  margin: 0 8px 8px;
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-sm);
-  background: var(--bg-3);
-}
-.chat-project-picker-label {
-  margin: 0 0 2px;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--text-2);
-}
-.chat-project-option {
-  padding: 8px 10px;
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-sm);
-  background: var(--bg-2);
-  color: var(--text-1);
-  font-size: 0.875rem;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--t-fast), border-color var(--t-fast);
-}
-.chat-project-option:hover {
-  background: var(--bg-glass-h);
-  border-color: var(--accent, var(--border-2));
-}
-.chat-project-cancel {
-  align-self: flex-end;
-  padding: 4px 8px;
-  border: none;
-  background: none;
-  color: var(--text-3);
-  font-size: 0.8125rem;
-  cursor: pointer;
-}
-.chat-project-cancel:hover { color: var(--text-1); }
 
 .chat-mobile-sidebar-btn,
 .chat-sidebar-scrim {
@@ -5795,7 +5775,7 @@ code {
 
 /* ── Shared section spacing (replaces inline style={{ marginBottom: 28 }}) ── */
 .section-block {
-  margin-bottom: 28px;
+  margin-bottom: var(--space-block);
 }
 
 .empty-state-text--spaced {

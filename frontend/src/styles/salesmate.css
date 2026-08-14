@@ -144,7 +144,7 @@
   font-size: 1.2rem;
   color: var(--accent);
   letter-spacing: 0.02em;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-inner);
 }
 
 .pricing-table {
@@ -184,7 +184,7 @@
   font-weight: 800;
   font-size: 1.15rem;
   color: var(--accent);
-  margin-bottom: 18px;
+  margin-bottom: var(--space-inner);
 }
 
 /* "Villa zones overview" banner — soft blue background (replacing the original
@@ -192,8 +192,8 @@
 .villa-map-banner {
   background: #eaf2ff;
   border-radius: var(--radius);
-  padding: 24px 20px;
-  margin: 0 -6px 28px;
+  padding: 32px 28px;
+  margin: var(--space-block) -6px;
 }
 
 .villa-map-banner-title {
@@ -203,7 +203,7 @@
   font-weight: 800;
   font-size: 1.1rem;
   color: #0050ef;
-  margin-bottom: 18px;
+  margin-bottom: var(--space-inner);
 }
 
 .villa-map-pin {
@@ -338,6 +338,12 @@
   grid-template-columns: 1fr;
 }
 
+/* Without the image column the text would run the full page width; capping the
+   measure keeps lines short enough to track comfortably. */
+.zone-spotlight-grid--solo .page-sub {
+  max-width: 78ch;
+}
+
 .zone-spotlight-media-solo {
   display: flex;
   justify-content: center;
@@ -354,7 +360,7 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  margin: 36px 0;
+  margin: var(--space-block) 0;
   color: var(--accent);
   font-family: var(--font-display);
   font-weight: 800;
@@ -422,8 +428,8 @@
    sub-zone/shop row — reuses .zone-spotlight--dark but with smaller
    padding/margin since it holds no image/grid content like MetropolitanSpotlight. */
 .zone-header-banner {
-  padding: 22px 28px;
-  margin: 0 0 20px;
+  padding: 28px 32px;
+  margin: 0 0 var(--space-block-sm);
   text-align: center;
 }
 
@@ -474,7 +480,7 @@
   display: grid;
   /* Always fixed at 3 cards/row for readability, not auto-fit based on screen width. */
   grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
+  gap: var(--space-inner);
 }
 
 @media (max-width: 700px) {
@@ -598,8 +604,8 @@
 .amenity-banner {
   background: #8a7256;
   border-radius: var(--radius);
-  padding: 32px 36px;
-  margin: 0 -6px 28px;
+  padding: 40px 44px;
+  margin: var(--space-block) -6px;
 }
 
 .amenity-banner-head {
@@ -627,7 +633,7 @@
 .amenity-banner-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
+  gap: var(--space-inner);
 }
 
 @media (max-width: 800px) {
@@ -671,8 +677,8 @@
   /* Swapped the original brown/olive tone for a light blue to match the page's overall tone. */
   background: var(--bg-glass);
   border-radius: var(--radius);
-  padding: 32px 36px;
-  margin: 28px 0;
+  padding: 40px 44px;
+  margin: var(--space-block) 0;
 }
 
 .price-table-brown-title {
@@ -718,6 +724,10 @@
 }
 
 /* Floor plan tabs for The Palma 1/2 */
+.floor-plan-tabs {
+  margin: var(--space-block) 0;
+}
+
 .floor-plan-tabs-title {
   text-align: center;
   text-transform: uppercase;
@@ -725,7 +735,7 @@
   font-weight: 800;
   font-size: 1.3rem;
   color: var(--accent);
-  margin-bottom: 18px;
+  margin-bottom: var(--space-inner);
 }
 
 .floor-plan-tabs-nav {
@@ -1591,7 +1601,7 @@
 .inv-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 18px;
+  gap: var(--space-inner);
 }
 
 .project-card {
@@ -1834,7 +1844,7 @@
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-2);
-  margin-bottom: 18px;
+  margin-bottom: var(--space-inner);
   transition: color var(--t-fast);
 }
 
@@ -1983,7 +1993,9 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 0 0 22px;
+  margin: 0 0 var(--space-block-sm);
+  padding-bottom: var(--space-inner);
+  border-bottom: 1px solid var(--border);
 }
 
 .zone-switcher-item {

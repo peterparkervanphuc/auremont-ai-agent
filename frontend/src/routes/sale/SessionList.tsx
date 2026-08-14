@@ -26,7 +26,6 @@ export function SessionList({ sessions, loading, onChange }: Props) {
   const sessionId = match?.params.sessionId;
   const navigate = useNavigate();
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
-  const [picking, setPicking] = useState(false);
 
   const [naming, setNaming] = useState(false);
   const [customerName, setCustomerName] = useState("");
@@ -47,30 +46,19 @@ export function SessionList({ sessions, loading, onChange }: Props) {
     setCustomerName("");
   };
 
-  // A session must carry a project_id: without it the agent cannot query real-time
-  // inventory. The customer name is asked for first, then the project — so a new
-  // session is only created once both are known.
-  const createSession = async (projectId: string) => {
+  // The customer name is all a new session needs; Sale goes straight into the chat.
+  // A session therefore carries no project_id, so real-time inventory lookups
+  // answer with the "khong tra duoc ton kho" notice — document retrieval (price
+  // lists, floor plans, policies) still searches across every project.
+  const submitNewSession = async (e: FormEvent) => {
+    e.preventDefault();
     const name = customerName.trim();
     const session = await api.post<ChatSessionResponse>("/sale/sessions", {
-      project_id: projectId,
       customer_name: name || undefined,
     });
-    setPicking(false);
     onChange([session, ...sessions]);
     closeNaming();
     navigate(`/chat/sessions/${session.id}`);
-  };
-
-  const submitNewSession = (e: FormEvent) => {
-    e.preventDefault();
-    setNaming(false);
-    if (projects.length === 1) {
-      // Only one project to choose from — skip the picker.
-      void createSession(projects[0].id);
-      return;
-    }
-    setPicking(true);
   };
 
   const handleNameKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -99,7 +87,7 @@ export function SessionList({ sessions, loading, onChange }: Props) {
         </div>
 
         {naming ? (
-          <form className="chat-new-form" onSubmit={submitNewSession}>
+          <form className="chat-new-form" onSubmit={(e) => void submitNewSession(e)}>
             <input
               autoFocus
               className="chat-new-form-input"
@@ -143,25 +131,6 @@ export function SessionList({ sessions, loading, onChange }: Props) {
       {/* Spec §5.2a — no project data means Sale cannot consult anything yet. */}
       {projects.length === 0 && !loading && (
         <p className="chat-conv-empty">Chưa có dữ liệu dự án, vui lòng báo Admin cập nhật.</p>
-      )}
-
-      {picking && (
-        <div className="chat-project-picker">
-          <p className="chat-project-picker-label">Chọn dự án tư vấn</p>
-          {projects.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className="chat-project-option"
-              onClick={() => void createSession(p.id)}
-            >
-              {p.name}
-            </button>
-          ))}
-          <button type="button" className="chat-project-cancel" onClick={() => setPicking(false)}>
-            Huỷ
-          </button>
-        </div>
       )}
 
       <div className="chat-conv-list">
