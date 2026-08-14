@@ -84,13 +84,12 @@ def score_answer(query: str, draft_answer: str, retrieved_context: list[str]) ->
     try:
         raw = generate_text(prompt, system_instruction=_JUDGE_SYSTEM_INSTRUCTION)
     except Exception:
-        # Scoring 0.0 sends the pipeline down the "not enough information" branch,
-        # which looks exactly like a genuinely bad answer on the Admin dashboard.
-        # This log is the only thing that distinguishes a broken Verifier from one
-        # that is working and rejecting.
+        # ERROR, not WARNING: without this line, a broken Verifier looks exactly like a
+        # low-quality answer on the Admin dashboard — both show score 0.0. This is the
+        # most dangerous misdiagnosis the system can make.
         logger.exception(
-            "Verifier judge call failed; scoring 0.0 (fail-closed)",
-            extra={"event": "verifier.judge.failed"},
+            "Judge LLM that bai — tra ve diem 0.0 (fail closed).",
+            extra={"event": "verifier.judge.failed", "context_count": len(retrieved_context)},
         )
         return VerifierResult(0.0, 0.0)
 
@@ -102,8 +101,8 @@ def _parse_scores(raw: str) -> VerifierResult:
     match = _JSON_PATTERN.search(raw or "")
     if match is None:
         logger.warning(
-            "Judge returned no JSON object; scoring 0.0",
-            extra={"event": "verifier.parse.no_json", "raw_len": len(raw or ""), "raw_head": (raw or "")[:120]},
+            "Khong tim thay JSON trong output cua judge.",
+            extra={"event": "verifier.parse.no_json", "raw_head": (raw or "")[:120]},
         )
         return VerifierResult(0.0, 0.0)
 
@@ -111,15 +110,14 @@ def _parse_scores(raw: str) -> VerifierResult:
         data = json.loads(match.group(0))
     except ValueError:
         logger.warning(
-            "Judge JSON is malformed; scoring 0.0",
-            exc_info=True,
+            "JSON cua judge khong parse duoc.",
             extra={"event": "verifier.parse.bad_json", "raw_head": match.group(0)[:120]},
         )
         return VerifierResult(0.0, 0.0)
 
     if not isinstance(data, dict):
         logger.warning(
-            "Judge JSON is not an object; scoring 0.0",
+            "Judge tra ve JSON khong phai object.",
             extra={"event": "verifier.parse.not_dict", "parsed_type": type(data).__name__},
         )
         return VerifierResult(0.0, 0.0)
@@ -135,11 +133,11 @@ def _clamp(value: object) -> float:
     try:
         score = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        # DEBUG, not WARNING: the docstring notes null is a routine model output,
-        # so this would otherwise be constant noise.
+        # DEBUG: the docstring above notes `null` is a common model output, so WARNING
+        # here would become constant noise rather than a real signal.
         logger.debug(
-            "Unparseable score component, using 0.0",
-            extra={"event": "verifier.clamp.bad_value", "value": repr(value)[:80]},
+            "Diem khong doc duoc, quy ve 0.0.",
+            extra={"event": "verifier.clamp.bad_value", "value_type": type(value).__name__},
         )
         return 0.0
 

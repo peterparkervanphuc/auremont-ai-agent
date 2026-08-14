@@ -18,7 +18,7 @@ import logging
 
 _audit = logging.getLogger("salesmate.audit")
 
-_MAX_TEXT = 200
+DEFAULT_TRUNCATE_LIMIT = 200
 
 # `logging` raises KeyError if `extra` carries a name LogRecord already uses, and
 # the whole event is then lost. `filename` is the one that bites in practice —
@@ -61,7 +61,7 @@ def log_event(event: str, **fields: object) -> None:
     persist_event(event, fields)
 
 
-def truncate(text: str | None, limit: int = _MAX_TEXT) -> str | None:
+def truncate(text: str | None, limit: int = DEFAULT_TRUNCATE_LIMIT) -> str | None:
     """Cap free text so one long input cannot dominate the log."""
     if text is None:
         return None

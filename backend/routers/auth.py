@@ -29,8 +29,9 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depen
     user = get_user_by_username(db, form.username)
 
     if not user or not verify_password(form.password, user.hashed_password):
-        # One reason for both "no such user" and "wrong password": a log that
-        # distinguished them could be used to enumerate valid usernames.
+        # Cung mot `reason` cho ca "khong co user" lan "sai mat khau": neu phan
+        # biet, log tro thanh cong cu do xem username nao co that.
+        # Tuyet doi khong log form.password.
         log_event("auth.login.failure", username=form.username, reason="bad_credentials")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -64,10 +65,12 @@ async def refresh(payload: RefreshRequest, db: Session = Depends(get_db)) -> Tok
 
     claims = decode_token(payload.refresh_token)
     # Require type == "refresh": an access token must not be able to renew itself forever.
-    if claims is None or claims.get("type") != "refresh":
-        # security.decode_token already logged why the JWT was rejected. Never log
-        # the token itself.
-        log_event("auth.refresh.failure", reason="invalid_token" if claims is None else "wrong_type")
+    # Khong bao gio log token, ke ca mot phan.
+    if claims is None:
+        log_event("auth.refresh.failure", reason="invalid_token")
+        raise credentials_error
+    if claims.get("type") != "refresh":
+        log_event("auth.refresh.failure", reason="wrong_type")
         raise credentials_error
 
     username = claims.get("sub")
@@ -77,7 +80,7 @@ async def refresh(payload: RefreshRequest, db: Session = Depends(get_db)) -> Tok
 
     user = get_user_by_username(db, username)
     if user is None or not user.is_active:
-        log_event("auth.refresh.failure", username=username, reason="unknown_or_inactive_user")
+        log_event("auth.refresh.failure", reason="unknown_or_inactive_user", username=username)
         raise credentials_error
 
     return TokenResponse(

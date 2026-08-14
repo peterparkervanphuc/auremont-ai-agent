@@ -60,11 +60,11 @@ def lookup_cache(query: str, project_id: str | None = None) -> CachedAnswer | No
         )
     except Exception:
         # Qdrant down or a Gemini embedding failure -> treat as a cache miss and let the
-        # pipeline take the full path. WARNING rather than ERROR: the answer is still
-        # correct, the only cost is the tokens the cache would have saved. Logged all the
-        # same, because a permanently broken cache is otherwise invisible.
+        # pipeline take the full path. Logged at WARNING rather than ERROR: the answer is
+        # still correct, only more expensive. But it must be logged — a permanently dead
+        # cache burns tokens on every single request with no other outward symptom.
         logger.warning(
-            "Semantic cache lookup failed; treating as miss",
+            "Tra cuu cache that bai — coi nhu cache miss.",
             exc_info=True,
             extra={"event": "cache.lookup.failed", "project_id": project_id},
         )
@@ -131,10 +131,9 @@ def store_cache(
             ],
         )
     except Exception:
-        # A failed cache write has no bearing on the answer already being served,
-        # but it silently drops the hit rate to zero, so it must be visible.
+        # A failed cache write has no bearing on the answer already being served.
         logger.warning(
-            "Semantic cache write failed",
+            "Ghi cache that bai — cau tra loi da gui van khong bi anh huong.",
             exc_info=True,
             extra={"event": "cache.store.failed", "project_id": project_id},
         )

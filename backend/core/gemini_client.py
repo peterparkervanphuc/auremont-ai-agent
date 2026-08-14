@@ -83,10 +83,9 @@ def _embed(
             config=types.EmbedContentConfig(**config_kwargs),
         )
     except Exception as exc:
-        logger.error(
-            "Gemini embedding request failed",
-            exc_info=True,
-            extra={"event": "gemini.embed.failed", "text_count": len(texts), "model": settings.embedding_model},
+        logger.exception(
+            "Goi Gemini embedding that bai.",
+            extra={"event": "gemini.embed.failed", "model": settings.embedding_model, "input_count": len(texts)},
         )
         raise GeminiEmbeddingError("Gemini embedding request failed.") from exc
 

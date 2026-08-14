@@ -34,15 +34,15 @@ async def confirm_hitl(
     log = create_hitl_log(db, message_id=message_id, sale_id=user.id)
     confirmed = confirm_hitl_log(db, log_id=log.id, confirmed_content=payload.confirmed_content)
 
-    # confirmed_content is deliberately absent: it is the exact price/commitment
-    # text going to a customer. Whether the Sale edited it is the audit-relevant bit.
+    # Do not log `confirmed_content`: it is the exact price/commitment text sent
+    # to the customer. What matters for the audit is whether the Sale EDITED the
+    # AI-generated content (`edited`).
     log_event(
         "hitl.confirm",
         message_id=message_id,
         hitl_log_id=log.id,
         user_id=user.id,
-        role=user.role,
-        content_len=len(payload.confirmed_content),
-        edited=payload.confirmed_content != message.content,
+        content_len=len(payload.confirmed_content or ""),
+        edited=(payload.confirmed_content or "") != (message.content or ""),
     )
     return confirmed

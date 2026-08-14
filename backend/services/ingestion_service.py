@@ -14,10 +14,12 @@ from backend.models.document import Document
 from backend.repositories.conflict_flag import create_conflict
 from backend.repositories.document import (
     list_completed_siblings,
+    update_document_classification_suggestion,
     update_document_status,
     update_document_storage_path,
 )
 from backend.services.chunking_service import chunk_sections
+from backend.services.document_classification_service import classify_document
 from backend.services.parser_service import parse_document
 from backend.services.vector_store_service import index_document_chunks
 from backend.utils.text import strip_diacritics
@@ -34,7 +36,9 @@ class DocumentIngestionError(RuntimeError):
 
 
 SUSPICIOUS_PATTERNS = [
-    r"ignore\s+(all|any|previous|prior)\s+instructions",
+    # Includes both "ignore previous instructions" and "ignore all previous
+    # instructions". The latter has two words between ignore and instructions.
+    r"ignore\s+(?:(?:all|any|previous|prior)\s+){1,2}instructions",
     r"system\s+prompt",
     r"you\s+are\s+chatgpt",
     r"<\s*system\s*>",
@@ -79,6 +83,17 @@ def ingest_uploaded_document(
         raw_text = "\n\n".join(section.text for section in sections)
         sanitize_and_scan(raw_text)
 
+        classification = classify_document(filename, raw_text)
+        document = update_document_classification_suggestion(
+            db,
+            document_id=document.id,
+            classification=classification,
+            auto_approve=(
+                classification.confidence
+                >= settings.classification_auto_approve_threshold
+            ),
+        )
+
         object_key = _store_original_file(
             document_id=document.id,
             filename=filename,
@@ -111,6 +126,10 @@ def ingest_uploaded_document(
             visibility=document.visibility,
             chunks=chunks,
             vectors=vectors,
+            category=document.category,
+            review_status=document.review_status,
+            legal_status=document.legal_status,
+            is_current=document.is_current,
         )
 
         completed = update_document_status(
@@ -126,7 +145,8 @@ def ingest_uploaded_document(
             flag_conflicts_for(db, completed)
         except Exception:  # pragma: no cover - advisory step, never fatal
             logger.warning(
-                "Conflict detection skipped",
+                "Bo qua quet mau thuan cho tai lieu %s.",
+                completed.id,
                 exc_info=True,
                 extra={"event": "document.conflict_scan.failed", "document_id": completed.id},
             )
@@ -139,21 +159,6 @@ def ingest_uploaded_document(
 
     except Exception as exc:
         update_document_status(db, document.id, DocumentStatus.FAILED)
-
-        # Logged before the re-raise branch so every ingest failure is captured,
-        # whichever way it leaves. This is what finally makes the router's
-        # "Check server logs." message in documents.py true.
-        logger.exception(
-            "Document ingestion failed",
-            extra={
-                "event": "document.ingest.exception",
-                "document_id": document.id,
-                # Not "filename": LogRecord already owns that attribute and
-                # logging raises KeyError, which would lose this record entirely.
-                "document_name": filename,
-                "error_type": type(exc).__name__,
-            },
-        )
 
         if isinstance(exc, DocumentIngestionError):
             raise
@@ -233,16 +238,6 @@ def _store_original_file(
             content_type=content_type or "application/octet-stream",
         )
     except Exception as exc:
-        logger.error(
-            "Could not store original file in MinIO",
-            exc_info=True,
-            extra={
-                "event": "document.storage.failed",
-                "document_id": document_id,
-                "object_key": object_key,
-                "bucket": settings.minio_bucket_documents,
-            },
-        )
         raise DocumentIngestionError(
             "Could not store original file in MinIO."
         ) from exc

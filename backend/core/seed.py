@@ -61,7 +61,7 @@ def seed_projects() -> None:
         for seed in SEED_PROJECTS:
             ensure_seed_project(db, **seed)
         logger.info(
-            "Seeded %d projects",
+            "Seed %d du an mau.",
             len(SEED_PROJECTS),
             extra={
                 "event": "seed.projects",
@@ -71,9 +71,9 @@ def seed_projects() -> None:
         )
     except Exception:  # pragma: no cover - a failed seed must not block startup
         db.rollback()
-        # WARNING, not ERROR: on a fresh database whose migrations have not run
-        # yet this is expected, and it deliberately does not block startup.
-        logger.warning("Seeding projects failed, skipping", exc_info=True, extra={"event": "seed.projects.failed"})
+        # WARNING, not ERROR: a seeding failure must not block startup, and on a
+        # fresh, not-yet-migrated DB this is expected.
+        logger.warning("Seed du an that bai — bo qua.", exc_info=True, extra={"event": "seed.projects.failed"})
     finally:
         db.close()
 
@@ -94,11 +94,10 @@ def seed_users() -> None:
     try:
         for seed in SEED_USERS:
             ensure_seed_user(db, **seed)
+        # Log usernames only — never log the `password` field from SEED_USERS.
         logger.info(
-            "Seeded %d test accounts",
+            "Seed %d tai khoan test.",
             len(SEED_USERS),
-            # Usernames only — SEED_USERS also carries a plaintext `password`
-            # field that must never reach the log.
             extra={
                 "event": "seed.users",
                 "count": len(SEED_USERS),
@@ -109,6 +108,6 @@ def seed_users() -> None:
         # The `users` table may not exist yet if migrations have not finished.
         # This is a developer convenience, not a critical path, so only log it.
         db.rollback()
-        logger.warning("Seeding test accounts failed, skipping", exc_info=True, extra={"event": "seed.users.failed"})
+        logger.warning("Seed tai khoan test that bai — bo qua.", exc_info=True, extra={"event": "seed.users.failed"})
     finally:
         db.close()

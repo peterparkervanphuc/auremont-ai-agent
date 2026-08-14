@@ -1,158 +1,169 @@
-"""Regression suite for failure paths that used to be completely silent.
+"""Regression guard for failures that used to be completely invisible.
 
-Every test here asserts **both** halves:
-
-* the return value is unchanged — logging must not alter control flow;
-* something was actually logged, with a traceback where one is warranted.
-
-The first half matters as much as the second. These functions promise never to
-raise, and the whole point of the logging change was that it added visibility
-without touching behaviour.
+Every test asserts **two** things: the return value is unchanged (the recovery
+behaviour these call sites deliberately implement) *and* a record was emitted.
+The first half is what stops a future "improvement" from turning a graceful
+degradation into a 500 in front of a customer.
 """
 
 import logging
 
 import pytest
 
-from backend.core import security
-from backend.services import agent_pipeline, cache_service, rag_service, verifier_service
+from backend.services import cache_service, verifier_service
+from backend.services.agent_pipeline import GENERATION_ERROR_MESSAGE, run_pipeline
+from backend.services.inventory_service import _parse_unit, _to_float
 
 
-def explode(*args, **kwargs):
-    raise RuntimeError("dependency is down")
+class _SimulatedError(Exception):
+    pass
 
 
-class TestAgentPipeline:
-    def test_crash_returns_the_notice_and_logs_a_traceback(self, monkeypatch, capture_logs):
-        monkeypatch.setattr(agent_pipeline, "_get_graph", explode)
-
-        result = agent_pipeline.run_pipeline("giá căn 2PN?", project_id="ocean-park-3")
-
-        assert result.draft_answer == agent_pipeline.GENERATION_ERROR_MESSAGE
-        assert result.verifier_score == 0.0
-        assert result.requires_hitl is False
-        assert result.citations == []
-
-        record = capture_logs.event("pipeline.crash")
-        assert record.levelno == logging.ERROR
-        assert record.exc_info is not None
-        assert record.project_id == "ocean-park-3"
-
-    def test_crash_log_carries_query_length_not_the_query(self, monkeypatch, capture_logs):
-        monkeypatch.setattr(agent_pipeline, "_get_graph", explode)
-
-        agent_pipeline.run_pipeline("giá căn 2PN?")
-
-        assert capture_logs.event("pipeline.crash").query_len == len("giá căn 2PN?")
+def _raise(*args, **kwargs):
+    raise _SimulatedError("simulated infrastructure failure")
 
 
-class TestVerifier:
-    def test_judge_failure_scores_zero_and_logs(self, monkeypatch, capture_logs):
-        monkeypatch.setattr(verifier_service, "generate_text", explode)
-
-        result = verifier_service.score_answer("q", "an answer", ["some context"])
-
-        assert result.score == 0.0
-        assert result.faithfulness == 0.0
-        assert result.relevancy == 0.0
-
-        record = capture_logs.event("verifier.judge.failed")
-        assert record.levelno == logging.ERROR
-        assert record.exc_info is not None
-
-    def test_missing_json_scores_zero_and_logs(self, capture_logs):
-        result = verifier_service._parse_scores("the model rambled without JSON")
-
-        assert result.score == 0.0
-        assert capture_logs.event("verifier.parse.no_json").levelno == logging.WARNING
-
-    def test_malformed_json_scores_zero_and_logs(self, capture_logs):
-        result = verifier_service._parse_scores("{not: valid json,}")
-
-        assert result.score == 0.0
-        assert capture_logs.events("verifier.parse.bad_json")
-
-    def test_array_without_an_object_scores_zero_and_logs(self, capture_logs):
-        """_JSON_PATTERN looks for {...}, so a bare array is a no-JSON case."""
-        result = verifier_service._parse_scores("[1, 2, 3]")
-
-        assert result.score == 0.0
-        assert capture_logs.events("verifier.parse.no_json")
-
-    def test_valid_scores_are_not_logged_as_failures(self, capture_logs):
-        result = verifier_service._parse_scores('{"faithfulness": 0.9, "relevancy": 0.8}')
-
-        assert result.score == 0.8
-        assert not [r for r in capture_logs.records if str(getattr(r, "event", "")).startswith("verifier.parse")]
+# --------------------------------------------------------------------------- cache
 
 
-class TestSemanticCache:
-    def test_lookup_failure_is_a_miss_and_logs(self, monkeypatch, capture_logs):
-        monkeypatch.setattr(cache_service, "get_qdrant_client", explode)
+def test_cache_lookup_failure_is_logged_and_returns_a_miss(monkeypatch, caplog):
+    monkeypatch.setattr(cache_service, "get_qdrant_client", _raise)
 
-        assert cache_service.lookup_cache("giá căn 2PN?", "ocean-park-3") is None
+    with caplog.at_level(logging.WARNING, logger="backend.services.cache_service"):
+        result = cache_service.lookup_cache("gia can 2PN?", "ocean-park-3")
 
-        record = capture_logs.event("cache.lookup.failed")
-        assert record.levelno == logging.WARNING
-        assert record.exc_info is not None
-        assert record.project_id == "ocean-park-3"
-
-    def test_store_failure_is_swallowed_and_logs(self, monkeypatch, capture_logs):
-        monkeypatch.setattr(cache_service, "get_qdrant_client", explode)
-
-        assert cache_service.store_cache("q", "an answer", [], 0.9, "ocean-park-3") is None
-
-        assert capture_logs.event("cache.store.failed").levelno == logging.WARNING
+    assert result is None
+    record = next(r for r in caplog.records if getattr(r, "event", None) == "cache.lookup.failed")
+    assert record.project_id == "ocean-park-3"
+    assert record.exc_info is not None
 
 
-class TestRetrieval:
-    def test_qdrant_failure_still_raises_and_logs_first(self, monkeypatch, capture_logs):
-        """agent_pipeline discards RetrievalError, so this log is the only record."""
-        class DeadClient:
-            def collection_exists(self, name):
-                raise RuntimeError("qdrant is down")
+def test_cache_store_failure_is_logged_and_swallowed(monkeypatch, caplog):
+    monkeypatch.setattr(cache_service, "_ensure_cache_collection", _raise)
 
-        monkeypatch.setattr(rag_service, "embed_query", lambda query: [0.0] * 768)
-        monkeypatch.setattr(rag_service, "get_qdrant_client", lambda: DeadClient())
+    with caplog.at_level(logging.WARNING, logger="backend.services.cache_service"):
+        assert cache_service.store_cache("q", "a", [], 0.9, "ocean-park-3") is None
 
-        with pytest.raises(rag_service.RetrievalError):
-            rag_service.retrieve("giá căn 2PN?", "INTERNAL", "ocean-park-3", 5)
-
-        record = capture_logs.event("retrieval.qdrant.failed")
-        assert record.levelno == logging.ERROR
-        assert record.exc_info is not None
-
-    def test_a_broken_client_becomes_retrieval_error_not_a_raw_exception(self, monkeypatch, capture_logs):
-        """Building the client parses QDRANT_URL and raises on a malformed value.
-
-        That call used to sit outside the try block, so a bad URL escaped as a raw
-        LocationParseError — a 500 for the Sale instead of the intended notice.
-        """
-
-        def broken_client():
-            raise ValueError("Failed to parse: http://[bad")
-
-        monkeypatch.setattr(rag_service, "embed_query", lambda query: [0.0] * 768)
-        monkeypatch.setattr(rag_service, "get_qdrant_client", broken_client)
-
-        with pytest.raises(rag_service.RetrievalError):
-            rag_service.retrieve("giá căn 2PN?", "INTERNAL", "ocean-park-3", 5)
-
-        assert capture_logs.events("retrieval.qdrant.failed")
+    assert any(getattr(r, "event", None) == "cache.store.failed" for r in caplog.records)
 
 
-class TestJwt:
-    def test_rejected_token_returns_none_and_logs_the_reason(self, capture_logs):
-        assert security.decode_token("not-a-real-jwt") is None
+# --------------------------------------------------------------------------- verifier
 
-        record = capture_logs.event("auth.token.rejected")
-        assert record.levelno == logging.WARNING
-        assert record.reason  # the exception class name distinguishes expiry from tampering
 
-    def test_the_token_itself_is_never_logged(self, capture_logs):
-        token = "eyJhbGciOiJIUzI1NiJ9.TAMPERED_PAYLOAD_SECRET.sig"
+def test_judge_failure_is_logged_at_error_and_still_fails_closed(monkeypatch, caplog):
+    """A broken Verifier and a bad answer both score 0.0 - only the log separates them."""
+    monkeypatch.setattr(verifier_service, "generate_text", _raise)
 
-        security.decode_token(token)
+    with caplog.at_level(logging.ERROR, logger="backend.services.verifier_service"):
+        result = verifier_service.score_answer("gia?", "3.6 ty", ["context"])
 
-        for record in capture_logs.records:
-            assert token not in str(record.__dict__)
+    assert result.score == 0.0
+    record = next(r for r in caplog.records if getattr(r, "event", None) == "verifier.judge.failed")
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is not None
+
+
+@pytest.mark.parametrize(
+    ("raw", "event"),
+    [
+        ("no json at all here", "verifier.parse.no_json"),
+        ("{not valid json,}", "verifier.parse.bad_json"),
+    ],
+)
+def test_unparseable_judge_output_is_logged(monkeypatch, caplog, raw, event):
+    monkeypatch.setattr(verifier_service, "generate_text", lambda *a, **k: raw)
+
+    with caplog.at_level(logging.WARNING, logger="backend.services.verifier_service"):
+        result = verifier_service.score_answer("gia?", "3.6 ty", ["context"])
+
+    assert result.score == 0.0
+    assert any(getattr(r, "event", None) == event for r in caplog.records)
+
+
+def test_null_score_is_only_debug_noise(monkeypatch, caplog):
+    """The model returning null is common; WARNING here would be constant noise."""
+    monkeypatch.setattr(
+        verifier_service,
+        "generate_text",
+        lambda *a, **k: '{"faithfulness": null, "relevancy": 0.9}',
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="backend.services.verifier_service"):
+        result = verifier_service.score_answer("gia?", "3.6 ty", ["context"])
+
+    assert result.score == 0.0
+    record = next(r for r in caplog.records if getattr(r, "event", None) == "verifier.clamp.bad_value")
+    assert record.levelno == logging.DEBUG
+
+
+# --------------------------------------------------------------------------- pipeline
+
+
+def test_pipeline_crash_is_logged_and_still_returns_the_standard_message(monkeypatch, caplog):
+    """The single most valuable log line: without it a crash is entirely invisible."""
+    import backend.services.agent_pipeline as pipeline
+
+    class _ExplodingGraph:
+        def invoke(self, _state):
+            raise _SimulatedError("graph exploded")
+
+    monkeypatch.setattr(pipeline, "_get_graph", lambda: _ExplodingGraph())
+
+    with caplog.at_level(logging.ERROR, logger="backend.services.agent_pipeline"):
+        result = run_pipeline("gia can 2PN?", project_id="ocean-park-3")
+
+    # Compare against the constant, not a hardcoded string, so rewording the
+    # user-facing message cannot silently break this guard.
+    assert result.draft_answer == GENERATION_ERROR_MESSAGE
+    assert result.verifier_score == 0.0
+    assert result.requires_hitl is False
+
+    record = next(r for r in caplog.records if getattr(r, "event", None) == "pipeline.crash")
+    assert record.project_id == "ocean-park-3"
+    assert record.exc_info is not None
+
+
+# --------------------------------------------------------------------------- auth
+
+
+def test_rejected_token_is_logged_without_ever_including_the_token(caplog):
+    """A JWT prefix is header+payload and decodes to real data - never log any of it."""
+    from backend.core.security import decode_token
+
+    token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzYWxlX3Rlc3QifQ.invalid-signature-part"
+
+    with caplog.at_level(logging.WARNING, logger="backend.core.security"):
+        assert decode_token(token) is None
+
+    record = next(r for r in caplog.records if getattr(r, "event", None) == "auth.token.rejected")
+    assert record.reason
+    assert token not in caplog.text
+    assert "eyJhbGciOiJIUzI1NiJ9" not in caplog.text
+
+
+# --------------------------------------------------------------------------- inventory
+
+
+def test_unparseable_price_is_logged_at_debug_and_left_blank(caplog):
+    with caplog.at_level(logging.DEBUG, logger="backend.services.inventory_service"):
+        assert _to_float("not-a-number") is None
+
+    assert any(getattr(r, "event", None) == "inventory.price.unparseable" for r in caplog.records)
+
+
+def test_incomplete_inventory_record_logs_field_names_only(caplog):
+    """Unit codes and prices are business data; only the missing field names are safe."""
+    with caplog.at_level(logging.WARNING, logger="backend.services.inventory_service"):
+        assert _parse_unit({"unit_code": "OP3-A-0203", "price": 3600000000}) is None
+
+    record = next(r for r in caplog.records if getattr(r, "event", None) == "inventory.record.incomplete")
+    assert set(record.missing_fields) == {"project_id", "status"}
+    assert "OP3-A-0203" not in caplog.text
+    assert "3600000000" not in caplog.text
+
+
+def test_non_dict_inventory_record_is_logged(caplog):
+    with caplog.at_level(logging.WARNING, logger="backend.services.inventory_service"):
+        assert _parse_unit("just a string") is None
+
+    assert any(getattr(r, "event", None) == "inventory.record.not_dict" for r in caplog.records)

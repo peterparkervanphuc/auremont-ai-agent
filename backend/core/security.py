@@ -39,13 +39,11 @@ def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
     except JWTError as exc:
-        # The exception type separates an ordinary expiry (ExpiredSignatureError)
-        # from a tampered or wrongly-signed token — indistinguishable before, since
-        # both surfaced as the same generic 401.
-        # The token itself is never logged, not even a prefix: a JWT prefix is a
-        # decodable header plus the start of the payload.
+        # Chi log LOAI loi (ExpiredSignatureError vs JWTError) de phan biet token
+        # het han voi token gia mao. Tuyet doi khong log token, ke ca prefix:
+        # phan dau JWT la header + payload, decode duoc ra thong tin that.
         logger.warning(
-            "JWT rejected",
-            extra={"event": "auth.token.rejected", "reason": type(exc).__name__, "detail": str(exc)[:120]},
+            "Token bi tu choi.",
+            extra={"event": "auth.token.rejected", "reason": type(exc).__name__},
         )
         return None

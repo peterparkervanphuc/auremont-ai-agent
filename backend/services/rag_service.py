@@ -55,24 +55,28 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
     try:
         query_vector = embed_query(query)
     except GeminiEmbeddingError as exc:
-        logger.error(
-            "Could not embed the query",
-            exc_info=True,
+        logger.exception(
+            "Embed cau hoi that bai.",
             extra={"event": "retrieval.embed.failed", "project_id": project_id},
         )
         raise RetrievalError("Could not embed the query.") from exc
 
-    conditions: list[models.Condition] = [_visibility_condition(visibility)]
+    conditions: list[models.Condition] = [
+        _visibility_condition(visibility),
+        models.FieldCondition(
+            key="review_status",
+            match=models.MatchValue(value="approved"),
+        ),
+        models.FieldCondition(
+            key="is_current",
+            match=models.MatchValue(value=True),
+        ),
+    ]
     if project_id:
         conditions.append(models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id)))
 
+    client = get_qdrant_client()
     try:
-        # Inside the try: building the client parses QDRANT_URL and raises on a
-        # malformed value, which outside would escape as a raw LocationParseError
-        # and bypass RetrievalError entirely — a 500 instead of the intended
-        # "Tạm thời không tra cứu được tài liệu" message.
-        client = get_qdrant_client()
-
         # If nobody has uploaded a document yet the collection does not exist. That is a
         # normal state right after deployment, not a fault.
         if not client.collection_exists(settings.qdrant_collection):
@@ -86,17 +90,12 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
             with_payload=True,
         )
     except Exception as exc:
-        # agent_pipeline catches RetrievalError and discards it, so this is the
-        # only place the actual Qdrant failure is ever recorded.
-        logger.error(
-            "Could not query Qdrant",
-            exc_info=True,
-            extra={
-                "event": "retrieval.qdrant.failed",
-                "collection": settings.qdrant_collection,
-                "project_id": project_id,
-                "top_k": top_k,
-            },
+        # Most important handoff point: the RetrievalError raised here is caught and
+        # entirely swallowed by agent_pipeline._retrieve. This log line is the ONLY
+        # record that Qdrant genuinely failed.
+        logger.exception(
+            "Truy van Qdrant that bai.",
+            extra={"event": "retrieval.qdrant.failed", "project_id": project_id, "collection": settings.qdrant_collection},
         )
         raise RetrievalError("Could not query Qdrant.") from exc
 

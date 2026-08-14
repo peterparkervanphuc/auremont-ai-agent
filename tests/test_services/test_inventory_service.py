@@ -7,6 +7,7 @@ from backend.core.config import settings
 from backend.services.inventory_service import (
     InventoryApiError,
     lookup_inventory,
+    resolve_api_project_id,
 )
 
 MOCK_URL = "https://mockapi.io/api/v1/inventory"
@@ -53,6 +54,9 @@ def configured_api(monkeypatch):
     """Trỏ config sang mock API. monkeypatch tự trả lại giá trị cũ sau mỗi test."""
     monkeypatch.setattr(settings, "inventory_api_url", MOCK_URL)
     monkeypatch.setattr(settings, "inventory_api_key", "")
+    # Ghim luôn map dự án: không ghim thì test đọc INVENTORY_PROJECT_MAP trong .env của
+    # máy dev, nên cùng một test lúc xanh lúc đỏ tuỳ file .env. Rỗng = gửi thẳng slug.
+    monkeypatch.setattr(settings, "inventory_project_map", "")
 
 
 def _response(payload, status_code: int = 200) -> httpx.Response:
@@ -74,8 +78,19 @@ def test_filters_by_unit_type_in_question(mock_get):
 
     result = lookup_inventory("ocean-park-3", "Còn căn 2PN nào trống không em?")
 
-    assert [unit.unit_code for unit in result] == ["OP3-A-0203", "OP3-B-1105"]
+    # "Còn căn" is an availability request, so reserved units are excluded.
+    assert [unit.unit_code for unit in result] == ["OP3-A-0203"]
     assert all(unit.unit_type == "2PN" for unit in result)
+
+
+@patch("httpx.get")
+def test_filters_by_vietnamese_bedroom_phrase(mock_get):
+    """Cách Sale hỏi tự nhiên '2 phòng ngủ' phải lọc đúng mã 2PN của API."""
+    mock_get.return_value = _response(MOCK_UNITS)
+
+    result = lookup_inventory("ocean-park-3", "Có căn nào 2 phòng ngủ còn trống không?")
+
+    assert [unit.unit_code for unit in result] == ["OP3-A-0203"]
 
 
 @patch("httpx.get")
@@ -85,7 +100,40 @@ def test_returns_all_units_when_question_has_no_unit_type(mock_get):
 
     result = lookup_inventory("ocean-park-3", "Dự án còn hàng không?")
 
-    assert len(result) == 4
+    # "Còn hàng" is an availability request, so sold/reserved units are excluded.
+    assert [unit.unit_code for unit in result] == ["OP3-A-0102", "OP3-A-0203"]
+
+
+@patch("httpx.get")
+def test_filters_by_subdivision_area_price_and_status(mock_get):
+    mock_get.return_value = _response(
+        [
+            {"unit_code": "A", "project_id": "ocean-park-3", "subdivision": "Vịnh Tây", "unit_type": "2PN", "area_m2": 62, "price": 3600000000, "status": "available"},
+            {"unit_code": "B", "project_id": "ocean-park-3", "subdivision": "Vịnh Xanh", "unit_type": "2PN", "area_m2": 68, "price": 3750000000, "status": "reserved"},
+        ]
+    )
+
+    result = lookup_inventory(
+        "ocean-park-3",
+        "Còn bán căn 2PN khu Vinh Tay, diện tích dưới 65m2, giá dưới 4 tỷ?",
+    )
+
+    assert [unit.unit_code for unit in result] == ["A"]
+
+
+@patch("httpx.get")
+def test_filters_by_price_and_area_ranges(mock_get):
+    mock_get.return_value = _response(
+        [
+            {"unit_code": "A", "project_id": "ocean-park-3", "unit_type": "2PN", "area_m2": 62, "price": 3600000000, "status": "available"},
+            {"unit_code": "B", "project_id": "ocean-park-3", "unit_type": "2PN", "area_m2": 68, "price": 3750000000, "status": "reserved"},
+            {"unit_code": "C", "project_id": "ocean-park-3", "unit_type": "3PN", "area_m2": 88, "price": 5200000000, "status": "sold"},
+        ]
+    )
+
+    result = lookup_inventory("ocean-park-3", "Căn từ 60 đến 70m2, giá 3 đến 4 tỷ")
+
+    assert [unit.unit_code for unit in result] == ["A", "B"]
 
 
 @patch("httpx.get")
@@ -257,3 +305,54 @@ def test_missing_config_becomes_inventory_api_error(monkeypatch):
 
     with pytest.raises(InventoryApiError, match="is not configured"):
         lookup_inventory("ocean-park-3", "còn căn nào không")
+
+
+# --- Ánh xạ project id: slug catalogue -> mã dự án của inventory API -----------------
+
+
+def test_resolve_uses_star_entry_when_session_has_no_project():
+    """Session không gắn dự án (form tạo phiên đã bỏ bước chọn dự án) vẫn tra được tồn kho."""
+    with patch.object(settings, "inventory_project_map", "*=ocean-park-3"):
+        assert resolve_api_project_id(None) == "ocean-park-3"
+
+
+def test_resolve_maps_catalogue_slug_to_api_project_code():
+    """`projects.id` là slug catalogue, API lại đánh khoá theo mã dự án của nó."""
+    with patch.object(settings, "inventory_project_map", "the-palma=ocean-park-3"):
+        assert resolve_api_project_id("the-palma") == "ocean-park-3"
+
+
+def test_resolve_passes_slug_through_when_no_map_configured():
+    """Map rỗng = API thật dùng chung hệ slug, không cần cấu hình gì thêm."""
+    with patch.object(settings, "inventory_project_map", ""):
+        assert resolve_api_project_id("the-palma") == "the-palma"
+
+
+def test_resolve_prefers_exact_entry_over_star():
+    with patch.object(settings, "inventory_project_map", "*=ocean-park-3, hai-au=ocean-park-2"):
+        assert resolve_api_project_id("hai-au") == "ocean-park-2"
+        assert resolve_api_project_id("the-palma") == "ocean-park-3"
+
+
+def test_resolve_skips_malformed_entries_without_breaking_the_rest():
+    """Một cặp gõ sai không được làm hỏng ánh xạ của mọi dự án còn lại."""
+    with patch.object(settings, "inventory_project_map", "rác, =x, y=, hai-au=ocean-park-2"):
+        assert resolve_api_project_id("hai-au") == "ocean-park-2"
+
+
+def test_lookup_without_project_id_uses_mapped_project(monkeypatch):
+    """Lỗi trong ảnh chụp màn hình: session không có project_id -> luôn 'không tra được tồn kho'."""
+    monkeypatch.setattr(settings, "inventory_project_map", "*=ocean-park-3")
+
+    with patch("httpx.get") as mock_get:
+        mock_get.return_value = _response(MOCK_UNITS)
+        result = lookup_inventory(None, "Có căn nào 2 phòng ngủ và chính sách bán hàng như nào?")
+
+    assert mock_get.call_args.kwargs["params"] == {"project_id": "ocean-park-3"}
+    assert [unit.unit_code for unit in result] == ["OP3-A-0203", "OP3-B-1105"]
+
+
+def test_lookup_without_project_id_and_without_star_entry_raises():
+    """Không suy đoán bừa: không có dự án nào để tra thì báo lỗi thật, không trả tồn kho sai."""
+    with pytest.raises(InventoryApiError, match="No inventory project id"):
+        lookup_inventory(None, "còn căn nào không")

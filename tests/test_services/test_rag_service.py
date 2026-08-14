@@ -58,6 +58,13 @@ def _visibility_values(call) -> list[str]:
     raise AssertionError("Không có filter visibility")
 
 
+def _review_status(call) -> str:
+    for condition in _conditions(call):
+        if condition.key == "review_status":
+            return condition.match.value
+    raise AssertionError("Không có filter review_status")
+
+
 # --- Filter RBAC --------------------------------------------------------------------
 
 
@@ -92,7 +99,13 @@ def test_project_id_omitted_when_not_given(qdrant):
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
 
     keys = [condition.key for condition in _conditions(qdrant.query_calls[0])]
-    assert keys == ["visibility"]
+    assert keys == ["visibility", "review_status", "is_current"]
+
+
+def test_retrieval_requires_admin_approval(qdrant):
+    rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
+
+    assert _review_status(qdrant.query_calls[0]) == "approved"
 
 
 # --- Truy vấn ------------------------------------------------------------------------
@@ -248,6 +261,7 @@ def live_qdrant(monkeypatch):
         visibility="internal",
         chunks=[DocumentChunk(index=0, text="Căn 2PN giá 3.6 tỷ.", page=2)],
         vectors=[[1.0, 0.0, 0.0]],
+        review_status="approved",
     )
     vector_store_service.index_document_chunks(
         document_id=2,
@@ -256,6 +270,7 @@ def live_qdrant(monkeypatch):
         visibility="public",
         chunks=[DocumentChunk(index=0, text="Tiện ích nội khu.", page=1)],
         vectors=[[0.9, 0.1, 0.0]],
+        review_status="approved",
     )
     return client
 

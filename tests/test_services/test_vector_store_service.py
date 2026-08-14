@@ -21,6 +21,7 @@ class FakeQdrantClient:
         self.create_calls = []
         self.upsert_calls = []
         self.delete_calls = []
+        self.set_payload_calls = []
 
     def collection_exists(self, collection_name: str) -> bool:
         return self.exists
@@ -45,6 +46,9 @@ class FakeQdrantClient:
 
     def delete(self, **kwargs):
         self.delete_calls.append(kwargs)
+
+    def set_payload(self, **kwargs):
+        self.set_payload_calls.append(kwargs)
 
 
 @pytest.fixture
@@ -131,6 +135,10 @@ def test_index_document_chunks_upserts_expected_payload(qdrant):
         "page": 1,
         "chunk_index": 0,
         "content": "Gia can 2PN tu 3.5 ty.",
+        "category": "other",
+        "review_status": "pending",
+        "legal_status": "unknown",
+        "is_current": True,
     }
 
 
@@ -210,4 +218,26 @@ def test_delete_document_vectors_filters_by_document_id(qdrant):
 
     call = qdrant.delete_calls[0]
     assert call["collection_name"] == "test_documents"
+    assert call["wait"] is True
+
+
+def test_update_document_vector_metadata_updates_only_one_document(qdrant):
+    qdrant.exists = True
+
+    vector_store_service.update_document_vector_metadata(
+        42,
+        review_status="approved",
+        legal_status="effective",
+        category="legal_document",
+    )
+
+    assert len(qdrant.set_payload_calls) == 1
+    call = qdrant.set_payload_calls[0]
+    assert call["collection_name"] == "test_documents"
+    assert call["payload"] == {
+        "review_status": "approved",
+        "legal_status": "effective",
+        "category": "legal_document",
+        "is_current": True,
+    }
     assert call["wait"] is True

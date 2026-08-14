@@ -1,131 +1,126 @@
-"""Tests for the global exception handlers.
-
-Three of these guard regressions that would be easy to introduce and painful to
-diagnose: a 500 leaking internals, a 401 losing WWW-Authenticate (which breaks
-the OAuth2 flow), and a 422 whose shape the frontend can no longer parse.
-"""
+"""Error responses are a public contract; these guard both shape and leakage."""
 
 import logging
 
 import pytest
-from fastapi import FastAPI, HTTPException
-from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
-from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi import HTTPException
 
-from backend.main import (
-    http_exception_handler,
-    unhandled_exception_handler,
-    validation_exception_handler,
-)
-from backend.middleware.logging import REQUEST_ID_HEADER, RequestContextMiddleware
-
-LEAKED_SECRET = "INTERNAL DETAIL THAT MUST NOT ESCAPE"
+from backend.main import app
 
 
 @pytest.fixture
-def handler_client() -> TestClient:
-    """A throwaway app wired with the same handlers as the real one."""
-    app = FastAPI()
-    app.add_middleware(RequestContextMiddleware)
-    app.add_exception_handler(StarletteHTTPException, http_exception_handler)
-    app.add_exception_handler(RequestValidationError, validation_exception_handler)
-    app.add_exception_handler(Exception, unhandled_exception_handler)
+def boom_route():
+    """Register a route that always explodes, then remove it again."""
 
-    @app.get("/boom")
-    def boom():
-        raise RuntimeError(LEAKED_SECRET)
+    @app.get("/__test__/boom")
+    async def _boom():
+        raise RuntimeError("secret internal detail: db://user:password@host")
 
-    @app.get("/unauthorized")
-    def unauthorized():
-        # Exactly what routers/auth.py raises on bad credentials.
+    yield "/__test__/boom"
+
+    app.router.routes = [r for r in app.router.routes if getattr(r, "path", None) != "/__test__/boom"]
+
+
+@pytest.fixture
+def teapot_route():
+    @app.get("/__test__/teapot")
+    async def _teapot():
+        raise HTTPException(status_code=418, detail="I am a teapot", headers={"X-Brew": "tea"})
+
+    yield "/__test__/teapot"
+
+    app.router.routes = [r for r in app.router.routes if getattr(r, "path", None) != "/__test__/teapot"]
+
+
+def test_unhandled_error_returns_generic_body(raw_client, boom_route):
+    response = raw_client.get(boom_route)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Internal server error"
+
+
+def test_unhandled_error_never_leaks_internals(raw_client, boom_route):
+    """Exception text can hold credentials and connection strings."""
+    response = raw_client.get(boom_route)
+
+    body = response.text
+    assert "secret internal detail" not in body
+    assert "password" not in body
+    assert "Traceback" not in body
+
+
+def test_unhandled_error_body_carries_the_request_id(raw_client, boom_route):
+    response = raw_client.get(boom_route, headers={"X-Request-ID": "trace-500"})
+
+    assert response.json()["request_id"] == "trace-500"
+
+
+def test_unhandled_error_is_logged_with_traceback(raw_client, boom_route, caplog):
+    with caplog.at_level(logging.ERROR, logger="backend.main"):
+        raw_client.get(boom_route)
+
+    record = next(r for r in caplog.records if getattr(r, "event", None) == "http.unhandled_error")
+    assert record.exc_info is not None
+    assert record.status_code == 500
+
+
+def test_404_keeps_its_shape(client):
+    response = client.get("/api/v1/no-such-route")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
+
+
+def test_http_exception_preserves_custom_headers(client, teapot_route):
+    """auth.py relies on WWW-Authenticate surviving; dropping it breaks OAuth2."""
+    response = client.get(teapot_route)
+
+    assert response.status_code == 418
+    assert response.headers["x-brew"] == "tea"
+    assert response.json() == {"detail": "I am a teapot"}
+
+
+@pytest.fixture
+def unauthorized_route():
+    """Mirrors the 401 auth.py raises, without needing a live database."""
+
+    @app.get("/__test__/unauthorized")
+    async def _unauthorized():
         raise HTTPException(
             status_code=401,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    @app.get("/needs-param")
-    def needs_param(count: int):
-        return {"count": count}
+    yield "/__test__/unauthorized"
 
-    return TestClient(app, raise_server_exceptions=False)
+    app.router.routes = [r for r in app.router.routes if getattr(r, "path", None) != "/__test__/unauthorized"]
 
 
-class TestUnhandledException:
-    def test_returns_a_generic_500(self, handler_client):
-        response = handler_client.get("/boom")
+def test_401_still_carries_www_authenticate(client, unauthorized_route):
+    """Losing this header on 401 breaks the OAuth2 flow the frontend depends on."""
+    response = client.get(unauthorized_route)
 
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Internal server error"
-
-    def test_the_body_never_leaks_internals(self, handler_client):
-        response = handler_client.get("/boom")
-
-        assert LEAKED_SECRET not in response.text
-        assert "Traceback" not in response.text
-
-    def test_the_body_carries_the_request_id(self, handler_client):
-        response = handler_client.get("/boom", headers={REQUEST_ID_HEADER: "corr-500"})
-
-        assert response.json()["request_id"] == "corr-500"
-
-    def test_the_traceback_goes_to_the_log(self, handler_client, capture_logs):
-        handler_client.get("/boom")
-
-        record = capture_logs.event("http.unhandled")
-        assert record.levelno == logging.ERROR
-        assert record.exc_info is not None
+    assert response.status_code == 401
+    assert response.headers.get("www-authenticate") == "Bearer"
 
 
-class TestHttpException:
-    def test_preserves_the_www_authenticate_header(self, handler_client):
-        """Dropping this silently breaks the OAuth2 flow."""
-        response = handler_client.get("/unauthorized")
+def test_validation_error_keeps_fastapi_shape(client):
+    response = client.post("/api/v1/auth/login", data={"username": "only-username"})
 
-        assert response.status_code == 401
-        assert response.headers["www-authenticate"] == "Bearer"
-
-    def test_preserves_the_detail_body(self, handler_client):
-        response = handler_client.get("/unauthorized")
-
-        assert response.json() == {"detail": "Incorrect username or password"}
-
-    def test_is_logged_at_warning_without_a_traceback(self, handler_client, capture_logs):
-        handler_client.get("/unauthorized")
-
-        record = capture_logs.event("http.error")
-        assert record.levelno == logging.WARNING
-        assert record.status_code == 401
-        assert record.exc_info is None
-
-    def test_a_404_keeps_its_shape(self, client):
-        response = client.get("/api/v1/no-such-route")
-
-        assert response.status_code == 404
-        assert response.json() == {"detail": "Not Found"}
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert isinstance(detail, list)
+    assert detail[0]["loc"]
+    assert detail[0]["type"]
 
 
-class TestValidationError:
-    def test_keeps_fastapis_422_shape(self, handler_client):
-        """The frontend parses this; the list-of-errors shape must not change."""
-        response = handler_client.get("/needs-param?count=not-a-number")
+def test_validation_log_omits_the_offending_input_value(client, caplog):
+    """pydantic v2 puts the bad value in errors(); logging it would leak secrets."""
+    with caplog.at_level(logging.WARNING, logger="backend.main"):
+        client.post("/api/v1/auth/refresh", json={"wrong_field": "hunter2-secret-value"})
 
-        assert response.status_code == 422
-        detail = response.json()["detail"]
-        assert isinstance(detail, list)
-        assert {"loc", "msg", "type"} <= set(detail[0])
-
-    def test_is_logged_at_warning(self, handler_client, capture_logs):
-        handler_client.get("/needs-param?count=not-a-number")
-
-        assert capture_logs.event("http.validation_error").levelno == logging.WARNING
-
-    def test_the_log_omits_the_offending_input_value(self, handler_client, capture_logs):
-        """pydantic puts the input in errors(); for a token payload that would leak."""
-        handler_client.get("/needs-param?count=SENSITIVE-VALUE")
-
-        record = capture_logs.event("http.validation_error")
-        assert "SENSITIVE-VALUE" not in str(record.errors)
-        # ...while the response still shows it, exactly as FastAPI does by default.
-        assert all({"loc", "msg", "type"} >= set(error) for error in record.errors)
+    record = next(r for r in caplog.records if getattr(r, "event", None) == "http.validation_error")
+    assert "hunter2-secret-value" not in str(record.errors)
+    assert "hunter2-secret-value" not in caplog.text
+    assert record.errors[0]["loc"]

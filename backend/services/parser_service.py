@@ -57,10 +57,8 @@ def _parse_pdf(data: bytes) -> list[ParsedSection]:
                 if page.get_text("text").strip()
             ]
     except Exception as exc:
-        # Filename/size only — never the file content.
-        logger.error(
-            "Could not parse PDF",
-            exc_info=True,
+        logger.exception(
+            "Parse PDF that bai.",
             extra={"event": "parser.pdf.failed", "size_bytes": len(data)},
         )
         raise DocumentParseError("Could not parse PDF.") from exc
@@ -79,9 +77,8 @@ def _parse_docx(data: bytes) -> list[ParsedSection]:
         paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs]
         text = "\n".join(item for item in paragraphs if item)
     except Exception as exc:
-        logger.error(
-            "Could not parse DOCX",
-            exc_info=True,
+        logger.exception(
+            "Parse DOCX that bai.",
             extra={"event": "parser.docx.failed", "size_bytes": len(data)},
         )
         raise DocumentParseError("Could not parse DOCX.") from exc

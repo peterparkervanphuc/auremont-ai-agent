@@ -7,16 +7,40 @@ function read(key: string): string | null {
   return localStorage.getItem(key);
 }
 
+function isTokenValid(token: string | null): boolean {
+  if (!token) return false;
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1])) as { exp: number };
+    return payload.exp * 1000 > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function clearStoredSession() {
+  ["access_token", "refresh_token", "role", "username"].forEach((k) => localStorage.removeItem(k));
+}
+
 /**
- * Auth dùng chung cho toàn app — sidebar và các trang cùng đọc 1 nguồn state,
- * nên khi đăng xuất mọi nơi cập nhật đồng thời.
+ * App-wide auth state — the navbar and every page read from this single source,
+ * so logging out anywhere updates them all at once.
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState(() => ({
-    isAuthenticated: Boolean(read("access_token")),
-    role: read("role") as UserRole | null,
-    username: read("username"),
-  }));
+  const [state, setState] = useState(() => {
+    // An access token can still sit in localStorage after expiring (e.g. from an old
+    // test session); checking only for its presence would set isAuthenticated=true,
+    // send the user to /home, then bounce them back to /login on the first 401 —
+    // they would never see Landing. Validate expiry up front instead.
+    if (!isTokenValid(read("access_token"))) {
+      clearStoredSession();
+      return { isAuthenticated: false, role: null, username: null };
+    }
+    return {
+      isAuthenticated: true,
+      role: read("role") as UserRole | null,
+      username: read("username"),
+    };
+  });
 
   const login = useCallback(
     (accessToken: string, refreshToken: string, role: UserRole, username: string) => {
@@ -30,10 +54,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    // Báo server để ghi vết, nhưng không chờ: JWT stateless nên xoá token phía
-    // client mới là thứ thực sự kết thúc phiên. Lỗi mạng không được chặn logout.
+    // Notify the server for audit logging, but don't await it: JWTs are stateless,
+    // so clearing the client-side token is what actually ends the session. A network
+    // error here must never block logout.
     api.post("/auth/logout").catch(() => {});
-    ["access_token", "refresh_token", "role", "username"].forEach((k) => localStorage.removeItem(k));
+    clearStoredSession();
     setState({ isAuthenticated: false, role: null, username: null });
   }, []);
 

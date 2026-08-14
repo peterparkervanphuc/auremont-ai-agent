@@ -5,17 +5,19 @@ import type { UserRole } from "../types";
 import {
   AlertIcon,
   ApiIcon,
+  AuremontLogoIcon,
   ChartIcon,
   ChatIcon,
   ChevronLeftIcon,
+  ClipboardListIcon,
   DocumentIcon,
   GlobeIcon,
   HomeIcon,
   LogOutIcon,
   MenuIcon,
   MoonIcon,
-  SalesMateLogoIcon,
   SettingsIcon,
+  ScaleIcon,
   SunIcon,
   XIcon,
 } from "./Icons";
@@ -41,6 +43,8 @@ const NAV: NavEntry[] = [
   { to: "/home", label: "Trang chủ", icon: HomeIcon, roles: ["sale", "admin"], end: true },
   { to: "/chat", label: "Chat", icon: ChatIcon, roles: ["sale", "admin"] },
   { to: "/documents", label: "Kho tài liệu", icon: DocumentIcon, roles: ["admin"] },
+  { to: "/document-review", label: "Chờ duyệt tài liệu", icon: ClipboardListIcon, roles: ["admin"] },
+  { to: "/document-relations", label: "Quan hệ tài liệu", icon: ScaleIcon, roles: ["admin"] },
   { to: "/eval", label: "Đánh giá AI", icon: ChartIcon, roles: ["admin"] },
   { to: "/conflicts", label: "Cảnh báo mâu thuẫn", icon: AlertIcon, roles: ["admin"] },
   { to: "/api-test", label: "Kiểm tra API", icon: ApiIcon, roles: ["admin"] },
@@ -133,7 +137,7 @@ export function AppSidebar({ collapsed, onToggleCollapse, mobileOpen, onMobileCl
 
   const brand = (
     <>
-      <SalesMateLogoIcon size={28} />
+      <AuremontLogoIcon size={28} />
       <span className="sb-brand-text">
         Sales<span className="sb-brand-accent">Mate</span>
       </span>

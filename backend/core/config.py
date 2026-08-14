@@ -1,7 +1,12 @@
 from functools import lru_cache
+from typing import ClassVar
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Environments that are NOT production. Anything outside this set is treated as
+# production, so security checks fail closed on an unrecognised APP_ENV.
+_NON_PRODUCTION_ENVS = frozenset({"development", "dev", "test", "testing", "local"})
 
 
 class Settings(BaseSettings):
@@ -17,15 +22,21 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, ge=1, le=65535)
     app_host: str = "0.0.0.0"
     log_level: str = "INFO"
-    # One JSON object per log line (for collectors) vs. readable console text.
-    # Left as None it derives from app_env — see _default_log_json below.
+    # None = auto-select: JSON in production/staging (machine-readable), plain
+    # text in dev (human-readable). Set LOG_JSON=true/false to force one mode
+    # regardless of environment.
     log_json: bool | None = None
-    # Include the Sale's question text (truncated) in sale.query audit events.
-    # A switch so a compliance decision can turn it off without a code change.
+    # Logs the first 200 characters of a Sale's question to the audit log. This is
+    # the single most valuable field when reproducing a wrong answer, and it is
+    # text the Sale typed, not customer PII. Still toggleable without a code change.
     log_query_text: bool = True
 
     # Authentication
-    secret_key: str = Field(default="dev-secret-key-change-in-production", description="Secret key for JWT signing")
+    # The default is a PUBLIC constant, usable only outside production. `_reject_insecure_secret_key`
+    # below refuses to start a production app that still carries it — anyone reading this repository
+    # could otherwise mint valid admin tokens against a real deployment.
+    DEFAULT_INSECURE_SECRET_KEY: ClassVar[str] = "dev-secret-key-change-in-production"
+    secret_key: str = Field(default=DEFAULT_INSECURE_SECRET_KEY, description="Secret key for JWT signing")
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
@@ -49,9 +60,14 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     qdrant_collection: str = "salesmate_documents"
 
-    # Minimum Verifier confidence (0-1). Below this the Sale sees
-    # "Không đủ thông tin, liên hệ Admin" instead of the answer.
+    # Minimum Verifier confidence (0-1). Below this the Sale sees the
+    # "Không đủ thông tin, liên hệ Admin" notice instead of the answer.
     verifier_threshold_sale: float = 0.7
+
+    # Documents at or above this classification confidence are auto-approved.
+    classification_auto_approve_threshold: float = Field(
+        default=0.9, ge=0, le=1
+    )
 
     # Object storage (MinIO) — document originals
     minio_endpoint: str = "localhost:9000"
@@ -59,38 +75,76 @@ class Settings(BaseSettings):
     minio_secret_key: str = "minioadmin"
     minio_secure: bool = False
     minio_bucket_documents: str = "salesmate-documents"
+    minio_bucket_project_images: str = "project-images"
+    # Host:port the BROWSER uses to fetch public objects (project images).
+    # `minio_endpoint` is how the backend reaches MinIO — inside Docker that is
+    # the service name `minio:9000`, which no browser can resolve. Public image
+    # URLs are rendered by the frontend, so they must use a host-reachable
+    # address. Left blank it falls back to minio_endpoint, which is correct when
+    # running the backend outside Docker.
+    minio_public_endpoint: str = ""
+    # Base URL of the bucket/CDN holding the original project images (~58 MB, not
+    # checked into git). On startup the backend downloads <base_url>/<path> for
+    # each entry in seed-data/project_images_manifest.json into MinIO. Left blank,
+    # the image-loading step is skipped — the catalogue still works, minus images.
+    project_images_base_url: str = ""
+    # URL of a single .tar.gz archive holding all project images (e.g. GitHub
+    # Releases). Preferred over project_images_base_url: one request instead of ~180.
+    project_images_archive_url: str = ""
+    # Auto-loads demo data (images + project catalogue) on startup if the DB is
+    # still empty. Enabled so `docker compose up` works out of the box, with no
+    # manual script to run. Set to false once an environment has real data.
+    auto_load_demo_data: bool = True
 
     # Inventory API — real-time unit availability from the company's internal API
     inventory_api_url: str = ""
     inventory_api_key: str = ""
+    # Bridges two different project-id namespaces. The `projects` table is keyed by
+    # catalogue slug (`the-palma`, `vinhomes-ocean-park`), while the inventory API keys
+    # units by its own project code (`ocean-park-3`) — a slug sent straight through
+    # returns 404 and the Sale sees "Tạm thời không tra được tồn kho" for every project.
+    #
+    # Format: comma-separated `slug=code` pairs. `*=code` is the catch-all, used for any
+    # slug not listed and for sessions carrying no project at all (the session flow no
+    # longer asks the Sale to pick one). Left blank, the slug is passed through unchanged,
+    # which is what a production API keyed by the same slugs would want.
+    inventory_project_map: str = ""
 
     # Model embedding
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
     upload_max_bytes: int = 20 * 1024 * 1024
 
-    @field_validator("log_json", mode="before")
-    @classmethod
-    def _empty_log_json_means_unset(cls, value: object) -> object:
-        """Treat `LOG_JSON=` (present but blank) as "not set".
+    @property
+    def is_production(self) -> bool:
+        """True outside the known development/test environments.
 
-        .env.example ships the key with an empty value so it is discoverable.
-        Without this, pydantic rejects "" as an invalid bool and the app cannot
-        start for anyone who copies the example file verbatim.
+        Phrased as a denylist so an unrecognised APP_ENV (a typo, a new staging name)
+        is treated as production and gets the stricter checks, never the laxer ones.
         """
-        if isinstance(value, str) and not value.strip():
-            return None
-        return value
+        return self.app_env.lower() not in _NON_PRODUCTION_ENVS
 
     @model_validator(mode="after")
-    def _default_log_json(self) -> "Settings":
-        """JSON logs everywhere except local development and tests.
-
-        Explicit LOG_JSON always wins; this only fills in the unset case.
-        """
+    def _resolve_log_json(self) -> "Settings":
         if self.log_json is None:
-            self.log_json = self.app_env not in ("development", "test")
+            # JSON in production (machine-readable), plain text in dev (human-readable).
+            self.log_json = self.is_production
         return self
+
+    @model_validator(mode="after")
+    def _reject_insecure_secret_key(self) -> "Settings":
+        """Refuse to boot a production app signing JWTs with the public default key.
+
+        Failing at startup is deliberate: the alternative is a deployment that looks
+        healthy while every token it issues can be forged by anyone with this source.
+        """
+        if self.is_production and self.secret_key == self.DEFAULT_INSECURE_SECRET_KEY:
+            raise ValueError(
+                "SECRET_KEY must be set to a unique value when APP_ENV is not a development "
+                "environment. Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+            )
+        return self
+
 
 
 @lru_cache

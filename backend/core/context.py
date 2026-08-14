@@ -1,35 +1,37 @@
-"""Per-request context propagated to every log record.
+"""Request-scoped context shared between middleware, logging and audit.
 
-Kept in its own module so `logging_config` (imported by everything) and the
-middleware that sets the value never import each other.
+Lives in its own module so `logging_config` can read the request id without
+importing the middleware, and the middleware can set it without importing the
+logging config — otherwise the two would form an import cycle.
 
-**Threadpool note.** FastAPI runs non-async (`def`) endpoints via
+Propagation note: FastAPI runs sync `def` endpoints through
 `anyio.to_thread.run_sync`, which copies the current context into the worker
-thread. `get_request_id()` therefore returns the right value inside sync
-endpoints and inside everything they call synchronously — `run_pipeline` and all
-of `backend/services/*` are sync, so the whole pipeline is covered. A value set
-*inside* that thread would not propagate back out, but nothing does that.
+thread. The whole of `backend/services/*` is synchronous, so anything called
+below an endpoint sees the same request id without having to pass it around.
 """
 
 from contextvars import ContextVar, Token
 
-# "-" rather than "" so a log line from outside any request (startup, seeding,
-# a CLI script) is visibly unattributed instead of looking like a missing field.
-request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
+# Empty string rather than None: log records always carry the field, so a
+# formatter never has to special-case its absence.
+request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
 
-def set_request_id(value: str) -> Token[str]:
-    return request_id_var.set(value)
+def set_request_id(request_id: str) -> Token[str]:
+    """Bind the id for the current context; keep the token to undo it later."""
+    return request_id_var.set(request_id)
 
 
 def reset_request_id(token: Token[str]) -> None:
-    """Always call this in a `finally`.
+    """Restore the previous value.
 
-    Uvicorn reuses the same task context tree across requests; without the reset a
-    failed request leaves its id visible to whatever runs next.
+    Always call this in a `finally`. Without it, a request that raised would
+    leave its id bound to the worker thread and the next request handled by that
+    same thread would be logged under the wrong id.
     """
     request_id_var.reset(token)
 
 
 def get_request_id() -> str:
+    """Current request id, or "" outside a request (startup, tests, scripts)."""
     return request_id_var.get()

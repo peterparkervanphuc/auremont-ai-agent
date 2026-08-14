@@ -1,40 +1,77 @@
-"""Application logging: one JSON object per line in production, readable text in dev.
+"""Application logging: structured JSON for production, readable text for dev.
 
-Everything is stdlib `logging` — no extra dependency. Three pieces:
+Every record carries the `request_id` of the request that produced it, so the
+lines belonging to one Sale question can be pulled out of a busy log with a
+single grep — including the ones written deep inside the agent pipeline, which
+has no access to the request object.
 
-* `JsonFormatter` / `ConsoleFormatter` — the two output shapes.
-* `RedactingFilter` — a last-resort scrub for secrets that slip into `extra`.
-* `setup_logging()` — the single `dictConfig` call that owns the whole tree.
+Two rules this module exists to enforce:
 
-Two rules that this file exists to enforce:
-
-* **Logging must never break a request.** The formatter tolerates unserialisable
-  values (`default=str`) rather than raising while formatting a record.
-* **Everything goes to stdout**, never stderr. Log collectors treat any stderr
-  line as an error regardless of the `level` field inside it, which would make
-  every INFO line look like an incident.
+* **stdout, never stderr.** Most log collectors classify anything on stderr as
+  an error regardless of the `level` field, which would make every INFO line
+  look like an incident.
+* **Secrets never reach a handler.** `RedactingFilter` masks well-known
+  sensitive keys before formatting, so a careless `extra={"token": ...}` at some
+  call site cannot leak a credential into the log stream.
 """
 
 import json
 import logging
 import logging.config
+import sys
 from datetime import UTC, datetime
+from typing import Any
 
 from backend.core.context import get_request_id
 
-# Attributes every LogRecord carries. Anything outside this set arrived via
-# `extra={...}` at the call site and is worth emitting as its own JSON field.
-# Built by introspecting a throwaway record so it cannot drift from the stdlib.
-_RESERVED = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {
-    "message",
-    "asctime",
-    "taskName",  # 3.12+; harmless to list on 3.11
-}
+# Attributes present on every LogRecord. Anything outside this set arrived via
+# `extra={...}` at the call site and is what we actually want in the JSON.
+_STANDARD_RECORD_FIELDS = frozenset(
+    {
+        "args",
+        "asctime",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "message",
+        "module",
+        "msecs",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "taskName",
+        "thread",
+        "threadName",
+    }
+)
 
-# Third-party loggers that are chatty at INFO/DEBUG and drown out our own lines.
-# httpx logs every outbound Gemini/inventory call; sqlalchemy.engine logs every
-# statement; qdrant_client logs each request.
-_NOISY_LOGGERS = (
+# Substring match, so `aws_secret_access_key` is caught by "secret" and
+# `x-api-key` by "api_key" without needing an exhaustive list.
+_SENSITIVE_KEY_PARTS = (
+    "password",
+    "token",
+    "secret",
+    "api_key",
+    "apikey",
+    "authorization",
+    "credential",
+    "access_key",
+)
+
+_REDACTED = "***REDACTED***"
+
+# Chatty third-party loggers. At DEBUG, httpx logs every outbound call and
+# sqlalchemy.engine every statement, which buries our own lines.
+_NOISY_LIBRARIES = (
     "httpx",
     "httpcore",
     "qdrant_client",
@@ -42,160 +79,129 @@ _NOISY_LOGGERS = (
     "sqlalchemy.engine",
     "google_genai",
     "python_multipart",
-    "minio",
 )
+
+# The audit logger is a business record, not diagnostics: it keeps its own level
+# so raising LOG_LEVEL to WARNING in production cannot silently switch off the
+# trail the Admin dashboard relies on.
+AUDIT_LOGGER_NAME = "salesmate.audit"
+
+
+def _is_sensitive(key: str) -> bool:
+    lowered = key.lower()
+    return any(part in lowered for part in _SENSITIVE_KEY_PARTS)
 
 
 class RedactingFilter(logging.Filter):
-    """Scrub `extra` fields whose *name* suggests a secret.
-
-    This is a safety net, not the primary defence — the real rule is that call
-    sites never pass secrets to the logger at all. Two honest limits:
-
-    * A handler-level filter only sees records that reach that handler.
-    * It inspects field **names**, not the interpolated message body, so a secret
-      f-stringed into the message text passes straight through.
-    """
-
-    SENSITIVE = (
-        "password",
-        "passwd",
-        "token",
-        "secret",
-        "api_key",
-        "apikey",
-        "authorization",
-        "credential",
-        "access_key",
-    )
+    """Mask sensitive values in `extra` fields before they reach a formatter."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        for key in list(record.__dict__):
-            if any(marker in key.lower() for marker in self.SENSITIVE):
-                record.__dict__[key] = "***REDACTED***"
+        for key in record.__dict__:
+            if key not in _STANDARD_RECORD_FIELDS and _is_sensitive(key):
+                record.__dict__[key] = _REDACTED
         return True
 
 
-def _extra_fields(record: logging.LogRecord) -> dict:
-    return {key: value for key, value in record.__dict__.items() if key not in _RESERVED and not key.startswith("_")}
-
-
 class JsonFormatter(logging.Formatter):
-    """One JSON object per line, for log collectors."""
+    """One log record per line of JSON."""
 
     def format(self, record: logging.LogRecord) -> str:
-        payload = {
-            "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(timespec="milliseconds"),
+        payload: dict[str, Any] = {
+            "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
             "module": record.module,
             "func": record.funcName,
             "line": record.lineno,
-            "request_id": get_request_id(),
+            "request_id": getattr(record, "request_id", "") or get_request_id(),
         }
-        payload.update(_extra_fields(record))
+
+        for key, value in record.__dict__.items():
+            if key not in _STANDARD_RECORD_FIELDS and key != "request_id":
+                payload[key] = value
 
         if record.exc_info:
-            exc_type = record.exc_info[0]
-            payload["exc_type"] = exc_type.__name__ if exc_type else None
+            payload["exc_type"] = record.exc_info[0].__name__ if record.exc_info[0] else None
             payload["exception"] = self.formatException(record.exc_info)
+
         if record.stack_info:
             payload["stack"] = self.formatStack(record.stack_info)
 
-        # ensure_ascii=False: messages in this codebase are Vietnamese, and
-        # \u-escaping every one of them makes `docker compose logs` unreadable.
-        # default=str: UUID/datetime/Decimal/ORM objects must not raise here.
-        try:
-            return json.dumps(payload, ensure_ascii=False, default=str)
-        except Exception:
-            # `default=str` still runs the object's __repr__/__str__, which can
-            # itself raise. Emitting a degraded line beats letting a logging call
-            # blow up the request it was only meant to describe.
-            return json.dumps(
-                {
-                    "timestamp": payload["timestamp"],
-                    "level": payload["level"],
-                    "logger": payload["logger"],
-                    "message": payload["message"],
-                    "request_id": payload["request_id"],
-                    "log_format_error": "record contained a value that could not be serialised",
-                },
-                ensure_ascii=False,
-            )
+        # ensure_ascii=False keeps Vietnamese messages readable in `docker logs`;
+        # escaped as \uXXXX they are effectively unreadable. default=str stops an
+        # unserialisable extra (UUID, datetime, ORM object) from raising inside
+        # the logging call and taking down the request that emitted it.
+        return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 class ConsoleFormatter(logging.Formatter):
     """Human-readable single line for local development."""
 
-    default_fmt = "%(asctime)s %(levelname)-8s %(name)s:%(lineno)d [req=%(request_id)s] %(message)s"
-
     def format(self, record: logging.LogRecord) -> str:
-        # The format string references request_id, so it must exist on the record.
-        record.request_id = get_request_id()
-        base = super().format(record)
+        request_id = getattr(record, "request_id", "") or get_request_id()
+        prefix = f"[req={request_id[:8]}] " if request_id else ""
 
-        extras = {key: value for key, value in _extra_fields(record).items() if key != "request_id"}
+        extras = " ".join(
+            f"{key}={value}"
+            for key, value in record.__dict__.items()
+            if key not in _STANDARD_RECORD_FIELDS and key != "request_id"
+        )
+
+        timestamp = datetime.fromtimestamp(record.created, UTC).strftime("%H:%M:%S")
+        line = f"{timestamp} {record.levelname:<8} {prefix}{record.name}: {record.getMessage()}"
         if extras:
-            base = f"{base} {extras}"
+            line = f"{line} | {extras}"
         if record.exc_info:
-            base = f"{base}\n{self.formatException(record.exc_info)}"
-        return base
+            line = f"{line}\n{self.formatException(record.exc_info)}"
+        return line
 
 
-def build_config(level: str, use_json: bool) -> dict:
-    """The dictConfig payload. Split out so tests can inspect it without applying it."""
-    level = level.upper()
-    formatter = "json" if use_json else "console"
+def setup_logging() -> None:
+    """Install handlers, formatters and levels for the whole process.
 
-    return {
-        "version": 1,
-        # Critical: uvicorn configures its own loggers *before* importing this app.
-        # Disabling existing loggers here would silence uvicorn entirely.
-        "disable_existing_loggers": False,
-        "filters": {
-            "redact": {"()": "backend.core.logging_config.RedactingFilter"},
-        },
-        "formatters": {
-            "json": {"()": "backend.core.logging_config.JsonFormatter"},
-            "console": {
-                "()": "backend.core.logging_config.ConsoleFormatter",
-                "format": ConsoleFormatter.default_fmt,
-                "datefmt": "%H:%M:%S",
-            },
-        },
-        "handlers": {
-            "default": {
-                "class": "logging.StreamHandler",
-                "formatter": formatter,
-                "filters": ["redact"],
-                "stream": "ext://sys.stdout",
-            },
-        },
-        "root": {"level": level, "handlers": ["default"]},
-        "loggers": {
-            # Application modules use getLogger(__name__) -> "backend.*", which
-            # falls under root. These explicit entries exist so audit events can
-            # later be routed to their own sink by editing one entry.
-            "salesmate": {"level": level, "handlers": ["default"], "propagate": False},
-            # Pinned at INFO on purpose: LOG_LEVEL=WARNING in production must not
-            # silently switch off the compliance trail.
-            "salesmate.audit": {"level": "INFO", "handlers": ["default"], "propagate": False},
-            "uvicorn": {"level": level, "handlers": ["default"], "propagate": False},
-            "uvicorn.error": {"level": level, "handlers": ["default"], "propagate": False},
-            # Silenced: RequestContextMiddleware emits a strictly better access
-            # line (request_id + duration_ms). Leaving this on would double every
-            # request in the log.
-            "uvicorn.access": {"level": "WARNING", "handlers": [], "propagate": False},
-            **{name: {"level": "WARNING"} for name in _NOISY_LOGGERS},
-        },
-    }
-
-
-def setup_logging(settings=None) -> None:
-    """Configure the logging tree. Safe to call more than once."""
-    # Local import: config.py must not import this module at load time.
+    Called at import time in `backend.main`, deliberately: uvicorn applies its
+    own `dictConfig` *before* importing the app module, so configuring here is
+    what makes ours win. Doing it in `lifespan` would also miss the test suite,
+    which imports the app without entering lifespan.
+    """
     from backend.core.config import get_settings
 
-    settings = settings or get_settings()
-    logging.config.dictConfig(build_config(settings.log_level, bool(settings.log_json)))
+    settings = get_settings()
+    formatter = "json" if settings.log_json else "console"
+    level = settings.log_level.upper()
+
+    logging.config.dictConfig(
+        {
+            "version": 1,
+            # False is mandatory: uvicorn's loggers already exist by now, and
+            # True would disable them, throwing away startup tracebacks.
+            "disable_existing_loggers": False,
+            "filters": {"redact": {"()": RedactingFilter}},
+            "formatters": {
+                "json": {"()": JsonFormatter},
+                "console": {"()": ConsoleFormatter},
+            },
+            "handlers": {
+                "default": {
+                    "class": "logging.StreamHandler",
+                    "formatter": formatter,
+                    "filters": ["redact"],
+                    "stream": sys.stdout,
+                }
+            },
+            "root": {"handlers": ["default"], "level": level},
+            "loggers": {
+                # Our own access line carries request_id and duration; uvicorn's
+                # carries neither and would duplicate every request.
+                "uvicorn.access": {"handlers": [], "level": "CRITICAL", "propagate": False},
+                "uvicorn.error": {"level": level, "propagate": True, "handlers": []},
+                AUDIT_LOGGER_NAME: {
+                    "handlers": ["default"],
+                    "level": "INFO",
+                    "propagate": False,
+                },
+                **{name: {"level": "WARNING"} for name in _NOISY_LIBRARIES},
+            },
+        }
+    )

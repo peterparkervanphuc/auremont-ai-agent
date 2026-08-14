@@ -47,6 +47,10 @@ def index_document_chunks(
     visibility: str,
     chunks: list[DocumentChunk],
     vectors: list[list[float]],
+    review_status: str = "pending",
+    legal_status: str = "unknown",
+    category: str = "other",
+    is_current: bool = True,
 ) -> int:
     """Write chunks and their corresponding vectors into Qdrant."""
     if len(chunks) != len(vectors):
@@ -85,6 +89,10 @@ def index_document_chunks(
                 "page": chunk.page,
                 "chunk_index": chunk.index,
                 "content": chunk.text,
+                "category": category,
+                "review_status": review_status,
+                "legal_status": legal_status,
+                "is_current": is_current,
             },
         )
         for chunk, vector in zip(chunks, vectors, strict=True)
@@ -97,10 +105,9 @@ def index_document_chunks(
             wait=True,
         )
     except Exception as exc:
-        logger.error(
-            "Could not upsert vectors into Qdrant",
-            exc_info=True,
-            extra={"event": "vectorstore.upsert.failed", "document_id": document_id, "point_count": len(points)},
+        logger.exception(
+            "Ghi vector vao Qdrant that bai.",
+            extra={"event": "vector_store.upsert.failed", "point_count": len(points)},
         )
         raise VectorStoreError("Could not upsert vectors into Qdrant.") from exc
 
@@ -125,11 +132,55 @@ def delete_document_vectors(document_id: int) -> None:
             wait=True,
         )
     except Exception as exc:
-        logger.error(
-            "Could not delete vectors for document",
-            exc_info=True,
-            extra={"event": "vectorstore.delete.failed", "document_id": document_id},
+        logger.exception(
+            "Xoa vector cua tai lieu %s that bai.",
+            document_id,
+            extra={"event": "vector_store.delete.failed", "document_id": document_id},
         )
         raise VectorStoreError(
             f"Could not delete vectors for document {document_id}."
+        ) from exc
+
+
+def update_document_vector_metadata(
+    document_id: int,
+    *,
+    review_status: str,
+    legal_status: str,
+    category: str,
+    is_current: bool = True,
+) -> None:
+    """Synchronise approval metadata for every existing chunk of one document.
+
+    This does not re-embed content. It only changes Qdrant payload fields, which
+    makes an Admin approval visible to retrieval immediately.
+    """
+    try:
+        client = get_qdrant_client()
+        if not client.collection_exists(settings.qdrant_collection):
+            return
+
+        client.set_payload(
+            collection_name=settings.qdrant_collection,
+            payload={
+                "review_status": review_status,
+                "legal_status": legal_status,
+                "is_current": is_current,
+                "category": category,
+            },
+            points=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="document_id",
+                            match=models.MatchValue(value=document_id),
+                        )
+                    ]
+                )
+            ),
+            wait=True,
+        )
+    except Exception as exc:
+        raise VectorStoreError(
+            f"Could not update vector metadata for document {document_id}."
         ) from exc

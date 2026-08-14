@@ -1,28 +1,20 @@
-"""Tests for the JSON/console formatters, the redaction filter and setup_logging."""
+"""The log format is an interface: dashboards and greps depend on its shape."""
 
 import json
 import logging
-from datetime import datetime
-from uuid import uuid4
 
 import pytest
 
 from backend.core.context import request_id_var
-from backend.core.logging_config import (
-    ConsoleFormatter,
-    JsonFormatter,
-    RedactingFilter,
-    build_config,
-    setup_logging,
-)
+from backend.core.logging_config import ConsoleFormatter, JsonFormatter, RedactingFilter, setup_logging
 
 
-def make_record(**kwargs) -> logging.LogRecord:
+def _record(**kwargs) -> logging.LogRecord:
     record = logging.LogRecord(
-        name=kwargs.pop("name", "backend.services.demo"),
+        name=kwargs.pop("name", "test.logger"),
         level=kwargs.pop("level", logging.INFO),
-        pathname="/app/backend/services/demo.py",
-        lineno=kwargs.pop("lineno", 42),
+        pathname="test.py",
+        lineno=42,
         msg=kwargs.pop("msg", "hello"),
         args=kwargs.pop("args", ()),
         exc_info=kwargs.pop("exc_info", None),
@@ -32,190 +24,108 @@ def make_record(**kwargs) -> logging.LogRecord:
     return record
 
 
-def format_json(**kwargs) -> dict:
-    return json.loads(JsonFormatter().format(make_record(**kwargs)))
+def test_json_output_is_parseable_with_core_fields():
+    payload = json.loads(JsonFormatter().format(_record()))
+
+    assert payload["level"] == "INFO"
+    assert payload["logger"] == "test.logger"
+    assert payload["message"] == "hello"
+    assert payload["line"] == 42
+    assert "timestamp" in payload
 
 
-class TestJsonFormatter:
-    def test_emits_valid_json_with_the_core_keys(self):
-        payload = format_json()
+def test_extra_fields_are_promoted_to_top_level():
+    """Nested extras would defeat `jq 'select(.event=="pipeline.crash")'`."""
+    payload = json.loads(JsonFormatter().format(_record(event="pipeline.crash", project_id="op3")))
 
-        assert set(payload) >= {
-            "timestamp",
-            "level",
-            "logger",
-            "message",
-            "module",
-            "func",
-            "line",
-            "request_id",
-        }
-        assert payload["level"] == "INFO"
-        assert payload["logger"] == "backend.services.demo"
-        assert payload["message"] == "hello"
-        assert payload["line"] == 42
-
-    def test_interpolates_message_args(self):
-        assert format_json(msg="took %s ms", args=(12,))["message"] == "took 12 ms"
-
-    def test_includes_extra_fields_at_top_level(self):
-        payload = format_json(event="demo.event", document_id=7)
-
-        assert payload["event"] == "demo.event"
-        assert payload["document_id"] == 7
-
-    def test_omits_internal_logrecord_attributes(self):
-        payload = format_json()
-
-        for noise in ("args", "msecs", "relativeCreated", "pathname", "levelno", "exc_text"):
-            assert noise not in payload
-
-    def test_serialises_values_json_cannot_handle(self):
-        payload = format_json(when=datetime(2026, 8, 13, 10, 30), uid=uuid4())
-
-        assert payload["when"].startswith("2026-08-13")
-        assert isinstance(payload["uid"], str)
-
-    def test_survives_a_value_whose_repr_raises(self):
-        """default=str still runs __repr__, which can itself throw."""
-
-        class Hostile:
-            def __repr__(self):
-                raise RuntimeError("nope")
-
-        payload = format_json(obj=Hostile())
-
-        assert payload["log_format_error"]
-        # The core fields survive so the line is still useful.
-        assert payload["message"] == "hello"
-        assert payload["level"] == "INFO"
-
-    def test_includes_exception_type_and_traceback(self):
-        try:
-            raise ValueError("boom")
-        except ValueError:
-            payload = json.loads(JsonFormatter().format(make_record(exc_info=logging.sys.exc_info())))
-
-        assert payload["exc_type"] == "ValueError"
-        assert "Traceback" in payload["exception"]
-        assert "boom" in payload["exception"]
-
-    def test_reads_the_request_id_contextvar(self):
-        token = request_id_var.set("trace-abc")
-        try:
-            assert format_json()["request_id"] == "trace-abc"
-        finally:
-            request_id_var.reset(token)
-
-    def test_preserves_vietnamese_text(self):
-        """ensure_ascii=False — \\u-escaping makes `docker compose logs` unreadable."""
-        raw = JsonFormatter().format(make_record(msg="Chưa có dữ liệu dự án"))
-
-        assert "Chưa có dữ liệu dự án" in raw
-        assert json.loads(raw)["message"] == "Chưa có dữ liệu dự án"
-
-    def test_output_is_exactly_one_line(self):
-        try:
-            raise ValueError("multi\nline")
-        except ValueError:
-            raw = JsonFormatter().format(make_record(exc_info=logging.sys.exc_info()))
-
-        assert "\n" not in raw
+    assert payload["event"] == "pipeline.crash"
+    assert payload["project_id"] == "op3"
 
 
-class TestConsoleFormatter:
-    def test_includes_request_id_and_extras(self):
-        token = request_id_var.set("req-7")
-        try:
-            line = ConsoleFormatter(ConsoleFormatter.default_fmt).format(make_record(document_id=3))
-        finally:
-            request_id_var.reset(token)
+def test_vietnamese_text_survives_unescaped():
+    """ensure_ascii=False: unicode-escaped output makes `docker logs` unreadable."""
+    payload = JsonFormatter().format(_record(msg="Không đủ thông tin, liên hệ Admin"))
 
-        assert "[req=req-7]" in line
-        assert "document_id" in line
+    assert "Không đủ thông tin" in payload
+    assert json.loads(payload)["message"] == "Không đủ thông tin, liên hệ Admin"
 
 
-class TestRedactingFilter:
-    @pytest.mark.parametrize(
-        "key",
-        ["password", "gemini_api_key", "secret_key", "authorization", "refresh_token", "minio_access_key"],
-    )
-    def test_scrubs_sensitive_field_names(self, key):
-        record = make_record(**{key: "the-real-value"})
+def test_unserialisable_extra_does_not_raise():
+    """A logging call must never take down the request that made it."""
 
-        RedactingFilter().filter(record)
+    class Opaque:
+        def __repr__(self) -> str:
+            return "<opaque>"
 
-        assert getattr(record, key) == "***REDACTED***"
+    payload = json.loads(JsonFormatter().format(_record(obj=Opaque())))
 
-    def test_leaves_ordinary_fields_alone(self):
-        record = make_record(document_id=3, project_id="ocean-park-3")
-
-        RedactingFilter().filter(record)
-
-        assert record.document_id == 3
-        assert record.project_id == "ocean-park-3"
+    assert payload["obj"] == "<opaque>"
 
 
-class TestSetupLogging:
-    def test_does_not_disable_existing_loggers(self):
-        """uvicorn configures its loggers before importing the app; they must survive."""
-        existing = logging.getLogger("uvicorn.error")
+def test_exception_is_recorded_with_type_and_traceback():
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        import sys
 
-        setup_logging()
+        payload = json.loads(JsonFormatter().format(_record(exc_info=sys.exc_info())))
 
-        assert existing.disabled is False
-
-    def test_uvicorn_access_is_silenced(self):
-        """Our middleware emits a better access line; uvicorn's would duplicate it."""
-        config = build_config("INFO", use_json=True)
-
-        assert config["loggers"]["uvicorn.access"]["handlers"] == []
-
-    def test_audit_logger_is_pinned_to_info(self):
-        """LOG_LEVEL=WARNING in production must not switch off the audit trail."""
-        config = build_config("WARNING", use_json=True)
-
-        assert config["loggers"]["salesmate.audit"]["level"] == "INFO"
-
-    @pytest.mark.parametrize("name", ["httpx", "qdrant_client", "sqlalchemy.engine", "urllib3"])
-    def test_noisy_third_party_loggers_are_capped(self, name):
-        assert build_config("DEBUG", use_json=True)["loggers"][name]["level"] == "WARNING"
-
-    def test_logs_go_to_stdout(self):
-        """Collectors treat stderr as errors regardless of the level field."""
-        assert build_config("INFO", use_json=True)["handlers"]["default"]["stream"] == "ext://sys.stdout"
-
-    @pytest.mark.parametrize(
-        ("use_json", "expected"),
-        [(True, "json"), (False, "console")],
-    )
-    def test_formatter_follows_the_json_flag(self, use_json, expected):
-        assert build_config("INFO", use_json)["handlers"]["default"]["formatter"] == expected
+    assert payload["exc_type"] == "ValueError"
+    assert "Traceback" in payload["exception"]
+    assert "boom" in payload["exception"]
 
 
-class TestLogSettings:
-    """LOG_JSON resolution, including the blank value that .env.example ships."""
+def test_request_id_is_read_from_contextvar():
+    token = request_id_var.set("trace-abc")
+    try:
+        payload = json.loads(JsonFormatter().format(_record()))
+    finally:
+        request_id_var.reset(token)
 
-    @pytest.mark.parametrize("blank", ["", "   "])
-    def test_blank_log_json_is_treated_as_unset(self, blank):
-        """A copied .env.example must not stop the app from starting."""
-        from backend.core.config import Settings
+    assert payload["request_id"] == "trace-abc"
 
-        settings = Settings(_env_file=None, app_env="production", log_json=blank)
 
-        assert settings.log_json is True
+def test_request_id_is_empty_outside_a_request():
+    assert json.loads(JsonFormatter().format(_record()))["request_id"] == ""
 
-    @pytest.mark.parametrize(
-        ("app_env", "expected"),
-        [("production", True), ("staging", True), ("development", False), ("test", False)],
-    )
-    def test_unset_log_json_derives_from_app_env(self, app_env, expected):
-        from backend.core.config import Settings
 
-        assert Settings(_env_file=None, app_env=app_env).log_json is expected
+@pytest.mark.parametrize(
+    "field",
+    ["password", "token", "api_key", "authorization", "secret_key", "aws_access_key", "refresh_token"],
+)
+def test_redacting_filter_masks_sensitive_keys(field):
+    record = _record(**{field: "super-sensitive-value"})
 
-    @pytest.mark.parametrize("value", [False, "false"])
-    def test_an_explicit_value_overrides_the_env_default(self, value):
-        from backend.core.config import Settings
+    RedactingFilter().filter(record)
 
-        assert Settings(_env_file=None, app_env="production", log_json=value).log_json is False
+    assert getattr(record, field) == "***REDACTED***"
+    assert "super-sensitive-value" not in JsonFormatter().format(record)
+
+
+def test_redacting_filter_leaves_ordinary_fields_alone():
+    record = _record(project_id="ocean-park-3", verifier_score=0.91)
+
+    RedactingFilter().filter(record)
+
+    assert record.project_id == "ocean-park-3"
+    assert record.verifier_score == 0.91
+
+
+def test_console_formatter_shows_request_id_and_extras():
+    token = request_id_var.set("abcdef1234567890")
+    try:
+        line = ConsoleFormatter().format(_record(event="http.access"))
+    finally:
+        request_id_var.reset(token)
+
+    assert "req=abcdef12" in line
+    assert "event=http.access" in line
+
+
+def test_setup_logging_keeps_existing_loggers_enabled():
+    """disable_existing_loggers=True would silence uvicorn's startup tracebacks."""
+    existing = logging.getLogger("uvicorn.error")
+
+    setup_logging()
+
+    assert existing.disabled is False

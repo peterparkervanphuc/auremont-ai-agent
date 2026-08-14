@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
+import { Link, useMatch, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import type { ChatSessionResponse, ProjectResponse } from "../../types";
-import { ChatIcon, PlusIcon, TrashIcon } from "../../components/Icons";
+import { ArrowLeftIcon, ChatIcon, PlusIcon, SearchIcon, TrashIcon } from "../../components/Icons";
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -17,34 +17,62 @@ interface Props {
   onChange: (next: ChatSessionResponse[]) => void;
 }
 
-// Sidebar: nút tạo Session mới + danh sách "Session: Khách...".
+// Sidebar: "new Session" button + list of "Session: Customer...".
 export function SessionList({ sessions, loading, onChange }: Props) {
-  const { sessionId } = useParams<{ sessionId: string }>();
+  // This component sits outside <Route path="sessions/:sessionId">, so useParams()
+  // would always be undefined here — use useMatch to read sessionId directly from
+  // the current URL instead.
+  const match = useMatch("/chat/sessions/:sessionId");
+  const sessionId = match?.params.sessionId;
   const navigate = useNavigate();
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
-  const [picking, setPicking] = useState(false);
+
+  const [naming, setNaming] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [historyQuery, setHistoryQuery] = useState("");
 
   useEffect(() => {
-    api.get<ProjectResponse[]>("/projects").then(setProjects).catch(() => setProjects([]));
+    api
+      .get<ProjectResponse[]>("/projects")
+      .then((rows) => {
+        setProjects(rows);
+        if (rows.length === 1) setProjectId(rows[0].id);
+      })
+      .catch(() => setProjects([]));
   }, []);
 
-  // A session must carry a project_id: without it the agent cannot query real-time
-  // inventory. So the "+" button opens the project picker instead of creating a
-  // session straight away.
-  const createSession = async (projectId: string) => {
-    const session = await api.post<ChatSessionResponse>("/sale/sessions", { project_id: projectId });
-    setPicking(false);
+  const filteredSessions = useMemo(() => {
+    const q = historyQuery.trim().toLowerCase();
+    if (!q) return sessions;
+    return sessions.filter((s) => (s.customer_name ?? s.title ?? `Session: Khách #${s.id}`).toLowerCase().includes(q));
+  }, [sessions, historyQuery]);
+
+  const closeNaming = () => {
+    setNaming(false);
+    setCustomerName("");
+    setProjectId(projects.length === 1 ? projects[0].id : "");
+  };
+
+  // The customer name is all a new session needs; Sale goes straight into the chat.
+  // A session therefore carries no project_id, so real-time inventory lookups
+  // answer with the "khong tra duoc ton kho" notice — document retrieval (price
+  // lists, floor plans, policies) still searches across every project.
+  const submitNewSession = async (e: FormEvent) => {
+    e.preventDefault();
+    const name = customerName.trim();
+    if (!projectId) return;
+    const session = await api.post<ChatSessionResponse>("/sale/sessions", {
+      customer_name: name || undefined,
+      project_id: projectId,
+    });
     onChange([session, ...sessions]);
+    closeNaming();
     navigate(`/chat/sessions/${session.id}`);
   };
 
-  const startNewSession = () => {
-    if (projects.length === 1) {
-      // Only one project to choose from — skip the picker.
-      void createSession(projects[0].id);
-      return;
-    }
-    setPicking(true);
+  const handleNameKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") closeNaming();
   };
 
   const removeSession = async (e: React.MouseEvent, id: number) => {
@@ -58,44 +86,77 @@ export function SessionList({ sessions, loading, onChange }: Props) {
   return (
     <aside className="chat-sidebar">
       <div className="chat-sidebar-head">
+        <Link to="/" className="chat-sidebar-home-link">
+          <ArrowLeftIcon size={14} />
+          Về trang chủ
+        </Link>
+
         <div className="chat-sidebar-brand">
           <ChatIcon size={18} />
           Đoạn chat
         </div>
-        <button
-          onClick={startNewSession}
-          className="chat-new-btn"
-          type="button"
-          disabled={projects.length === 0}
-          title={projects.length === 0 ? "Chưa có dữ liệu dự án" : undefined}
-        >
-          <PlusIcon size={17} />
-          Phiên khách hàng mới
-        </button>
+
+        {naming ? (
+          <form className="chat-new-form" onSubmit={(e) => void submitNewSession(e)}>
+            <input
+              autoFocus
+              className="chat-new-form-input"
+              placeholder="Tên khách hàng (có thể bỏ trống)"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              onKeyDown={handleNameKeyDown}
+            />
+            <select
+              className="chat-new-form-input"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              aria-label="Dự án tư vấn"
+              required
+            >
+              <option value="" disabled>
+                Chọn dự án tư vấn
+              </option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            <div className="chat-new-form-actions">
+              <button type="submit" className="btn btn-primary chat-new-form-submit" disabled={!projectId}>
+                Tạo phiên
+              </button>
+              <button type="button" className="chat-new-form-cancel" onClick={closeNaming}>
+                Huỷ
+              </button>
+            </div>
+          </form>
+        ) : (
+          <button
+            onClick={() => setNaming(true)}
+            className="chat-new-btn"
+            type="button"
+            disabled={projects.length === 0}
+            title={projects.length === 0 ? "Chưa có dữ liệu dự án" : undefined}
+          >
+            <PlusIcon size={17} />
+            Phiên khách hàng mới
+          </button>
+        )}
+
+        <div className="chat-sidebar-search">
+          <SearchIcon size={15} />
+          <input
+            value={historyQuery}
+            onChange={(e) => setHistoryQuery(e.target.value)}
+            placeholder="Tìm trong lịch sử"
+          />
+        </div>
       </div>
 
-      {/* README §5.2a — no project data means Sale cannot consult anything yet. */}
+      {/* Spec §5.2a — no project data means Sale cannot consult anything yet. */}
       {projects.length === 0 && !loading && (
         <p className="chat-conv-empty">Chưa có dữ liệu dự án, vui lòng báo Admin cập nhật.</p>
-      )}
-
-      {picking && (
-        <div className="chat-project-picker">
-          <p className="chat-project-picker-label">Chọn dự án tư vấn</p>
-          {projects.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className="chat-project-option"
-              onClick={() => void createSession(p.id)}
-            >
-              {p.name}
-            </button>
-          ))}
-          <button type="button" className="chat-project-cancel" onClick={() => setPicking(false)}>
-            Huỷ
-          </button>
-        </div>
       )}
 
       <div className="chat-conv-list">
@@ -111,14 +172,18 @@ export function SessionList({ sessions, loading, onChange }: Props) {
             <br />
             Bấm &ldquo;Phiên khách hàng mới&rdquo; để bắt đầu.
           </p>
+        ) : filteredSessions.length === 0 ? (
+          <p className="chat-conv-empty">Không tìm thấy phiên nào khớp &ldquo;{historyQuery}&rdquo;.</p>
         ) : (
-          sessions.map((s) => (
+          filteredSessions.map((s) => (
             <Link
               key={s.id}
               to={`/chat/sessions/${s.id}`}
               className={`chat-conv-item ${String(s.id) === sessionId ? "chat-conv-item--active" : ""}`}
             >
-              <span className="chat-conv-title">{s.title ?? `Session: Khách #${s.id}`}</span>
+              <span className="chat-conv-title">
+                {s.customer_name ?? s.title ?? `Session: Khách #${s.id}`}
+              </span>
               <span className="chat-conv-time">{formatDate(s.created_at)}</span>
               <button
                 className="chat-conv-delete"

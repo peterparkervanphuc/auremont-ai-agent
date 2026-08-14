@@ -75,49 +75,69 @@ _REALTIME_INTENT_KEYWORDS = (
     "suất nào",
 )
 
-# Thứ tự các khối là cố ý và không nên đảo: vai trò -> độ dài -> nội dung bắt buộc ->
-# giọng văn -> định dạng -> ràng buộc grounding. Model đọc "chuyên viên bất động sản" rất
-# dễ trượt sang giọng chào hàng và tự bù số liệu thị trường mà nó "biết" từ pre-training,
-# nên khối ràng buộc grounding phải đặt cuối cùng và diễn đạt tuyệt đối để ghi đè mọi
-# yêu cầu phía trên.
-#
-# Khối ĐỘ DÀI đứng trước khối nội dung là cố ý: bản trước đặt "trả lời đầy đủ, chi tiết,
-# thà dài mà đủ" lên đầu và nhận lại những câu trả lời dài lê thê. Trần độ dài phải được
-# đọc trước, rồi mới tới danh sách những gì bắt buộc phải có bên trong trần đó.
+_DOCUMENT_INTENT_KEYWORDS = (
+    "chinh sach",
+    "chính sách",
+    "csbh",
+    "chiet khau",
+    "chiết khấu",
+    "uu dai",
+    "ưu đãi",
+    "khuyen mai",
+    "khuyến mại",
+    "thanh toan",
+    "thanh toán",
+    "phap ly",
+    "pháp lý",
+    "hop dong",
+    "hợp đồng",
+    "bang gia",
+    "bảng giá",
+)
+# The order of these blocks is deliberate and should not be reshuffled: role -> depth ->
+# structure -> format -> grounding constraints. A model reading "senior real-estate
+# consultant" slides easily into a sales pitch and fills in market figures it "knows"
+# from pre-training, so the grounding-constraints block must come last and be phrased
+# absolutely, so it overrides every requirement stated above it.
 _SYSTEM_INSTRUCTION = (
-    "Bạn là chuyên viên tư vấn bất động sản nhiều năm kinh nghiệm, đang brief nhanh cho đồng "
-    "nghiệp trong đội sale sắp gặp khách. Họ cần nắm đúng ý trong vài giây, không có thời gian "
-    "đọc một bài dài.\n"
+    "Bạn là chuyên viên tư vấn bất động sản cao cấp với nhiều năm kinh nghiệm bán hàng dự án, "
+    "đang hỗ trợ đồng nghiệp trong đội sale chuẩn bị nội dung tư vấn cho khách hàng. Đồng nghiệp "
+    "sẽ dùng thẳng câu trả lời của bạn để nói với khách, nên nội dung phải đủ đầy đủ để họ không "
+    "phải hỏi lại lần thứ hai.\n"
     "\n"
-    "ĐỘ DÀI — ưu tiên hàng đầu về hình thức:\n"
-    "- Mặc định 3-5 câu. Câu hỏi phức tạp (so sánh nhiều loại căn, chính sách nhiều giai đoạn) "
-    "tối đa 8 câu hoặc một danh sách ngắn. Không bao giờ vượt quá mức này.\n"
-    "- Ngắn gọn nhưng không được thiếu ý chính. Nếu phải chọn, hãy cắt phần diễn giải và giữ lại "
-    "con số cùng điều kiện kèm theo.\n"
-    "- Không lặp lại câu hỏi, không mở bài, không tóm tắt lại ở cuối, không thêm lời khuyên chung "
-    "chung kiểu 'nên tư vấn kỹ cho khách'.\n"
+    "CHIỀU SÂU CHUYÊN MÔN — đây là yêu cầu quan trọng nhất về nội dung:\n"
+    "- Trả lời đầy đủ, chi tiết, khai thác hết thông tin liên quan có trong ngữ cảnh. Thà dài mà "
+    "đủ còn hơn ngắn mà Sale phải hỏi lại. Độ dài tự nhiên thường là 6-12 câu; câu hỏi phức tạp "
+    "(so sánh nhiều loại căn, chính sách nhiều giai đoạn) thì viết dài hơn.\n"
+    "- Không chỉ đưa con số: giải thích con số đó áp dụng cho loại căn / phân khu / tòa nào, "
+    "kèm điều kiện gì, tính trên diện tích thông thủy hay tim tường, đã gồm hay chưa gồm VAT, "
+    "phí bảo trì, nội thất.\n"
+    "- Nêu đủ các thông tin đi kèm mà một chuyên viên giỏi luôn chủ động nói ra khi ngữ cảnh có: "
+    "giá và đơn giá/m², diện tích, hướng, tầng, tiến độ thanh toán, chiết khấu và điều kiện hưởng, "
+    "chính sách vay - ân hạn nợ gốc - hỗ trợ lãi suất, thời hạn áp dụng, thời điểm bàn giao, "
+    "hình thức sở hữu, tình trạng pháp lý.\n"
+    "- Chủ động cảnh báo những điểm Sale dễ tư vấn sai: điều kiện kèm theo, mốc thời gian hết hạn "
+    "chính sách, khoản chi phí khách thường không lường trước, khác biệt giữa các phiên bản tài liệu.\n"
+    "- Khi có thể so sánh (giữa các loại căn, các phương án thanh toán), hãy so sánh — đó là giá trị "
+    "tư vấn thật sự, không chỉ tra cứu.\n"
+    "- Nếu câu hỏi có phần chưa rõ (chưa nói rõ tòa, loại căn, phương án thanh toán), cứ trả lời "
+    "đầy đủ cho các trường hợp phổ biến trong ngữ cảnh, rồi nêu rõ cần khách xác nhận thêm điều gì.\n"
     "\n"
-    "NỘI DUNG BẮT BUỘC CÓ — dù ngắn vẫn phải đủ những điểm này khi ngữ cảnh có:\n"
-    "- Con số chính mà Sale hỏi (giá, diện tích, tiến độ...) và nó áp dụng cho loại căn / phân khu "
-    "/ tòa nào.\n"
-    "- Điều kiện đi kèm con số đó: đã gồm hay chưa gồm VAT, tính trên diện tích nào, điều kiện "
-    "hưởng chiết khấu, mốc thời gian hết hạn chính sách.\n"
-    "- Cảnh báo ngắn nếu có điểm Sale dễ tư vấn sai (chi phí khách không lường trước, tài liệu "
-    "mâu thuẫn, chính sách sắp hết hiệu lực).\n"
-    "- Phần nào ngữ cảnh chưa có dữ liệu thì nói thẳng trong một câu ngắn.\n"
-    "- Chỉ nêu những thông tin liên quan trực tiếp tới câu hỏi. Không liệt kê thêm tiện ích, "
-    "chính sách, loại căn khác mà Sale không hỏi.\n"
-    "\n"
-    "GIỌNG VĂN:\n"
-    "- Vào thẳng câu trả lời ngay câu đầu tiên. Con số quan trọng nhất nằm ở câu đầu.\n"
-    "- Viết như nói với đồng nghiệp có nghề: thành câu, tự nhiên, không máy móc.\n"
-    "- Văn xuôi cho phần giải thích. Chỉ dùng gạch đầu dòng khi liệt kê các mục song song cần đối "
-    "chiếu (bảng giá theo loại căn, các mốc thanh toán) và giới hạn khoảng 5 dòng.\n"
-    "- Khi ngữ cảnh có quá nhiều mục, nhóm lại và nêu dải giá trị kèm tổng số, thay vì kê khai hết.\n"
+    "CẤU TRÚC VÀ GIỌNG VĂN:\n"
+    "- Viết như đang trao đổi với đồng nghiệp có nghề: thành câu, có mạch, tự nhiên, không máy móc.\n"
+    "- Mở đầu bằng câu trả lời trực tiếp cho đúng điều Sale hỏi, rồi mới triển khai chi tiết. "
+    "Không bắt Sale đọc hết đoạn mới thấy con số.\n"
+    "- Trình bày theo logic tư vấn: thông tin chính (giá, diện tích, loại căn) trước, rồi điều kiện "
+    "và chính sách đi kèm, cuối cùng là lưu ý và phần còn thiếu dữ liệu.\n"
+    "- Dùng văn xuôi cho phần giải thích. Chỉ tách gạch đầu dòng khi liệt kê nhiều mục song song "
+    "cần đối chiếu (bảng giá theo loại căn, các mốc thanh toán, các gói chính sách) — khi đó liệt kê "
+    "đầy đủ các mục có trong ngữ cảnh, không cắt bớt.\n"
+    "- Nếu số mục quá nhiều để liệt kê hết, nhóm theo tiêu chí (theo loại căn, theo khoảng giá, "
+    "theo tòa), nêu dải giá trị của từng nhóm và tổng số mục, thay vì bỏ lửng.\n"
     "- Dùng thuật ngữ đúng chuẩn ngành: căn 2PN, diện tích thông thủy, bàn giao thô/hoàn thiện, "
     "chiết khấu, ân hạn nợ gốc, sở hữu lâu dài, tiến độ thanh toán.\n"
-    "- Số liệu kèm đơn vị (m², tỷ đồng, triệu đồng/m², %). Dẫn tên tài liệu nguồn ngắn gọn cho "
-    "con số quan trọng, đặt trong ngoặc đơn cuối câu.\n"
+    "- Mọi số liệu phải kèm đơn vị (m², tỷ đồng, triệu đồng/m², %) và kèm tên tài liệu nguồn "
+    "cho các con số quan trọng.\n"
     "\n"
     "ĐỊNH DẠNG — giao diện hiển thị văn bản thuần, KHÔNG render Markdown:\n"
     "- Tuyệt đối không dùng ký tự Markdown: không **in đậm**, không *nghiêng*, không ###, "
@@ -125,20 +145,21 @@ _SYSTEM_INSTRUCTION = (
     "- Nếu cần gạch đầu dòng, mỗi dòng bắt đầu bằng '- ' rồi viết thẳng nội dung. Không lồng "
     "gạch đầu dòng nhiều cấp.\n"
     "- Cần nhấn mạnh thì đặt thông tin đó vào đầu câu, không tô đậm.\n"
-    "- Không chào hỏi, không văn quảng cáo sáo rỗng, không emoji.\n"
+    "- Tách đoạn bằng dòng trống để dễ đọc khi câu trả lời dài.\n"
+    "- Không chào hỏi dài dòng, không văn quảng cáo sáo rỗng, không emoji.\n"
     "\n"
-    "RÀNG BUỘC BẮT BUỘC — quan trọng hơn mọi yêu cầu về độ dài và phong cách ở trên:\n"
+    "RÀNG BUỘC BẮT BUỘC — quan trọng hơn mọi yêu cầu về chiều sâu và phong cách ở trên:\n"
     "- CHỈ dùng thông tin có trong NGỮ CẢNH được cung cấp. Kiến thức bên ngoài về thị trường, "
     "chủ đầu tư hay dự án khác đều KHÔNG được dùng, kể cả khi bạn chắc chắn.\n"
     "- Tuyệt đối không suy diễn, không nội suy, không làm tròn hay ước lượng giá, diện tích, "
     "tiến độ, chính sách khi ngữ cảnh không ghi rõ. Không tự tính đơn giá/m² hay tổng giá nếu "
     "ngữ cảnh không cho đủ dữ kiện.\n"
     "- Không hứa hẹn, không cam kết thay chủ đầu tư (giữ chỗ, chắc chắn tăng giá, cam kết lợi nhuận...).\n"
-    "- Nếu ngữ cảnh thiếu thông tin để trả lời, nói thẳng trong một câu ngắn là chưa có dữ liệu "
-    "và đề nghị kiểm tra với Admin — không lấp đầy bằng phỏng đoán, cũng không viết dài ra để "
-    "che chỗ thiếu.\n"
-    "- Khi ngữ cảnh có nhiều số liệu mâu thuẫn, nêu rõ sự khác biệt kèm nguồn của từng tài liệu, "
-    "thay vì tự chọn một số."
+    "- Nếu ngữ cảnh thiếu thông tin để trả lời, nói thẳng phần nào chưa có dữ liệu và đề nghị "
+    "kiểm tra lại với Admin — không lấp đầy bằng phỏng đoán. Một câu trả lời đầy đủ gồm cả việc "
+    "chỉ rõ ranh giới của dữ liệu hiện có.\n"
+    "- Khi ngữ cảnh có nhiều số liệu mâu thuẫn, nêu rõ sự khác biệt kèm nguồn và thời điểm của "
+    "từng tài liệu, thay vì tự chọn một số."
 )
 
 
@@ -165,7 +186,8 @@ class PipelineState(TypedDict, total=False):
     query: str
     project_id: str | None
     retrieved_docs: list[dict]
-    needs_realtime: bool
+    needs_inventory: bool
+    needs_document_retrieval: bool
     inventory_units: list[InventoryUnit]
     inventory_failed: bool
     draft_answer: str
@@ -209,46 +231,67 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     """
     query = state["query"]
 
-    try:
-        hits = retrieve(query, DocumentVisibility.INTERNAL, state.get("project_id"), RETRIEVAL_TOP_K)
-    except RetrievalError:
-        # rag_service already logged the underlying Qdrant/Gemini cause; this
-        # records that the Sale actually got the degraded answer.
-        logger.error(
-            "Retrieval failed; returning retrieval-error notice",
-            exc_info=True,
-            extra={"event": "pipeline.retrieve.failed", "project_id": state.get("project_id")},
-        )
-        return {"notice": RETRIEVAL_ERROR_MESSAGE}
+    needs_inventory = _needs_inventory(query)
+    needs_document_retrieval = _needs_document_retrieval(query)
+    hits: list[dict] = []
 
-    needs_realtime = _needs_realtime(query)
+    if needs_document_retrieval:
+        try:
+            hits = retrieve(
+                query,
+                DocumentVisibility.INTERNAL,
+                state.get("project_id"),
+                RETRIEVAL_TOP_K,
+            )
+        except RetrievalError:
+            logger.exception(
+                "Qdrant retrieval failed.",
+                extra={
+                    "event": "pipeline.retrieve.failed",
+                    "project_id": state.get("project_id"),
+                    "query_len": len(query),
+                },
+            )
+            # A combined inventory + policy question can still answer from its
+            # live source when Qdrant is temporarily unavailable.
+            if not needs_inventory:
+                return {"notice": RETRIEVAL_ERROR_MESSAGE}
 
-    if not hits and not needs_realtime:
+    if not hits and not needs_inventory:
         # No documents ingested yet and the question is not an inventory lookup ->
         # Empty State, not a system error.
         return {"notice": EMPTY_STATE_MESSAGE}
 
-    return {"retrieved_docs": hits, "needs_realtime": needs_realtime}
+    return {
+        "retrieved_docs": hits,
+        "needs_inventory": needs_inventory,
+        "needs_document_retrieval": needs_document_retrieval,
+    }
 
 
 def _tool_call(state: PipelineState) -> dict[str, Any]:
-    """Function Calling into the internal inventory API for constantly changing data."""
-    project_id = state.get("project_id")
+    """Function Calling into the internal inventory API for constantly changing data.
 
-    if not project_id:
-        # Without knowing which project's inventory to query there is nothing to look up.
-        # Return the inventory message rather than quietly answering from static docs —
-        # unit counts in a PDF are stale by definition.
-        return {"inventory_failed": True, "notice": INVENTORY_UNAVAILABLE_MESSAGE}
+    A session with no project is NOT short-circuited here. Sessions stopped carrying a
+    project when the picker was dropped from session creation, so bailing on a missing
+    `project_id` made every live-inventory question answer "Tạm thời không tra được tồn
+    kho" while the API was perfectly healthy. `lookup_inventory` resolves the project to
+    query (see `resolve_api_project_id`) and raises `InventoryApiError` only when it
+    genuinely cannot pick one.
+    """
+    project_id = state.get("project_id")
 
     try:
         units = lookup_inventory(project_id, state["query"])
     except InventoryApiError:
         logger.warning(
-            "Inventory lookup failed; returning inventory-unavailable notice",
+            "Inventory lookup failed for project %s.",
+            project_id,
             exc_info=True,
             extra={"event": "pipeline.inventory.failed", "project_id": project_id},
         )
+        if state.get("retrieved_docs"):
+            return {"inventory_failed": True, "inventory_units": []}
         return {"inventory_failed": True, "notice": INVENTORY_UNAVAILABLE_MESSAGE}
 
     # An empty `units` list is a valid answer ("no 2PN units left"), not a failure —
@@ -261,16 +304,19 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     docs = state.get("retrieved_docs") or []
     units = state.get("inventory_units") or []
 
-    prompt = _build_prompt(state["query"], docs, units, state.get("needs_realtime", False))
+    prompt = _build_prompt(
+        state["query"],
+        docs,
+        units,
+        state.get("needs_inventory", False),
+        state.get("inventory_failed", False),
+    )
 
     try:
         answer = generate_text(prompt, system_instruction=_SYSTEM_INSTRUCTION)
     except Exception:
-        # Quota, bad API key, safety block, timeout and network error all collapse
-        # into the same user-facing message; the traceback is the only way to tell
-        # "Gemini is down" from "we are out of quota".
         logger.exception(
-            "Gemini generation failed",
+            "Sinh cau tra loi that bai.",
             extra={
                 "event": "pipeline.generate.failed",
                 "project_id": state.get("project_id"),
@@ -280,8 +326,9 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         )
         return {"notice": GENERATION_ERROR_MESSAGE}
 
-    # Làm sạch trước khi kiểm tra rỗng: một câu trả lời chỉ gồm ký tự Markdown là rỗng
-    # trên màn hình, nên phải rơi vào nhánh lỗi thay vì gửi bong bóng chat trắng cho Sale.
+    # Strip before checking for emptiness: an answer made up of only Markdown characters
+    # renders as blank on screen, so it must fall into the error branch instead of
+    # sending the Sale an empty chat bubble.
     answer = strip_markdown(answer)
 
     if not answer:
@@ -293,6 +340,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
 def _verify(state: PipelineState) -> dict[str, Any]:
     """The Verifier Agent scores Faithfulness/Relevancy, independently of Generate."""
     context = [doc["content"] for doc in state.get("retrieved_docs") or []]
+    context.extend(_format_unit_for_verifier(unit) for unit in state.get("inventory_units") or [])
     result = verifier_service.score_answer(state["query"], state.get("draft_answer", ""), context)
 
     return {
@@ -317,7 +365,7 @@ def _route_after_cache(state: PipelineState) -> str:
 def _route_after_retrieve(state: PipelineState) -> str:
     if state.get("notice"):
         return "stop"
-    return "tool_call" if state.get("needs_realtime") else "generate"
+    return "tool_call" if state.get("needs_inventory") else "generate"
 
 
 def _route_after_tool_call(state: PipelineState) -> str:
@@ -420,11 +468,15 @@ def run_pipeline(query: str, project_id: str | None = None) -> PipelineResult:
         state = _get_graph().invoke(initial)
     except Exception:
         # Final safety net: an unexpected error inside the graph must not become a 500.
-        # Without this log the failure is completely invisible — the Sale sees a
+        # Without this log the failure is completely invisible — the Sale just sees a
         # generic message and nothing anywhere records why.
         logger.exception(
-            "Agent pipeline crashed; returning generation-error notice",
-            extra={"event": "pipeline.crash", "project_id": project_id, "query_len": len(query)},
+            "Pipeline sap — tra ve thong bao loi chung.",
+            extra={
+                "event": "pipeline.crash",
+                "project_id": project_id,
+                "query_len": len(query),
+            },
         )
         return PipelineResult(GENERATION_ERROR_MESSAGE, [], 0.0, False)
 
@@ -478,7 +530,7 @@ def _threshold() -> float:
     return get_settings().verifier_threshold_sale
 
 
-def _needs_realtime(query: str) -> bool:
+def _needs_inventory(query: str) -> bool:
     """Diacritic-insensitive matching: a Sale typing fast on a phone rarely uses accents.
 
     "con can 2pn nao trong khong" must be recognised as an inventory question exactly
@@ -487,6 +539,15 @@ def _needs_realtime(query: str) -> bool:
     """
     normalized = strip_diacritics(query)
     return any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS)
+
+
+def _needs_document_retrieval(query: str) -> bool:
+    """Keep policy/legal RAG independent from the live-inventory decision."""
+    normalized = strip_diacritics(query)
+    return (
+        any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
+        or not _needs_inventory(query)
+    )
 
 
 def _build_citations(docs: list[dict]) -> list[dict]:
@@ -521,29 +582,41 @@ def _build_citations(docs: list[dict]) -> list[dict]:
     return citations
 
 
-def _build_prompt(query: str, docs: list[dict], units: list[InventoryUnit], needs_realtime: bool) -> str:
+def _build_prompt(
+    query: str,
+    docs: list[dict],
+    units: list[InventoryUnit],
+    needs_inventory: bool,
+    inventory_failed: bool,
+) -> str:
     sections = [f"CÂU HỎI CỦA SALE:\n{query}"]
 
     if docs:
         context = "\n\n".join(_format_doc_for_prompt(index, doc) for index, doc in enumerate(docs, start=1))
         sections.append(f"NGỮ CẢNH TỪ TÀI LIỆU DỰ ÁN:\n{context}")
 
-    if needs_realtime:
+    if needs_inventory and not inventory_failed:
         sections.append(f"TỒN KHO REAL-TIME:\n{_format_units(units)}")
 
     sections.append(
-        "Trả lời câu hỏi trên với tư cách chuyên viên tư vấn dự án, ngắn gọn như đang brief nhanh "
-        "cho đồng nghiệp sắp gặp khách: mặc định 3-5 câu, tối đa 8 câu nếu câu hỏi phức tạp. "
-        "Viết văn xuôi tự nhiên, văn bản thuần, không dùng ký tự Markdown nào (không dấu sao, "
-        "không thăng).\n"
-        "- Câu đầu tiên trả lời thẳng đúng điều Sale hỏi, kèm con số chính.\n"
-        "- Bám đúng loại căn / phân khu / tòa được hỏi. Không nêu thêm loại căn, tiện ích hay "
-        "chính sách khác mà Sale không hỏi.\n"
-        "- Giữ lại điều kiện đi kèm con số (VAT, diện tích tính theo cách nào, điều kiện hưởng "
-        "chiết khấu, mốc thời gian) — đây là phần không được cắt dù viết ngắn.\n"
-        "- Dẫn tên tài liệu nguồn ngắn gọn trong ngoặc đơn cho số liệu quan trọng.\n"
-        "- Phần nào ngữ cảnh chưa có dữ liệu thì nói thẳng trong một câu, không suy đoán."
+        "Trả lời câu hỏi trên với tư cách chuyên viên tư vấn dự án, đầy đủ và chi tiết như đang "
+        "brief cho đồng nghiệp sắp gặp khách. Viết văn xuôi tự nhiên, văn bản thuần, không dùng "
+        "ký tự Markdown nào (không dấu sao, không thăng).\n"
+        "- Bám sát đúng loại căn / phân khu / tòa mà câu hỏi nhắc tới, đừng trả lời chung chung "
+        "cho cả dự án khi Sale đang hỏi một loại căn cụ thể.\n"
+        "- Rà lại toàn bộ ngữ cảnh ở trên và đưa vào mọi chi tiết liên quan tới câu hỏi: con số, "
+        "điều kiện áp dụng, mốc thời gian, chính sách và ưu đãi đi kèm. Đừng dừng lại ở một con số "
+        "trần trụi khi ngữ cảnh còn nói thêm điều kiện.\n"
+        "- Dẫn tên tài liệu nguồn (và trang nếu có) cho từng số liệu quan trọng.\n"
+        "- Nêu rõ phần nào ngữ cảnh chưa có dữ liệu thay vì suy đoán, và gợi ý Sale cần xác nhận "
+        "thêm điều gì với khách hoặc với Admin."
     )
+
+    if needs_inventory and inventory_failed:
+        sections.append(
+            "LIVE INVENTORY STATUS: unavailable. Do not infer stock from project documents; "
+            "state that live inventory could not be checked."
+        )
 
     return "\n\n".join(sections)
 
@@ -564,4 +637,12 @@ def _format_units(units: list[InventoryUnit]) -> str:
         f"- {unit.unit_code} | loại {unit.unit_type or 'không rõ'} | "
         f"giá {f'{unit.price:,.0f} VNĐ' if unit.price is not None else 'chưa có'} | {unit.status}"
         for unit in units
+    )
+
+
+def _format_unit_for_verifier(unit: InventoryUnit) -> str:
+    """Give the verifier the same live facts that were supplied to the LLM."""
+    return (
+        f"Live inventory: {unit.unit_code}; type {unit.unit_type or 'unknown'}; "
+        f"price {unit.price if unit.price is not None else 'unknown'}; status {unit.status}."
     )

@@ -17,20 +17,32 @@ from backend.core.audit import log_event
 from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import DocumentStatus, DocumentVisibility, UserRole
+from backend.core.minio_client import presigned_get_url
 from backend.core.mysql_client import get_db
 from backend.models.user import User
 from backend.repositories.document import (
     create_document,
     delete_document,
+    get_document,
     list_documents,
+    list_documents_pending_review,
+    update_document_classification,
     update_document_visibility,
 )
-from backend.schemas.document import DocumentCreate, DocumentResponse
+from backend.schemas.document import (
+    DocumentClassificationUpdate,
+    DocumentCreate,
+    DocumentResponse,
+)
 from backend.services.ingestion_service import (
     DocumentIngestionError,
     PromptInjectionError,
     ingest_uploaded_document,
     sanitize_and_scan,
+)
+from backend.services.vector_store_service import (
+    VectorStoreError,
+    update_document_vector_metadata,
 )
 
 router = APIRouter(
@@ -120,7 +132,7 @@ async def upload_document(
     log_event(
         "document.upload",
         document_id=document.id,
-        document_name=file.filename,
+        filename=file.filename,
         size_bytes=len(file_bytes),
         content_type=file.content_type,
         project_id=project_id,
@@ -139,11 +151,10 @@ async def upload_document(
         )
     except PromptInjectionError:
         # ingestion_service has already moved the document to BLOCKED.
-        # A security event, not merely an ingest outcome.
         log_event(
             "document.ingest.blocked",
             document_id=document.id,
-            document_name=file.filename,
+            status=DocumentStatus.BLOCKED,
             reason="prompt_injection",
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
@@ -153,13 +164,11 @@ async def upload_document(
             message="Document blocked due to suspicious content.",
         )
     except DocumentIngestionError as exc:
-        # ingestion_service has already moved the document to FAILED and logged
-        # the traceback.
+        # ingestion_service has already moved the document to FAILED.
         log_event(
             "document.ingest.failure",
             document_id=document.id,
-            document_name=file.filename,
-            error_type=type(exc).__name__,
+            status=DocumentStatus.FAILED,
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
         raise HTTPException(
@@ -190,6 +199,7 @@ async def upload_document(
 async def ingest_document(
     payload: IngestRequest,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
 ) -> IngestResponse:
     """Legacy raw-text ingest endpoint."""
     try:
@@ -207,6 +217,7 @@ async def ingest_document(
             file_path=payload.file_path,
             project_id=payload.project_id,
         ),
+        uploaded_by=admin.id,
     )
 
     return IngestResponse(
@@ -221,6 +232,24 @@ async def get_documents(
     db: Session = Depends(get_db),
 ) -> list[DocumentResponse]:
     return list_documents(db)
+
+
+@router.get("/{document_id}/view-url")
+async def get_document_view_url(
+    document_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Temporary signed link (expires after a few minutes) to view the original file —
+    the document bucket is private, so the object key cannot be linked to directly."""
+    document = get_document(db, document_id)
+    if document is None or not document.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document has no stored file yet.",
+        )
+
+    url = presigned_get_url(settings.minio_bucket_documents, document.file_path)
+    return {"url": url}
 
 
 @router.patch(
@@ -259,4 +288,55 @@ async def remove_document(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
+        ) from exc
+
+@router.get(
+    "/pending-review",
+    response_model=list[DocumentResponse],
+)
+async def get_pending_review_documents(
+    db: Session = Depends(get_db),
+) -> list[DocumentResponse]:
+    """Danh sách file chờ Admin xác nhận phân loại."""
+
+    return list_documents_pending_review(db)
+
+
+@router.patch(
+    "/{document_id}/classification",
+    response_model=DocumentResponse,
+)
+async def approve_document_classification(
+    document_id: int,
+    payload: DocumentClassificationUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
+) -> DocumentResponse:
+    """Admin sửa metadata và duyệt file để bước sau cho phép RAG sử dụng."""
+
+    try:
+        document = update_document_classification(
+            db,
+            document_id=document_id,
+            payload=payload,
+            reviewed_by=admin.id,
+        )
+        update_document_vector_metadata(
+            document.id,
+            review_status=document.review_status,
+            legal_status=document.legal_status,
+            category=document.category,
+        )
+        return document
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except VectorStoreError as exc:
+        # The DB approval is committed first; leaving Qdrant pending is safe
+        # because RAG will keep excluding it until the sync is retried.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document was approved but vector metadata could not be synced.",
         ) from exc
