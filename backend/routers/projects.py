@@ -1,7 +1,12 @@
 """Project catalogue — the list a Sale picks from when opening a consultation session.
 
-`project_id` is the key that makes two features work: real-time inventory lookups
-(`lookup_inventory` requires it) and filtering retrieval to one project's documents.
+`project_id` narrows two things when a session carries one: which project's stock the
+inventory API is asked for, and which project's documents retrieval may read. Neither is
+hard-blocked without it — a session with no project retrieves across the whole corpus and
+resolves inventory through the INVENTORY_PROJECT_MAP catch-all.
+
+Note these ids are *catalogue slugs* (`the-palma`, `vinhomes-ocean-park`), a different
+namespace from the project codes the inventory API uses; `inventory_service` bridges them.
 
 Reading is open to SALE as well as ADMIN — a Sale must see the list to choose a
 project — while creating a project stays ADMIN-only.

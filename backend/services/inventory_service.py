@@ -25,9 +25,14 @@ logger = logging.getLogger(__name__)
 
 INVENTORY_TIMEOUT_SECONDS = 5.0
 
-# Unit types a Sale commonly mentions: "2PN", "3 pn", "Penthouse", "Studio", "Shophouse", "Duplex".
+# Unit types a Sale commonly mentions: "2PN", "3 pn", "2 phòng ngủ",
+# "Penthouse", "Studio", "Shophouse", "Duplex".  The captured bedroom forms
+# are normalised to the API convention (for example, "2 phòng ngủ" -> "2PN").
 # \b at both ends so "21PN" is not mis-matched as "1PN".
-_UNIT_TYPE_PATTERN = re.compile(r"\b(\d+\s*pn|penthouse|studio|shophouse|duplex)\b", re.IGNORECASE)
+_UNIT_TYPE_PATTERN = re.compile(
+    r"\b(\d+\s*(?:pn|phòng\s*ngủ|phong\s*ngu)|penthouse|studio|shophouse|duplex)\b",
+    re.IGNORECASE,
+)
 _AREA_RANGE_PATTERN = re.compile(r"\b(?:từ\s*)?(\d+(?:[.,]\d+)?)\s*(?:-|đến|tới)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
 _AREA_MAX_PATTERN = re.compile(r"\b(?:dưới|<=?|không quá|tối đa)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
 _AREA_MIN_PATTERN = re.compile(r"\b(?:trên|>=?|từ)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
@@ -53,8 +58,14 @@ class InventoryUnit:
     status: str
 
 
-def lookup_inventory(project_id: str, query: str) -> list[InventoryUnit]:
+def lookup_inventory(project_id: str | None, query: str) -> list[InventoryUnit]:
     """Look up a project's inventory, filtered by the unit type mentioned in the question.
+
+    `project_id` is the catalogue slug held on the chat session, or None when the session
+    carries no project — `resolve_api_project_id` translates it into the code the
+    inventory API actually keys units by. None is a normal case, not an error: the session
+    flow no longer asks the Sale to pick a project, so the configured catch-all decides
+    which project's stock to read.
 
     Returns an empty list when the project has no matching units left — that is a valid
     answer ("there are no 2PN units available"), entirely different from failing to reach
@@ -63,12 +74,68 @@ def lookup_inventory(project_id: str, query: str) -> list[InventoryUnit]:
 
     Raises `InventoryApiError` only when data genuinely cannot be fetched from the API.
     """
-    payload = _fetch_units(project_id)
+    api_project_id = resolve_api_project_id(project_id)
+    if api_project_id is None:
+        raise InventoryApiError(
+            "No inventory project id: the session carries no project and "
+            "INVENTORY_PROJECT_MAP defines no '*' catch-all."
+        )
+
+    payload = _fetch_units(api_project_id)
 
     units = [unit for unit in (_parse_unit(item) for item in payload) if unit is not None]
-    units = [unit for unit in units if unit.project_id == project_id]
+    units = [unit for unit in units if unit.project_id == api_project_id]
 
     return _apply_query_filters(units, query)
+
+
+def resolve_api_project_id(project_id: str | None) -> str | None:
+    """Translate a catalogue slug into the inventory API's own project code.
+
+    The two namespaces are genuinely different: `projects.id` is a catalogue slug per
+    sub-zone (`the-palma`, `hai-au`), while the inventory API groups every one of those
+    under a single project code (`ocean-park-3`) and exposes the sub-zone as
+    `subdivision`. Sending the slug through unmapped is a guaranteed 404.
+
+    Returns None only when nothing can be resolved — no project on the session and no
+    catch-all configured — which the caller turns into `InventoryApiError`.
+    """
+    mapping = _project_map()
+
+    if project_id:
+        # An exact mapping wins; otherwise fall through to the catch-all, and finally to
+        # the slug itself so an API keyed by the same slugs needs no configuration.
+        return mapping.get(project_id) or mapping.get("*") or project_id
+
+    return mapping.get("*")
+
+
+def _project_map() -> dict[str, str]:
+    """Parse INVENTORY_PROJECT_MAP ("slug=code, *=code") into a dict.
+
+    Malformed entries are skipped with a warning rather than raising: a typo in one pair
+    must not take down inventory lookups for every other project.
+    """
+    raw = settings.inventory_project_map
+    if not raw:
+        return {}
+
+    mapping: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        key, separator, value = entry.partition("=")
+        key, value = key.strip(), value.strip()
+        if not separator or not key or not value:
+            logger.warning(
+                "Bo qua muc INVENTORY_PROJECT_MAP khong hop le.",
+                extra={"event": "inventory.project_map.invalid_entry", "entry": entry},
+            )
+            continue
+        mapping[key] = value
+
+    return mapping
 
 
 def _fetch_units(project_id: str) -> list:
@@ -170,10 +237,14 @@ def _extract_unit_type(query: str) -> str | None:
 
 
 def _normalize_unit_type(unit_type: str | None) -> str | None:
-    """Normalise '3 pn' and '3PN' to '3PN' so matching does not depend on how the Sale or
-    the API happens to spell it."""
+    """Normalise bedroom synonyms to the API form, e.g. '3 phòng ngủ' -> '3PN'."""
     if unit_type is None:
         return None
+
+    normalized = _normalize_text(unit_type)
+    bedroom_match = re.fullmatch(r"(\d+)\s*(?:pn|phong\s*ngu)", normalized)
+    if bedroom_match:
+        return f"{bedroom_match.group(1)}PN"
     return re.sub(r"\s+", "", unit_type).upper()
 
 

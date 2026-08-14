@@ -29,10 +29,17 @@ export function SessionList({ sessions, loading, onChange }: Props) {
 
   const [naming, setNaming] = useState(false);
   const [customerName, setCustomerName] = useState("");
+  const [projectId, setProjectId] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
 
   useEffect(() => {
-    api.get<ProjectResponse[]>("/projects").then(setProjects).catch(() => setProjects([]));
+    api
+      .get<ProjectResponse[]>("/projects")
+      .then((rows) => {
+        setProjects(rows);
+        if (rows.length === 1) setProjectId(rows[0].id);
+      })
+      .catch(() => setProjects([]));
   }, []);
 
   const filteredSessions = useMemo(() => {
@@ -44,6 +51,7 @@ export function SessionList({ sessions, loading, onChange }: Props) {
   const closeNaming = () => {
     setNaming(false);
     setCustomerName("");
+    setProjectId(projects.length === 1 ? projects[0].id : "");
   };
 
   // The customer name is all a new session needs; Sale goes straight into the chat.
@@ -53,8 +61,10 @@ export function SessionList({ sessions, loading, onChange }: Props) {
   const submitNewSession = async (e: FormEvent) => {
     e.preventDefault();
     const name = customerName.trim();
+    if (!projectId) return;
     const session = await api.post<ChatSessionResponse>("/sale/sessions", {
       customer_name: name || undefined,
+      project_id: projectId,
     });
     onChange([session, ...sessions]);
     closeNaming();
@@ -96,8 +106,24 @@ export function SessionList({ sessions, loading, onChange }: Props) {
               onChange={(e) => setCustomerName(e.target.value)}
               onKeyDown={handleNameKeyDown}
             />
+            <select
+              className="chat-new-form-input"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              aria-label="Dự án tư vấn"
+              required
+            >
+              <option value="" disabled>
+                Chọn dự án tư vấn
+              </option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
             <div className="chat-new-form-actions">
-              <button type="submit" className="btn btn-primary chat-new-form-submit">
+              <button type="submit" className="btn btn-primary chat-new-form-submit" disabled={!projectId}>
                 Tạo phiên
               </button>
               <button type="button" className="chat-new-form-cancel" onClick={closeNaming}>

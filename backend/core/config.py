@@ -99,6 +99,16 @@ class Settings(BaseSettings):
     # Inventory API — real-time unit availability from the company's internal API
     inventory_api_url: str = ""
     inventory_api_key: str = ""
+    # Bridges two different project-id namespaces. The `projects` table is keyed by
+    # catalogue slug (`the-palma`, `vinhomes-ocean-park`), while the inventory API keys
+    # units by its own project code (`ocean-park-3`) — a slug sent straight through
+    # returns 404 and the Sale sees "Tạm thời không tra được tồn kho" for every project.
+    #
+    # Format: comma-separated `slug=code` pairs. `*=code` is the catch-all, used for any
+    # slug not listed and for sessions carrying no project at all (the session flow no
+    # longer asks the Sale to pick one). Left blank, the slug is passed through unchanged,
+    # which is what a production API keyed by the same slugs would want.
+    inventory_project_map: str = ""
 
     # Model embedding
     embedding_model: str = "gemini-embedding-001"

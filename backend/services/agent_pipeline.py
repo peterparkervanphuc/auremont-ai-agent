@@ -270,16 +270,16 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
 
 
 def _tool_call(state: PipelineState) -> dict[str, Any]:
-    """Function Calling into the internal inventory API for constantly changing data."""
-    project_id = state.get("project_id")
+    """Function Calling into the internal inventory API for constantly changing data.
 
-    if not project_id:
-        # Without knowing which project's inventory to query there is nothing to look up.
-        # Return the inventory message rather than quietly answering from static docs —
-        # unit counts in a PDF are stale by definition.
-        if state.get("retrieved_docs"):
-            return {"inventory_failed": True, "inventory_units": []}
-        return {"inventory_failed": True, "notice": INVENTORY_UNAVAILABLE_MESSAGE}
+    A session with no project is NOT short-circuited here. Sessions stopped carrying a
+    project when the picker was dropped from session creation, so bailing on a missing
+    `project_id` made every live-inventory question answer "Tạm thời không tra được tồn
+    kho" while the API was perfectly healthy. `lookup_inventory` resolves the project to
+    query (see `resolve_api_project_id`) and raises `InventoryApiError` only when it
+    genuinely cannot pick one.
+    """
+    project_id = state.get("project_id")
 
     try:
         units = lookup_inventory(project_id, state["query"])

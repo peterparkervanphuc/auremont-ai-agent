@@ -80,3 +80,48 @@ def test_mixed_question_keeps_policy_context_when_inventory_fails(monkeypatch):
     assert result["inventory_failed"] is True
     assert result["inventory_units"] == []
     assert "notice" not in result
+
+
+def test_session_without_project_still_reaches_live_inventory(monkeypatch):
+    """Bug trong ảnh chụp màn hình: form tạo phiên bỏ bước chọn dự án nên session không
+    còn project_id, `_tool_call` thoát sớm và mọi câu hỏi tồn kho đều rơi vào
+    "Live Inventory unavailable" dù API vẫn chạy tốt."""
+    received: dict = {}
+
+    def fake_inventory(project_id, query):
+        received["project_id"] = project_id
+        return [_available_2pn()]
+
+    monkeypatch.setattr(agent_pipeline, "lookup_inventory", fake_inventory)
+
+    result = agent_pipeline._tool_call(
+        {
+            "query": "Có căn nào 2 phòng ngủ và chính sách bán hàng như nào?",
+            "project_id": None,
+            "retrieved_docs": [_policy_hit()],
+        }
+    )
+
+    assert received["project_id"] is None
+    assert result["inventory_failed"] is False
+    assert [unit.unit_code for unit in result["inventory_units"]] == ["OP3-BE1-1205"]
+
+
+def test_prompt_keeps_unavailable_notice_when_lookup_cannot_resolve_a_project(monkeypatch):
+    """Không resolve được dự án nào thì vẫn phải nói thẳng là không tra được tồn kho,
+    tuyệt đối không suy ra số căn từ tài liệu tĩnh."""
+    monkeypatch.setattr(
+        agent_pipeline,
+        "lookup_inventory",
+        lambda *_args: (_ for _ in ()).throw(InventoryApiError("no project id")),
+    )
+
+    result = agent_pipeline._tool_call(
+        {"query": "Có căn nào 2 phòng ngủ?", "project_id": None, "retrieved_docs": [_policy_hit()]}
+    )
+    prompt = agent_pipeline._build_prompt(
+        "Có căn nào 2 phòng ngủ?", [_policy_hit()], [], True, result["inventory_failed"]
+    )
+
+    assert result["inventory_failed"] is True
+    assert "LIVE INVENTORY STATUS: unavailable" in prompt
