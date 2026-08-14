@@ -6,7 +6,7 @@ interface SettingsResponse {
   verifier_threshold_sale: number;
 }
 
-// Cài đặt chung — ngưỡng tin cậy tối thiểu của Verifier Agent.
+// General settings — minimum confidence threshold for the Verifier Agent.
 export function SettingsTab() {
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [saving, setSaving] = useState(false);

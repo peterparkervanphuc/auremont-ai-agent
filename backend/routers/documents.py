@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 from fastapi import (
@@ -12,14 +13,17 @@ from fastapi import (
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from backend.core.audit import log_event
 from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import DocumentStatus, DocumentVisibility, UserRole
+from backend.core.minio_client import presigned_get_url
 from backend.core.mysql_client import get_db
 from backend.models.user import User
 from backend.repositories.document import (
     create_document,
     delete_document,
+    get_document,
     list_documents,
     list_documents_pending_review,
     update_document_classification,
@@ -125,6 +129,18 @@ async def upload_document(
         uploaded_by=admin.id,
     )
 
+    log_event(
+        "document.upload",
+        document_id=document.id,
+        filename=file.filename,
+        size_bytes=len(file_bytes),
+        content_type=file.content_type,
+        project_id=project_id,
+        visibility=visibility,
+        admin_id=admin.id,
+    )
+
+    started = time.perf_counter()
     try:
         document = ingest_uploaded_document(
             db,
@@ -135,6 +151,13 @@ async def upload_document(
         )
     except PromptInjectionError:
         # ingestion_service has already moved the document to BLOCKED.
+        log_event(
+            "document.ingest.blocked",
+            document_id=document.id,
+            status=DocumentStatus.BLOCKED,
+            reason="prompt_injection",
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
         return IngestResponse(
             document_id=document.id,
             status=DocumentStatus.BLOCKED,
@@ -142,6 +165,12 @@ async def upload_document(
         )
     except DocumentIngestionError as exc:
         # ingestion_service has already moved the document to FAILED.
+        log_event(
+            "document.ingest.failure",
+            document_id=document.id,
+            status=DocumentStatus.FAILED,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Document ingestion failed. Check server logs.",
@@ -149,6 +178,12 @@ async def upload_document(
     finally:
         await file.close()
 
+    log_event(
+        "document.ingest.success",
+        document_id=document.id,
+        status=document.status,
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
     return IngestResponse(
         document_id=document.id,
         status=document.status,
@@ -164,6 +199,7 @@ async def upload_document(
 async def ingest_document(
     payload: IngestRequest,
     db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
 ) -> IngestResponse:
     """Legacy raw-text ingest endpoint."""
     try:
@@ -181,6 +217,7 @@ async def ingest_document(
             file_path=payload.file_path,
             project_id=payload.project_id,
         ),
+        uploaded_by=admin.id,
     )
 
     return IngestResponse(
@@ -195,6 +232,24 @@ async def get_documents(
     db: Session = Depends(get_db),
 ) -> list[DocumentResponse]:
     return list_documents(db)
+
+
+@router.get("/{document_id}/view-url")
+async def get_document_view_url(
+    document_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Temporary signed link (expires after a few minutes) to view the original file —
+    the document bucket is private, so the object key cannot be linked to directly."""
+    document = get_document(db, document_id)
+    if document is None or not document.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document has no stored file yet.",
+        )
+
+    url = presigned_get_url(settings.minio_bucket_documents, document.file_path)
+    return {"url": url}
 
 
 @router.patch(

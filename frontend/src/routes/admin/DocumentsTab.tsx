@@ -144,6 +144,11 @@ export function DocumentsTab() {
     );
   };
 
+  const viewDocument = async (documentId: number) => {
+    const { url } = await api.get<{ url: string }>(`/documents/${documentId}/view-url`);
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   const removeDocument = async (documentId: number) => {
     await api.delete(`/documents/${documentId}`);
 
@@ -156,7 +161,7 @@ export function DocumentsTab() {
     <div className="page">
       <h2 className="page-title">Kho Tài liệu</h2>
       <p className="page-sub">
-        Tải PDF/DOCX để parse, vector hóa và đưa vào kho tri thức RAG.
+        Tải PDF/DOCX để hệ thống đọc hiểu và đưa vào kho tri thức, giúp AI trả lời khách chính xác hơn.
       </p>
 
       <div className="upload-project-row">
@@ -217,7 +222,7 @@ export function DocumentsTab() {
 
         <p className="upload-zone-title">
           {uploading
-            ? "Đang parse, quét nội dung và vector hóa..."
+            ? "Đang xử lý và đưa vào kho tri thức..."
             : "Kéo thả tài liệu vào đây"}
         </p>
 
@@ -254,9 +259,17 @@ export function DocumentsTab() {
               return (
                 <div key={document.id} className="data-row">
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="data-row-title">
-                      {document.title}
-                    </div>
+                    {document.file_path ? (
+                      <button
+                        type="button"
+                        className="data-row-title data-row-title--link"
+                        onClick={() => void viewDocument(document.id)}
+                      >
+                        {document.title}
+                      </button>
+                    ) : (
+                      <div className="data-row-title">{document.title}</div>
+                    )}
                     <div className="data-row-meta">
                       {new Date(
                         document.created_at,

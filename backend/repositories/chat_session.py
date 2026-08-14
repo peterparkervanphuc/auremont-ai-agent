@@ -27,6 +27,17 @@ def get_session(db: Session, session_id: int) -> ChatSession | None:
     return db.query(ChatSession).filter(ChatSession.id == session_id).first()
 
 
+def set_title_if_empty(db: Session, session: ChatSession, title: str) -> ChatSession:
+    """Auto-titles the session from the Sale's first question — avoids a session
+    list full of indistinguishable "Session: Khách #N" entries once there are many."""
+    if session.title:
+        return session
+    session.title = title[:40] + ("…" if len(title) > 40 else "")
+    db.commit()
+    db.refresh(session)
+    return session
+
+
 def delete_session(db: Session, session_id: int) -> None:
     session = get_session(db, session_id)
     if session is None:

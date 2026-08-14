@@ -12,7 +12,7 @@ interface ConflictFlagResponse {
   resolved_at: string | null;
 }
 
-// flag mâu thuẫn giữa 2 tài liệu, xoá cũ / ưu tiên mới.
+// Flags conflicts between two documents; admin picks which one to keep.
 export function ConflictsTab() {
   const [conflicts, setConflicts] = useState<ConflictFlagResponse[]>([]);
 

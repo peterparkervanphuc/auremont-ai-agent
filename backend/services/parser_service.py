@@ -1,9 +1,12 @@
+import logging
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
 import fitz
 from docx import Document as DocxDocument
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,10 @@ def _parse_pdf(data: bytes) -> list[ParsedSection]:
                 if page.get_text("text").strip()
             ]
     except Exception as exc:
+        logger.exception(
+            "Parse PDF that bai.",
+            extra={"event": "parser.pdf.failed", "size_bytes": len(data)},
+        )
         raise DocumentParseError("Could not parse PDF.") from exc
 
     if not sections:
@@ -70,6 +77,10 @@ def _parse_docx(data: bytes) -> list[ParsedSection]:
         paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs]
         text = "\n".join(item for item in paragraphs if item)
     except Exception as exc:
+        logger.exception(
+            "Parse DOCX that bai.",
+            extra={"event": "parser.docx.failed", "size_bytes": len(data)},
+        )
         raise DocumentParseError("Could not parse DOCX.") from exc
 
     if not text:

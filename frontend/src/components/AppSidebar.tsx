@@ -5,6 +5,7 @@ import type { UserRole } from "../types";
 import {
   AlertIcon,
   ApiIcon,
+  AuremontLogoIcon,
   ChartIcon,
   ChatIcon,
   ChevronLeftIcon,
@@ -15,7 +16,6 @@ import {
   LogOutIcon,
   MenuIcon,
   MoonIcon,
-  SalesMateLogoIcon,
   SettingsIcon,
   ScaleIcon,
   SunIcon,
@@ -137,7 +137,7 @@ export function AppSidebar({ collapsed, onToggleCollapse, mobileOpen, onMobileCl
 
   const brand = (
     <>
-      <SalesMateLogoIcon size={28} />
+      <AuremontLogoIcon size={28} />
       <span className="sb-brand-text">
         Sales<span className="sb-brand-accent">Mate</span>
       </span>

@@ -14,7 +14,11 @@ picking one, and `project_id` is what unlocks real-time inventory lookups. An
 empty catalogue would leave the whole chat flow unusable on a fresh install.
 """
 
+import logging
+
 from backend.core.enums import UserRole
+
+logger = logging.getLogger(__name__)
 
 SEED_USERS = [
     {
@@ -56,10 +60,20 @@ def seed_projects() -> None:
     try:
         for seed in SEED_PROJECTS:
             ensure_seed_project(db, **seed)
-        print(f"Seeded {len(SEED_PROJECTS)} projects: {', '.join(s['project_id'] for s in SEED_PROJECTS)}")
-    except Exception as exc:  # pragma: no cover - a failed seed must not block startup
+        logger.info(
+            "Seed %d du an mau.",
+            len(SEED_PROJECTS),
+            extra={
+                "event": "seed.projects",
+                "count": len(SEED_PROJECTS),
+                "project_ids": [s["project_id"] for s in SEED_PROJECTS],
+            },
+        )
+    except Exception:  # pragma: no cover - a failed seed must not block startup
         db.rollback()
-        print(f"Seeding projects failed, skipping: {exc}")
+        # WARNING, not ERROR: a seeding failure must not block startup, and on a
+        # fresh, not-yet-migrated DB this is expected.
+        logger.warning("Seed du an that bai — bo qua.", exc_info=True, extra={"event": "seed.projects.failed"})
     finally:
         db.close()
 
@@ -80,11 +94,20 @@ def seed_users() -> None:
     try:
         for seed in SEED_USERS:
             ensure_seed_user(db, **seed)
-        print(f"Seeded {len(SEED_USERS)} test accounts: {', '.join(s['username'] for s in SEED_USERS)}")
-    except Exception as exc:  # pragma: no cover - a failed seed must not block startup
+        # Log usernames only — never log the `password` field from SEED_USERS.
+        logger.info(
+            "Seed %d tai khoan test.",
+            len(SEED_USERS),
+            extra={
+                "event": "seed.users",
+                "count": len(SEED_USERS),
+                "usernames": [s["username"] for s in SEED_USERS],
+            },
+        )
+    except Exception:  # pragma: no cover - a failed seed must not block startup
         # The `users` table may not exist yet if migrations have not finished.
         # This is a developer convenience, not a critical path, so only log it.
         db.rollback()
-        print(f"Seeding test accounts failed, skipping: {exc}")
+        logger.warning("Seed tai khoan test that bai — bo qua.", exc_info=True, extra={"event": "seed.users.failed"})
     finally:
         db.close()

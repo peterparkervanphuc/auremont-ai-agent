@@ -1,9 +1,9 @@
-"""Sinh file JSON dữ liệu phân khu Vinhomes Ocean Park vào data/seed/:
+"""Generate Vinhomes Ocean Park sub-zone JSON files into data/seed/:
 The Beverly, The London, The Paris, The Zenpark, The Pavilion, The Senique Hanoi.
 
-Dữ liệu được trích thủ công từ vinhomeoceanpark.com.vn (xem docstring mỗi hàm build_*)
-và gõ cứng vào script này — không gọi mạng. Chạy lại được nhiều lần (idempotent),
-ghi đè file cũ nếu có.
+Data was manually extracted from vinhomeoceanpark.com.vn (see each build_* function's
+docstring) and hardcoded into this script — no network calls. Safe to re-run (idempotent),
+overwrites existing files.
 
 Usage:
     python scripts/seed/generate_sub_zone_json.py
@@ -28,8 +28,8 @@ def _pricing_row(
     description: str,
     price_note: str | None = None,
 ) -> dict[str, Any]:
-    """price_min/price_max = None khi trang nguồn ghi 'đã bán hết' hoặc 'đang cập nhật' —
-    price_note giữ nguyên văn lý do, tránh AI suy diễn ra một mức giá không có thật."""
+    """price_min/price_max = None when the source page says 'sold out' or 'pending update' —
+    price_note keeps the original reason verbatim, so the AI doesn't infer a price that doesn't exist."""
     row = {
         "category": category,
         "apartment_type": apartment_type,
@@ -46,7 +46,7 @@ def _pricing_row(
 
 
 def _floor_plan_slots(project_id: str, towers: list[str]) -> list[dict[str, Any]]:
-    """Một ô rỗng (url=None) cho mỗi tòa — chờ admin upload ảnh mặt bằng thật."""
+    """One empty slot (url=None) per tower — waiting for the admin to upload the actual floor plan image."""
     return [
         {"tower": tower, "floor_label": f"Mặt bằng tòa {tower}", "display_order": i + 1, "url": None}
         for i, tower in enumerate(towers)
@@ -54,7 +54,7 @@ def _floor_plan_slots(project_id: str, towers: list[str]) -> list[dict[str, Any]
 
 
 def build_the_beverly() -> dict[str, Any]:
-    """Nguồn: https://vinhomeoceanpark.com.vn/the-beverly (trích 2026-08-08)."""
+    """Source: https://vinhomeoceanpark.com.vn/the-beverly (retrieved 2026-08-08)."""
     return {
         "project": {
             "id": "the-beverly",
@@ -121,7 +121,7 @@ def build_the_beverly() -> dict[str, Any]:
 
 
 def build_the_london() -> dict[str, Any]:
-    """Nguồn: https://vinhomeoceanpark.com.vn/the-london (trích 2026-08-08)."""
+    """Source: https://vinhomeoceanpark.com.vn/the-london (retrieved 2026-08-08)."""
     return {
         "project": {
             "id": "the-london",
@@ -192,7 +192,7 @@ def build_the_london() -> dict[str, Any]:
 
 
 def build_the_paris() -> dict[str, Any]:
-    """Nguồn: https://vinhomeoceanpark.com.vn/the-paris (trích 2026-08-08)."""
+    """Source: https://vinhomeoceanpark.com.vn/the-paris (retrieved 2026-08-08)."""
     return {
         "project": {
             "id": "the-paris",
@@ -265,10 +265,10 @@ def build_the_paris() -> dict[str, Any]:
 
 
 def build_the_zenpark() -> dict[str, Any]:
-    """Nguồn: https://vinhomeoceanpark.com.vn/the-zenpark (trích 2026-08-08).
+    """Source: https://vinhomeoceanpark.com.vn/the-zenpark (retrieved 2026-08-08).
 
-    Bán trực tiếp bởi Vinhomes (không qua Mitsubishi/Masterise như các phân khu khác).
-    Loại 3 ngủ+1 đã bán hết — price_min/max=None, price_note giữ nguyên trạng thái.
+    Sold directly by Vinhomes (not via Mitsubishi/Masterise like other sub-zones).
+    The 3BR+1 unit type is sold out — price_min/max=None, price_note keeps the status.
     """
     return {
         "project": {
@@ -333,7 +333,7 @@ def build_the_zenpark() -> dict[str, Any]:
 
 
 def build_the_pavilion() -> dict[str, Any]:
-    """Nguồn: https://vinhomeoceanpark.com.vn/the-pavilion (trích 2026-08-08)."""
+    """Source: https://vinhomeoceanpark.com.vn/the-pavilion (retrieved 2026-08-08)."""
     return {
         "project": {
             "id": "the-pavilion",
@@ -394,11 +394,12 @@ def build_the_pavilion() -> dict[str, Any]:
 
 
 def build_the_senique_hanoi() -> dict[str, Any]:
-    """Nguồn: https://vinhomeoceanpark.com.vn/the-senique-hanoi (trích 2026-08-08).
+    """Source: https://vinhomeoceanpark.com.vn/the-senique-hanoi (retrieved 2026-08-08).
 
-    Duy nhất khu The Senique KHÔNG do Vinhomes/Mitsubishi/Masterise phát triển — chủ đầu
-    tư là CapitaLand Development. Giá từng loại căn đều "đang cập nhật" trên trang, chỉ có
-    mức khởi điểm 68 triệu/m² — không suy ra giá min/max cụ thể để tránh tư vấn sai.
+    The Senique is the only sub-zone NOT developed by Vinhomes/Mitsubishi/Masterise — its
+    developer is CapitaLand Development. Per-unit-type prices are all "pending update" on the
+    source page, with only a starting price of 68 million/sqm — no specific min/max price is
+    inferred, to avoid giving customers incorrect advice.
     """
     return {
         "project": {

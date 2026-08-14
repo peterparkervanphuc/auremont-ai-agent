@@ -10,7 +10,7 @@ const OPTIONS: { type: FeedbackType; label: string; title: string }[] = [
   { type: "incomplete", label: "Thiếu", title: "Câu trả lời thiếu thông tin" },
 ];
 
-// Nút Feedback dưới mỗi câu trả lời — Sale báo cáo sai/thiếu, tạo feedback loop cho Admin.
+// Feedback buttons under each answer — lets Sale flag wrong/incomplete replies, feeding the Admin loop.
 export function FeedbackButtons({ messageId }: { messageId: number }) {
   const [sent, setSent] = useState<FeedbackType | null>(null);
   const [busy, setBusy] = useState(false);
@@ -22,7 +22,7 @@ export function FeedbackButtons({ messageId }: { messageId: number }) {
       await api.post("/feedback", { message_id: messageId, type });
       setSent(type);
     } catch {
-      // Không chặn luồng tư vấn nếu gửi feedback lỗi.
+      // A failed feedback submission must not block the sales conversation.
     } finally {
       setBusy(false);
     }

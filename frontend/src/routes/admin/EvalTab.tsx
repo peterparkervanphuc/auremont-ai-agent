@@ -27,7 +27,7 @@ function ScoreCard({ label, value }: { label: string; value: number | null }) {
   );
 }
 
-// Dashboard DeepEval của Verifier Agent + Top câu hỏi thất bại từ Feedback của Sale.
+// Verifier Agent scores (automated) plus the top questions the AI answered poorly.
 export function EvalTab() {
   const [scores, setScores] = useState<EvalScores | null>(null);
 
@@ -39,13 +39,13 @@ export function EvalTab() {
 
   return (
     <div className="page">
-      <h2 className="page-title">Đánh giá &amp; Phân tích AI</h2>
-      <p className="page-sub">Điểm DeepEval tự động từ Verifier Agent, đo Faithfulness và Answer Relevancy.</p>
+      <h2 className="page-title">Chất lượng trả lời</h2>
+      <p className="page-sub">Điểm tự động đo mức độ bám sát nguồn tài liệu và độ liên quan của câu trả lời AI.</p>
 
-      <section style={{ marginBottom: 28 }}>
+      <section className="section-block">
         <div className="stat-grid">
-          <ScoreCard label="Faithfulness" value={scores?.faithfulness_avg ?? null} />
-          <ScoreCard label="Answer Relevancy" value={scores?.answer_relevancy_avg ?? null} />
+          <ScoreCard label="Bám sát nguồn" value={scores?.faithfulness_avg ?? null} />
+          <ScoreCard label="Độ liên quan" value={scores?.answer_relevancy_avg ?? null} />
         </div>
       </section>
 

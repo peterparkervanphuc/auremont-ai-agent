@@ -17,10 +17,13 @@ batch evaluation under `eval/`.
 """
 
 import json
+import logging
 import re
 
 from backend.core.config import settings
 from backend.core.gemini_client import generate_text
+
+logger = logging.getLogger(__name__)
 
 _JUDGE_SYSTEM_INSTRUCTION = (
     "Bạn là bộ chấm điểm độc lập cho hệ thống RAG tư vấn bất động sản. "
@@ -81,6 +84,13 @@ def score_answer(query: str, draft_answer: str, retrieved_context: list[str]) ->
     try:
         raw = generate_text(prompt, system_instruction=_JUDGE_SYSTEM_INSTRUCTION)
     except Exception:
+        # ERROR, not WARNING: without this line, a broken Verifier looks exactly like a
+        # low-quality answer on the Admin dashboard — both show score 0.0. This is the
+        # most dangerous misdiagnosis the system can make.
+        logger.exception(
+            "Judge LLM that bai — tra ve diem 0.0 (fail closed).",
+            extra={"event": "verifier.judge.failed", "context_count": len(retrieved_context)},
+        )
         return VerifierResult(0.0, 0.0)
 
     return _parse_scores(raw)
@@ -90,14 +100,26 @@ def _parse_scores(raw: str) -> VerifierResult:
     """Read the scores out of the model output, tolerating junk around the JSON."""
     match = _JSON_PATTERN.search(raw or "")
     if match is None:
+        logger.warning(
+            "Khong tim thay JSON trong output cua judge.",
+            extra={"event": "verifier.parse.no_json", "raw_head": (raw or "")[:120]},
+        )
         return VerifierResult(0.0, 0.0)
 
     try:
         data = json.loads(match.group(0))
     except ValueError:
+        logger.warning(
+            "JSON cua judge khong parse duoc.",
+            extra={"event": "verifier.parse.bad_json", "raw_head": match.group(0)[:120]},
+        )
         return VerifierResult(0.0, 0.0)
 
     if not isinstance(data, dict):
+        logger.warning(
+            "Judge tra ve JSON khong phai object.",
+            extra={"event": "verifier.parse.not_dict", "parsed_type": type(data).__name__},
+        )
         return VerifierResult(0.0, 0.0)
 
     return VerifierResult(
@@ -111,6 +133,12 @@ def _clamp(value: object) -> float:
     try:
         score = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
+        # DEBUG: the docstring above notes `null` is a common model output, so WARNING
+        # here would become constant noise rather than a real signal.
+        logger.debug(
+            "Diem khong doc duoc, quy ve 0.0.",
+            extra={"event": "verifier.clamp.bad_value", "value_type": type(value).__name__},
+        )
         return 0.0
 
     # The model sometimes mistakes the scale and returns 85 instead of 0.85. Only convert

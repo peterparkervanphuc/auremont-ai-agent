@@ -13,14 +13,14 @@ function getAccessToken(): string | null {
   return localStorage.getItem("access_token");
 }
 
-/** Xoá phiên và đưa về màn đăng nhập — dùng khi refresh token cũng hết hạn. */
+/** Clears the session and redirects to login — used when the refresh token has also expired. */
 function clearSession() {
   ["access_token", "refresh_token", "role", "username"].forEach((k) => localStorage.removeItem(k));
   if (window.location.pathname !== "/login") window.location.assign("/login");
 }
 
-// Nhiều request song song cùng gặp 401 chỉ được gọi /auth/refresh một lần;
-// các request còn lại chờ chung promise này rồi thử lại.
+// Multiple concurrent requests hitting a 401 must call /auth/refresh only once;
+// the rest wait on this shared promise and then retry.
 let refreshInFlight: Promise<boolean> | null = null;
 
 async function refreshAccessToken(): Promise<boolean> {
@@ -57,8 +57,8 @@ function buildRequest(path: string, options: RequestInit): Request {
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response = await fetch(buildRequest(path, options));
 
-  // Access token hết hạn giữa phiên tư vấn: tự gia hạn rồi thử lại đúng 1 lần,
-  // thay vì đá Sale ra màn đăng nhập và mất ngữ cảnh đang tư vấn.
+  // Access token expired mid-conversation: silently refresh and retry exactly once,
+  // instead of kicking Sale to the login screen and losing the conversation context.
   if (response.status === 401 && !path.startsWith("/auth/")) {
     refreshInFlight ??= refreshAccessToken().finally(() => {
       refreshInFlight = null;

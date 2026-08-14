@@ -1,7 +1,11 @@
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from backend.core.audit import log_event, truncate
+from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import MessageSender, UserRole
 from backend.core.mysql_client import get_db
@@ -11,6 +15,7 @@ from backend.repositories.chat_session import (
     delete_session,
     get_session,
     list_sessions_for_sale,
+    set_title_if_empty,
 )
 from backend.repositories.feedback import delete_feedback_for_session
 from backend.repositories.message import (
@@ -78,10 +83,31 @@ async def ask_in_session(
 ) -> MessageResponse:
     """Agent Pipeline for the Sale flow — flags HITL when a price/commitment risk is detected."""
     session = _owned_session(db, session_id, user)
+    set_title_if_empty(db, session, payload.content)
 
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
 
+    started = time.perf_counter()
     result = agent_pipeline.run_pipeline(payload.content, project_id=session.project_id)
+    duration_ms = round((time.perf_counter() - started) * 1000, 2)
+
+    # The core business record for Admin Tab 2 (AI Evaluation): the Verifier score
+    # and the question are enough to reproduce a wrong answer. NEVER log the answer text.
+    log_event(
+        "sale.query",
+        session_id=session_id,
+        user_id=user.id,
+        project_id=session.project_id,
+        verifier_score=result.verifier_score,
+        faithfulness=result.faithfulness,
+        answer_relevancy=result.answer_relevancy,
+        requires_hitl=result.requires_hitl,
+        used_cache=result.used_cache,
+        citation_count=len(result.citations),
+        duration_ms=duration_ms,
+        query_len=len(payload.content),
+        query=truncate(payload.content) if settings.log_query_text else None,
+    )
     return create_message(
         db,
         session_id,
