@@ -14,8 +14,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from backend.core.minio_client import ensure_public_read_bucket, get_minio_client, public_object_url  # noqa: E402
-from backend.core.config import settings  # noqa: E402
 from backend.core.mysql_client import SessionLocal  # noqa: E402
 from backend.models.project import Project  # noqa: E402
 
@@ -32,21 +30,17 @@ def clean_image_key(filename: str) -> str | None:
 
 
 def upload_images() -> list[str]:
-    ensure_public_read_bucket(settings.minio_bucket_project_images)
-    client = get_minio_client()
-
+    """Ảnh nằm sẵn trong frontend/public/ — Vite/Vercel đã serve chúng ở gốc site,
+    nên chỉ cần trỏ đường dẫn tương đối, không cần upload lên object storage nào."""
     urls = []
     for path in sorted(IMAGES_DIR.glob("*.jpg")):
         key = clean_image_key(path.name)
         if key is None:
             continue
-        object_name = f"vinhomes-ocean-park/{key}"
-        client.fput_object(settings.minio_bucket_project_images, object_name, str(path))
-        urls.append(public_object_url(settings.minio_bucket_project_images, object_name))
-        print(f"[minio] uploaded {object_name}")
+        urls.append(f"/{key}")
 
     if not urls:
-        print("[minio] không tìm thấy ảnh nào khớp pattern để upload.")
+        print("[anh] không tìm thấy ảnh nào khớp pattern trong frontend/public/.")
     return urls
 
 

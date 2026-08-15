@@ -1,7 +1,10 @@
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from backend.core.enums import DocumentReviewStatus, DocumentStatus
+from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
+from backend.models.document_relation import DocumentRelation
 from backend.schemas.document import (
     DocumentClassificationUpdate,
     DocumentCreate,
@@ -79,9 +82,25 @@ def list_completed_siblings(db: Session, project_id: str | None, exclude_id: int
 
 
 def delete_document(db: Session, doc_id: int) -> None:
+    """Delete a document and everything that references it.
+
+    `conflict_flags` and `document_relations` have no ON DELETE CASCADE, so MySQL
+    rejects the document delete outright while either still points at it —
+    surfacing as an opaque 500, not the 404/400 an Admin could act on. Both are
+    derived data (conflict detection, relation graph), safe to drop alongside
+    the document itself.
+    """
     document = get_document(db, doc_id)
     if document is None:
         raise ValueError(f"Document with id={doc_id} not found.")
+
+    db.query(ConflictFlag).filter(
+        or_(ConflictFlag.document_id_a == doc_id, ConflictFlag.document_id_b == doc_id)
+    ).delete(synchronize_session=False)
+    db.query(DocumentRelation).filter(
+        or_(DocumentRelation.source_document_id == doc_id, DocumentRelation.target_document_id == doc_id)
+    ).delete(synchronize_session=False)
+
     db.delete(document)
     db.commit()
 
