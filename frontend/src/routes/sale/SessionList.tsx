@@ -29,6 +29,7 @@ export function SessionList({ sessions, loading, onChange }: Props) {
   const [naming, setNaming] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const filteredSessions = useMemo(() => {
     const q = historyQuery.trim().toLowerCase();
@@ -60,10 +61,19 @@ export function SessionList({ sessions, loading, onChange }: Props) {
     if (e.key === "Escape") closeNaming();
   };
 
+  // The row is removed only after the server confirms the delete. Swallowing the error
+  // here made a failed delete look successful: the conversation vanished from the list
+  // and came back on the next reload.
   const removeSession = async (e: React.MouseEvent, id: number) => {
     e.preventDefault();
     e.stopPropagation();
-    await api.delete(`/sale/sessions/${id}`).catch(() => {});
+    setDeleteError(null);
+    try {
+      await api.delete(`/sale/sessions/${id}`);
+    } catch {
+      setDeleteError("Không xoá được cuộc trò chuyện, vui lòng thử lại.");
+      return;
+    }
     onChange(sessions.filter((s) => s.id !== id));
     if (String(id) === sessionId) navigate("/chat");
   };
@@ -116,6 +126,8 @@ export function SessionList({ sessions, loading, onChange }: Props) {
           />
         </div>
       </div>
+
+      {deleteError && <p className="chat-conv-empty chat-conv-error">{deleteError}</p>}
 
       <div className="chat-conv-list">
         {loading ? (

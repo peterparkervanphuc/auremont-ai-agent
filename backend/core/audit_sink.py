@@ -50,8 +50,7 @@ def persist_event(event: str, fields: dict) -> None:
                 user_id=_as_int(fields.get("user_id")),
                 username=_as_str(fields.get("username")),
                 request_id=get_request_id(),
-                payload=_json_safe({key: value for key, value in fields.items() if key not in _COLUMN_FIELDS})
-                or None,
+                payload=_json_safe({key: value for key, value in fields.items() if key not in _COLUMN_FIELDS}) or None,
             )
         )
         session.commit()

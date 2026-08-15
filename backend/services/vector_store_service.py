@@ -30,12 +30,17 @@ def ensure_collection() -> None:
         return
 
     collection = client.get_collection(collection_name)
-    vector_size = collection.config.params.vectors.size
+    # Qdrant reports `vectors` as a single config, a mapping of named configs, or None.
+    # This collection is created with one unnamed vector; the other two shapes have no
+    # single size to compare and would otherwise fail with an AttributeError deep in the
+    # ingestion path.
+    vector_size = getattr(collection.config.params.vectors, "size", None)
+    if vector_size is None:
+        raise VectorStoreError(f"Collection '{collection_name}' does not use a single unnamed vector configuration.")
 
     if vector_size != settings.embedding_dimensions:
         raise VectorStoreError(
-            f"Collection dimension is {vector_size}, "
-            f"but application expects {settings.embedding_dimensions}."
+            f"Collection dimension is {vector_size}, but application expects {settings.embedding_dimensions}."
         )
 
 
@@ -54,20 +59,13 @@ def index_document_chunks(
 ) -> int:
     """Write chunks and their corresponding vectors into Qdrant."""
     if len(chunks) != len(vectors):
-        raise VectorStoreError(
-            "Number of chunks must match number of embeddings."
-        )
+        raise VectorStoreError("Number of chunks must match number of embeddings.")
 
     if not chunks:
         return 0
 
-    if any(
-        len(vector) != settings.embedding_dimensions
-        for vector in vectors
-    ):
-        raise VectorStoreError(
-            "An embedding has an unexpected dimension."
-        )
+    if any(len(vector) != settings.embedding_dimensions for vector in vectors):
+        raise VectorStoreError("An embedding has an unexpected dimension.")
 
     ensure_collection()
 
@@ -106,7 +104,7 @@ def index_document_chunks(
         )
     except Exception as exc:
         logger.exception(
-            "Ghi vector vao Qdrant that bai.",
+            "Writing vectors to Qdrant failed.",
             extra={"event": "vector_store.upsert.failed", "point_count": len(points)},
         )
         raise VectorStoreError("Could not upsert vectors into Qdrant.") from exc
@@ -133,13 +131,11 @@ def delete_document_vectors(document_id: int) -> None:
         )
     except Exception as exc:
         logger.exception(
-            "Xoa vector cua tai lieu %s that bai.",
+            "Deleting vectors for document %s failed.",
             document_id,
             extra={"event": "vector_store.delete.failed", "document_id": document_id},
         )
-        raise VectorStoreError(
-            f"Could not delete vectors for document {document_id}."
-        ) from exc
+        raise VectorStoreError(f"Could not delete vectors for document {document_id}.") from exc
 
 
 def update_document_vector_metadata(
@@ -181,6 +177,4 @@ def update_document_vector_metadata(
             wait=True,
         )
     except Exception as exc:
-        raise VectorStoreError(
-            f"Could not update vector metadata for document {document_id}."
-        ) from exc
+        raise VectorStoreError(f"Could not update vector metadata for document {document_id}.") from exc

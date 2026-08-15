@@ -22,11 +22,7 @@ def test_chunk_sections_preserves_page_and_global_index():
 def test_chunk_sections_includes_roman_and_number_breadcrumb():
     sections = [
         ParsedSection(
-            text=(
-                "I. CHINH SACH BAN HANG\n\n"
-                "1. GIA BAN\n\n"
-                "Gia can ho 2PN tu 3.5 ty dong."
-            ),
+            text=("I. CHINH SACH BAN HANG\n\n1. GIA BAN\n\nGia can ho 2PN tu 3.5 ty dong."),
             page=3,
         )
     ]
@@ -81,10 +77,7 @@ def test_chunk_sections_splits_large_table_without_exceeding_limit():
         [
             "| Ma can | Loai | Gia |",
             "| --- | --- | --- |",
-            *[
-                f"| A-{number:03d} | 2PN | {3 + number / 10:.1f} ty |"
-                for number in range(20)
-            ],
+            *[f"| A-{number:03d} | 2PN | {3 + number / 10:.1f} ty |" for number in range(20)],
         ]
     )
     sections = [ParsedSection(text=table, page=8)]

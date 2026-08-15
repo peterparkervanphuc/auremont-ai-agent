@@ -101,7 +101,7 @@ def get_project_detail(project_id: str, db: Session = Depends(get_db)) -> Projec
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
-    details = row.details or {}
+    details: dict = row.details or {}
     project_info = details.get("project", {})
     summary = _to_summary(row)
     return ProjectDetail(

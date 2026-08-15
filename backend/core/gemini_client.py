@@ -1,11 +1,15 @@
 import logging
+from typing import TypeVar
 
 import google.genai as genai
 from google.genai import types
+from pydantic import BaseModel
 
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 _client: genai.Client | None = None
 
@@ -19,9 +23,13 @@ def get_gemini_client() -> genai.Client:
 
 def generate_text(prompt: str, system_instruction: str | None = None) -> str:
     client = get_gemini_client()
-    config = types.GenerateContentConfig(
-        system_instruction=system_instruction,
-    ) if system_instruction else None
+    config = (
+        types.GenerateContentConfig(
+            system_instruction=system_instruction,
+        )
+        if system_instruction
+        else None
+    )
 
     response = client.models.generate_content(
         model=settings.GEMINI_MODEL,
@@ -29,6 +37,46 @@ def generate_text(prompt: str, system_instruction: str | None = None) -> str:
         config=config,
     )
     return response.text or ""
+
+
+def generate_json(
+    prompt: str,
+    schema: type[ModelT],
+    system_instruction: str | None = None,
+) -> ModelT | None:
+    """Generate a response constrained to `schema`, returning a parsed model instance.
+
+    Uses Gemini's schema-constrained decoding rather than asking for JSON in the prompt
+    and parsing whatever comes back. Critical AI decisions (verification scores, risk
+    classification) must not depend on a regex finding a brace in prose.
+
+    Returns None when the model returns nothing parseable; callers decide what a missing
+    judgement means, and for verification it means fail closed.
+    """
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        response_schema=schema,
+    )
+
+    response = client_models_generate(prompt, config)
+    parsed = getattr(response, "parsed", None)
+    if isinstance(parsed, schema):
+        return parsed
+
+    # Older SDK builds populate `.text` but not `.parsed`.
+    raw = (response.text or "").strip()
+    if not raw:
+        return None
+    return schema.model_validate_json(raw)
+
+
+def client_models_generate(prompt: str, config):
+    return get_gemini_client().models.generate_content(
+        model=settings.GEMINI_MODEL,
+        contents=prompt,
+        config=config,
+    )
 
 
 class GeminiEmbeddingError(RuntimeError):
@@ -84,21 +132,20 @@ def _embed(
         )
     except Exception as exc:
         logger.exception(
-            "Goi Gemini embedding that bai.",
+            "Gemini embedding call failed.",
             extra={"event": "gemini.embed.failed", "model": settings.embedding_model, "input_count": len(texts)},
         )
         raise GeminiEmbeddingError("Gemini embedding request failed.") from exc
 
+    if not response.embeddings:
+        raise GeminiEmbeddingError("Gemini returned no embeddings.")
+
     vectors = [embedding.values for embedding in response.embeddings]
 
     if len(vectors) != len(texts):
-        raise GeminiEmbeddingError(
-            "Gemini returned a different number of embeddings than inputs."
-        )
+        raise GeminiEmbeddingError("Gemini returned a different number of embeddings than inputs.")
 
     if any(len(vector) != settings.embedding_dimensions for vector in vectors):
-        raise GeminiEmbeddingError(
-            "Gemini returned an embedding with an unexpected dimension."
-        )
+        raise GeminiEmbeddingError("Gemini returned an embedding with an unexpected dimension.")
 
     return vectors

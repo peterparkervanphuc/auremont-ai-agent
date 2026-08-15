@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import JSON, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
 
 from backend.core.enums import (
     DocumentCategory,
@@ -12,7 +12,7 @@ from backend.utils.time import utcnow
 
 
 class Document(Base):
-    """Một file trong kho tri thức.
+    """A file in the knowledge base.
 
     File có thể là chính sách bán hàng, bảng giá, thông tin phân khu,
     tài liệu pháp lý hoặc tài liệu nội bộ. Metadata được AI đề xuất và

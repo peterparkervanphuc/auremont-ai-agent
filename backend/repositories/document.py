@@ -6,11 +6,11 @@ from backend.schemas.document import (
     DocumentClassificationUpdate,
     DocumentCreate,
 )
-from backend.utils.time import utcnow
-
 from backend.services.document_classification_service import (
     DocumentClassification,
 )
+from backend.utils.time import utcnow
+
 
 def create_document(
     db: Session,
@@ -105,6 +105,7 @@ def update_document_visibility(db: Session, doc_id: int, visibility: str) -> Doc
     db.refresh(document)
     return document
 
+
 def update_document_storage_path(
     db: Session,
     doc_id: int,
@@ -118,8 +119,10 @@ def update_document_storage_path(
     db.commit()
     db.refresh(document)
     return document
+
+
 def list_documents_pending_review(db: Session) -> list[Document]:
-    """Lấy tài liệu đã upload nhưng Admin chưa xác nhận metadata."""
+    """Documents uploaded but still awaiting an Admin decision on their metadata."""
 
     return (
         db.query(Document)
@@ -135,7 +138,7 @@ def update_document_classification(
     payload: DocumentClassificationUpdate,
     reviewed_by: int,
 ) -> Document:
-    """Admin xác nhận/sửa metadata phân loại của tài liệu."""
+    """Record the Admin's confirmed or corrected classification metadata."""
 
     document = get_document(db, document_id)
     if document is None:
@@ -154,6 +157,7 @@ def update_document_classification(
     db.refresh(document)
     return document
 
+
 def update_document_classification_suggestion(
     db: Session,
     document_id: int,
@@ -161,7 +165,7 @@ def update_document_classification_suggestion(
     *,
     auto_approve: bool = False,
 ) -> Document:
-    """Lưu metadata rule/AI đề xuất; chưa phải phê duyệt của Admin."""
+    """Store the rule/AI suggestion. This is not approval; an Admin still has to decide."""
 
     document = get_document(db, document_id)
     if document is None:

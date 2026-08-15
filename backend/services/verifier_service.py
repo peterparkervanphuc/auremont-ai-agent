@@ -16,12 +16,12 @@ to stay under a 3-second field response budget. DeepEval remains a good fit for 
 batch evaluation under `eval/`.
 """
 
-import json
 import logging
-import re
+
+from pydantic import BaseModel, Field, field_validator
 
 from backend.core.config import settings
-from backend.core.gemini_client import generate_text
+from backend.core.gemini_client import generate_json
 
 logger = logging.getLogger(__name__)
 
@@ -50,30 +50,55 @@ CÂU TRẢ LỜI:
 
 Chỉ trả về JSON đúng định dạng: {{"faithfulness": <số>, "relevancy": <số>}}"""
 
-# Grab the first JSON object even when the model wraps it in ```json ... ``` or adds prose.
-_JSON_PATTERN = re.compile(r"\{.*?\}", re.DOTALL)
 
+class VerifierResult(BaseModel):
+    """A judgement about one draft answer.
 
-class VerifierResult:
-    def __init__(self, faithfulness: float, relevancy: float):
-        self.faithfulness = faithfulness
-        self.relevancy = relevancy
+    Doubles as the response schema handed to Gemini, so the model is constrained to emit
+    exactly these two fields in this range instead of prose that has to be scraped.
+    """
+
+    faithfulness: float = Field(ge=0.0, le=1.0, description="Is every claim supported by the context?")
+    relevancy: float = Field(ge=0.0, le=1.0, description="Does the answer address the question asked?")
+
+    @field_validator("faithfulness", "relevancy", mode="before")
+    @classmethod
+    def _coerce_score(cls, value: object) -> float:
+        """Accept the shapes judges actually emit: "0.85", 85, None.
+
+        A model that mistakes the scale and answers 85 means 0.85. Only values clearly on
+        a 0-100 scale are converted; a slight overshoot like 1.5 is the judge being loose
+        on the 0-1 scale, and dividing that would distort the score more than clamping.
+        """
+        try:
+            score = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0.0
+
+        if score > 10.0:
+            score = score / 100.0
+        return max(0.0, min(1.0, score))
 
     @property
     def score(self) -> float:
+        """The weaker of the two. An answer that is truthful but off-topic, or on-topic
+        with invented figures, must fail either way."""
         return min(self.faithfulness, self.relevancy)
 
 
-def score_answer(query: str, draft_answer: str, retrieved_context: list[str]) -> VerifierResult:
-    """Score a draft answer. Never raises — a scoring failure returns 0.0.
+_FAILED_VERIFICATION = VerifierResult(faithfulness=0.0, relevancy=0.0)
 
-    Returning 0.0 on failure is deliberate: the pipeline then takes the
-    "Không đủ thông tin, liên hệ Admin" branch instead of handing the Sale an unverified
-    answer. Fail closed, because bad advice costs more than a refusal does.
+
+def score_answer(query: str, draft_answer: str, retrieved_context: list[str]) -> VerifierResult:
+    """Score a draft answer. Never raises — a scoring failure scores 0.0.
+
+    Failing closed is deliberate: the pipeline then takes the "not enough information"
+    branch instead of handing the Sale an unverified answer. Bad advice costs more than a
+    refusal does.
     """
     if not draft_answer.strip() or not retrieved_context:
-        # With no context there is nothing to check against -> cannot be called faithful.
-        return VerifierResult(0.0, 0.0)
+        # With no context there is nothing to check against, so nothing can be called faithful.
+        return _FAILED_VERIFICATION
 
     prompt = _JUDGE_PROMPT.format(
         query=query,
@@ -82,73 +107,25 @@ def score_answer(query: str, draft_answer: str, retrieved_context: list[str]) ->
     )
 
     try:
-        raw = generate_text(prompt, system_instruction=_JUDGE_SYSTEM_INSTRUCTION)
+        result = generate_json(prompt, VerifierResult, system_instruction=_JUDGE_SYSTEM_INSTRUCTION)
     except Exception:
-        # ERROR, not WARNING: without this line, a broken Verifier looks exactly like a
-        # low-quality answer on the Admin dashboard — both show score 0.0. This is the
-        # most dangerous misdiagnosis the system can make.
+        # ERROR, not WARNING: without this line a broken Verifier looks exactly like a
+        # low-quality answer on the Admin dashboard — both show 0.0. That is the most
+        # dangerous misdiagnosis this system can make.
         logger.exception(
-            "Judge LLM that bai — tra ve diem 0.0 (fail closed).",
+            "Judge LLM call failed; scoring 0.0 (fail closed).",
             extra={"event": "verifier.judge.failed", "context_count": len(retrieved_context)},
         )
-        return VerifierResult(0.0, 0.0)
+        return _FAILED_VERIFICATION
 
-    return _parse_scores(raw)
-
-
-def _parse_scores(raw: str) -> VerifierResult:
-    """Read the scores out of the model output, tolerating junk around the JSON."""
-    match = _JSON_PATTERN.search(raw or "")
-    if match is None:
+    if result is None:
         logger.warning(
-            "Khong tim thay JSON trong output cua judge.",
-            extra={"event": "verifier.parse.no_json", "raw_head": (raw or "")[:120]},
+            "Judge returned no parseable verdict; scoring 0.0 (fail closed).",
+            extra={"event": "verifier.judge.empty"},
         )
-        return VerifierResult(0.0, 0.0)
+        return _FAILED_VERIFICATION
 
-    try:
-        data = json.loads(match.group(0))
-    except ValueError:
-        logger.warning(
-            "JSON cua judge khong parse duoc.",
-            extra={"event": "verifier.parse.bad_json", "raw_head": match.group(0)[:120]},
-        )
-        return VerifierResult(0.0, 0.0)
-
-    if not isinstance(data, dict):
-        logger.warning(
-            "Judge tra ve JSON khong phai object.",
-            extra={"event": "verifier.parse.not_dict", "parsed_type": type(data).__name__},
-        )
-        return VerifierResult(0.0, 0.0)
-
-    return VerifierResult(
-        faithfulness=_clamp(data.get("faithfulness")),
-        relevancy=_clamp(data.get("relevancy")),
-    )
-
-
-def _clamp(value: object) -> float:
-    """Coerce a score into [0, 1]. The model sometimes returns '0.85', 85 or null."""
-    try:
-        score = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        # DEBUG: the docstring above notes `null` is a common model output, so WARNING
-        # here would become constant noise rather than a real signal.
-        logger.debug(
-            "Diem khong doc duoc, quy ve 0.0.",
-            extra={"event": "verifier.clamp.bad_value", "value_type": type(value).__name__},
-        )
-        return 0.0
-
-    # The model sometimes mistakes the scale and returns 85 instead of 0.85. Only convert
-    # when the number is clearly on a 0-100 scale; a slight overshoot like 1.5 is the model
-    # being a little off on the 0-1 scale, and turning that into 0.015 would distort the
-    # score far more than clamping it to 1.0.
-    if score > 10.0:
-        score = score / 100.0
-
-    return max(0.0, min(1.0, score))
+    return result
 
 
 def passes_threshold(result: VerifierResult) -> bool:

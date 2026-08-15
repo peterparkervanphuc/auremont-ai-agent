@@ -118,17 +118,14 @@ def collect_images(db: Session, query: str, answer: str) -> list[dict]:
         if project is None:
             return []
 
-        gallery = [
-            url for url in ((project.details or {}).get("images") or {}).get("gallery") or [] if isinstance(url, str) and url
-        ]
+        details: dict = project.details or {}
+        images: dict = details.get("images") or {}
+        gallery = [url for url in images.get("gallery") or [] if isinstance(url, str) and url]
         if not gallery:
             return []
 
         selected = _filter_by_topic(gallery, _normalize(query))
-        return [
-            {"url": url, "project_id": project.id, "project_name": project.name}
-            for url in selected
-        ]
+        return [{"url": url, "project_id": project.id, "project_name": project.name} for url in selected]
     except Exception:
         logger.exception(
             "Could not resolve answer images; answering without them.",

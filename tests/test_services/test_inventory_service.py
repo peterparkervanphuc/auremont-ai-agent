@@ -108,8 +108,24 @@ def test_returns_all_units_when_question_has_no_unit_type(mock_get):
 def test_filters_by_subdivision_area_price_and_status(mock_get):
     mock_get.return_value = _response(
         [
-            {"unit_code": "A", "project_id": "ocean-park-3", "subdivision": "Vịnh Tây", "unit_type": "2PN", "area_m2": 62, "price": 3600000000, "status": "available"},
-            {"unit_code": "B", "project_id": "ocean-park-3", "subdivision": "Vịnh Xanh", "unit_type": "2PN", "area_m2": 68, "price": 3750000000, "status": "reserved"},
+            {
+                "unit_code": "A",
+                "project_id": "ocean-park-3",
+                "subdivision": "Vịnh Tây",
+                "unit_type": "2PN",
+                "area_m2": 62,
+                "price": 3600000000,
+                "status": "available",
+            },
+            {
+                "unit_code": "B",
+                "project_id": "ocean-park-3",
+                "subdivision": "Vịnh Xanh",
+                "unit_type": "2PN",
+                "area_m2": 68,
+                "price": 3750000000,
+                "status": "reserved",
+            },
         ]
     )
 
@@ -125,9 +141,30 @@ def test_filters_by_subdivision_area_price_and_status(mock_get):
 def test_filters_by_price_and_area_ranges(mock_get):
     mock_get.return_value = _response(
         [
-            {"unit_code": "A", "project_id": "ocean-park-3", "unit_type": "2PN", "area_m2": 62, "price": 3600000000, "status": "available"},
-            {"unit_code": "B", "project_id": "ocean-park-3", "unit_type": "2PN", "area_m2": 68, "price": 3750000000, "status": "reserved"},
-            {"unit_code": "C", "project_id": "ocean-park-3", "unit_type": "3PN", "area_m2": 88, "price": 5200000000, "status": "sold"},
+            {
+                "unit_code": "A",
+                "project_id": "ocean-park-3",
+                "unit_type": "2PN",
+                "area_m2": 62,
+                "price": 3600000000,
+                "status": "available",
+            },
+            {
+                "unit_code": "B",
+                "project_id": "ocean-park-3",
+                "unit_type": "2PN",
+                "area_m2": 68,
+                "price": 3750000000,
+                "status": "reserved",
+            },
+            {
+                "unit_code": "C",
+                "project_id": "ocean-park-3",
+                "unit_type": "3PN",
+                "area_m2": 88,
+                "price": 5200000000,
+                "status": "sold",
+            },
         ]
     )
 

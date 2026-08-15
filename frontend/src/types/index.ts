@@ -55,6 +55,8 @@ export interface MessageResponse {
   images: AnswerImage[] | null;
   verifier_score: number | null;
   requires_hitl: boolean;
+  /** Derived server-side from the audit trail; never sent by this client. */
+  hitl_confirmed: boolean;
   created_at: string;
 }
 

@@ -47,9 +47,7 @@ def review_document_relation(
     if relation.review_status != DocumentReviewStatus.PENDING:
         raise ValueError("This relation has already been reviewed.")
 
-    relation.review_status = (
-        DocumentReviewStatus.APPROVED if approve else DocumentReviewStatus.REJECTED
-    )
+    relation.review_status = DocumentReviewStatus.APPROVED if approve else DocumentReviewStatus.REJECTED
     relation.reviewed_by = reviewed_by
     relation.reviewed_at = utcnow()
 

@@ -12,12 +12,7 @@ class FakeModels:
 
     def embed_content(self, **kwargs):
         self.calls.append(kwargs)
-        return SimpleNamespace(
-            embeddings=[
-                SimpleNamespace(values=vector)
-                for vector in self.vectors
-            ]
-        )
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=vector) for vector in self.vectors])
 
 
 class FakeGeminiClient:

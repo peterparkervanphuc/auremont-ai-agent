@@ -56,7 +56,7 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
         query_vector = embed_query(query)
     except GeminiEmbeddingError as exc:
         logger.exception(
-            "Embed cau hoi that bai.",
+            "Embedding the query failed.",
             extra={"event": "retrieval.embed.failed", "project_id": project_id},
         )
         raise RetrievalError("Could not embed the query.") from exc
@@ -94,8 +94,12 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
         # entirely swallowed by agent_pipeline._retrieve. This log line is the ONLY
         # record that Qdrant genuinely failed.
         logger.exception(
-            "Truy van Qdrant that bai.",
-            extra={"event": "retrieval.qdrant.failed", "project_id": project_id, "collection": settings.qdrant_collection},
+            "Qdrant query failed.",
+            extra={
+                "event": "retrieval.qdrant.failed",
+                "project_id": project_id,
+                "collection": settings.qdrant_collection,
+            },
         )
         raise RetrievalError("Could not query Qdrant.") from exc
 

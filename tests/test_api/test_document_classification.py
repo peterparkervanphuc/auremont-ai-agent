@@ -17,8 +17,8 @@ from backend.core.mysql_client import Base, get_db
 from backend.main import app
 from backend.models.user import User
 from backend.repositories.document import create_document
-from backend.schemas.document import DocumentCreate
 from backend.routers import documents as documents_router
+from backend.schemas.document import DocumentCreate
 
 
 @pytest.fixture
@@ -134,10 +134,7 @@ def test_admin_can_approve_project_document_classification(
             "building_codes": ["BE1", "BE2"],
             "unit_types": ["1PN+", "2PN", "3PN"],
             "applicable_area": "Ocean Park 3",
-            "document_summary": (
-                "Chính sách bán hàng tháng 08/2026 "
-                "cho phân khu The Beverly."
-            ),
+            "document_summary": ("Chính sách bán hàng tháng 08/2026 cho phân khu The Beverly."),
             "version_label": "Tháng 08/2026",
             "effective_date": "2026-08-01",
             "expiry_date": "2026-08-31",

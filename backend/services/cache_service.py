@@ -67,7 +67,7 @@ def lookup_cache(query: str, project_id: str | None = None) -> CachedAnswer | No
         # still correct, only more expensive. But it must be logged — a permanently dead
         # cache burns tokens on every single request with no other outward symptom.
         logger.warning(
-            "Tra cuu cache that bai — coi nhu cache miss.",
+            "Cache lookup failed; treating as a miss.",
             exc_info=True,
             extra={"event": "cache.lookup.failed", "project_id": project_id},
         )
@@ -139,7 +139,7 @@ def store_cache(
     except Exception:
         # A failed cache write has no bearing on the answer already being served.
         logger.warning(
-            "Ghi cache that bai — cau tra loi da gui van khong bi anh huong.",
+            "Cache write failed; the answer already served is unaffected.",
             exc_info=True,
             extra={"event": "cache.store.failed", "project_id": project_id},
         )

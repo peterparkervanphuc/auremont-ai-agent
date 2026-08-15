@@ -79,8 +79,8 @@ Chạy dev mode không qua Docker (hot reload) hoặc chi tiết mock API tồn 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/v1/auth/login` | Đăng nhập, phân quyền SALE/ADMIN |
-| POST | `/api/v1/sale-chat/sessions/{id}/ask` | Hỏi Agent trong một phiên tư vấn |
-| POST | `/api/v1/hitl/confirm` | Xác nhận nội dung cam kết trước khi gửi khách |
+| POST | `/api/v1/sale/sessions/{session_id}/messages` | Hỏi Agent trong một phiên tư vấn |
+| POST | `/api/v1/hitl/{message_id}/confirm` | Xác nhận nội dung cam kết trước khi gửi khách |
 | POST | `/api/v1/documents` | Admin upload tài liệu (ingest + quét Prompt Injection) |
 | GET | `/api/v1/projects` | Danh sách dự án/catalogue |
 | GET | `/health` | Health check |

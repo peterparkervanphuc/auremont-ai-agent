@@ -45,8 +45,9 @@ class FeedbackType(StrEnum):
     WRONG = "wrong"  # the answer was incorrect
     INCOMPLETE = "incomplete"  # the answer was missing information
 
+
 class DocumentCategory(StrEnum):
-    """Nhóm nghiệp vụ của tài liệu trong kho tri thức."""
+    """Business grouping of a document in the knowledge base."""
 
     SALES_POLICY = "sales_policy"
     PRICE_LIST = "price_list"
@@ -63,7 +64,7 @@ class DocumentCategory(StrEnum):
 
 
 class DocumentReviewStatus(StrEnum):
-    """Kết quả duyệt phân loại của Admin."""
+    """Outcome of the Admin's review of a proposed classification."""
 
     PENDING = "pending"
     APPROVED = "approved"
@@ -71,7 +72,7 @@ class DocumentReviewStatus(StrEnum):
 
 
 class LegalStatus(StrEnum):
-    """Chỉ áp dụng khi category là LEGAL_DOCUMENT."""
+    """Only meaningful when the category is LEGAL_DOCUMENT."""
 
     UNKNOWN = "unknown"
     NOT_YET_EFFECTIVE = "not_yet_effective"
@@ -82,7 +83,7 @@ class LegalStatus(StrEnum):
 
 
 class DocumentRelationType(StrEnum):
-    """Quan hệ giữa tài liệu mới và tài liệu đã tồn tại."""
+    """How a new document relates to one already in the knowledge base."""
 
     REPLACES = "replaces"
     AMENDS = "amends"

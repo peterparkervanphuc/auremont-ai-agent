@@ -2296,3 +2296,8 @@
     justify-content: flex-end;
   }
 }
+
+/* A delete that the server rejected — shown in place rather than silently ignored. */
+.chat-conv-error {
+  color: var(--rose);
+}

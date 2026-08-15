@@ -12,7 +12,9 @@ interface HitlCardProps {
 // Commitment-risk warning card — confirmation is mandatory before send/copy.
 export function HitlCard({ message, onConfirmed }: HitlCardProps) {
   const [confirming, setConfirming] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
+  // Seeded from the server: confirmation lives in the audit trail, so reopening a
+  // conversation must show an already-approved answer as approved.
+  const [confirmed, setConfirmed] = useState(message.hitl_confirmed);
   const [copied, setCopied] = useState(false);
 
   const confirm = async () => {

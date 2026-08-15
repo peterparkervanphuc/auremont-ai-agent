@@ -77,6 +77,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
       images: null,
       verifier_score: null,
       requires_hitl: false,
+      hitl_confirmed: false,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);

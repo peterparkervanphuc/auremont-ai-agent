@@ -56,9 +56,7 @@ def sanitize_and_scan(raw_text: str) -> str:
 
     for pattern in SUSPICIOUS_PATTERNS:
         if re.search(pattern, cleaned, flags=re.IGNORECASE):
-            raise PromptInjectionError(
-                "Potential prompt-injection content detected."
-            )
+            raise PromptInjectionError("Potential prompt-injection content detected.")
 
     return cleaned
 
@@ -88,10 +86,7 @@ def ingest_uploaded_document(
             db,
             document_id=document.id,
             classification=classification,
-            auto_approve=(
-                classification.confidence
-                >= settings.classification_auto_approve_threshold
-            ),
+            auto_approve=(classification.confidence >= settings.classification_auto_approve_threshold),
         )
 
         object_key = _store_original_file(
@@ -145,7 +140,7 @@ def ingest_uploaded_document(
             flag_conflicts_for(db, completed)
         except Exception:  # pragma: no cover - advisory step, never fatal
             logger.warning(
-                "Bo qua quet mau thuan cho tai lieu %s.",
+                "Skipping the conflict scan for document %s.",
                 completed.id,
                 exc_info=True,
                 extra={"event": "document.conflict_scan.failed", "document_id": completed.id},
@@ -163,9 +158,7 @@ def ingest_uploaded_document(
         if isinstance(exc, DocumentIngestionError):
             raise
 
-        raise DocumentIngestionError(
-            f"Could not ingest document {document.id}."
-        ) from exc
+        raise DocumentIngestionError(f"Could not ingest document {document.id}.") from exc
 
 
 def flag_conflicts_for(db: Session, document: Document) -> list[int]:
@@ -197,8 +190,7 @@ def flag_conflicts_for(db: Session, document: Document) -> list[int]:
             document_id_a=sibling.id,
             document_id_b=document.id,
             description=(
-                f"Hai tài liệu cùng dự án có tiêu đề trùng nhau: '{sibling.title}'. "
-                "Kiểm tra và chọn bản được ưu tiên."
+                f"Hai tài liệu cùng dự án có tiêu đề trùng nhau: '{sibling.title}'. Kiểm tra và chọn bản được ưu tiên."
             ),
         )
         created.append(conflict.id)
@@ -222,10 +214,7 @@ def _store_original_file(
 ) -> str:
     """Store the original file in MinIO; the DB keeps only the object key."""
     safe_filename = PurePath(filename).name
-    object_key = (
-        f"documents/{document_id}/"
-        f"{uuid.uuid4().hex}-{safe_filename}"
-    )
+    object_key = f"documents/{document_id}/{uuid.uuid4().hex}-{safe_filename}"
 
     try:
         ensure_bucket(settings.minio_bucket_documents)
@@ -238,8 +227,6 @@ def _store_original_file(
             content_type=content_type or "application/octet-stream",
         )
     except Exception as exc:
-        raise DocumentIngestionError(
-            "Could not store original file in MinIO."
-        ) from exc
+        raise DocumentIngestionError("Could not store original file in MinIO.") from exc
 
     return object_key

@@ -6,10 +6,10 @@ pydantic-settings>=2.7.0
 python-dotenv>=1.0.0
 python-multipart>=0.0.12
 
-# AI / LangChain
-langchain>=0.3.0
-# Pin theo dòng 1.x: agent_pipeline dùng API StateGraph của LangGraph 1.x,
-# khác đáng kể so với 0.2.x.
+# AI orchestration
+# Pinned to the 1.x line: agent_pipeline uses the LangGraph 1.x StateGraph API, which
+# differs substantially from 0.2.x. `langchain-core` arrives transitively via langgraph;
+# the umbrella `langchain` package is not used anywhere and is deliberately not listed.
 langgraph>=1.2,<2
 
 # Database
