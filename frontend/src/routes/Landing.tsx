@@ -3,7 +3,7 @@ import { useAuth } from "../hooks/useAuth";
 import { AuremontLogoIcon, LogInIcon } from "../components/Icons";
 
 const HERO_IMAGE_URL =
-  "http://localhost:9000/project-images/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
+  "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
 
 // First public screen before login — branding and an entry button only,
 // so internal lookup/chat content is never exposed to unauthenticated visitors.

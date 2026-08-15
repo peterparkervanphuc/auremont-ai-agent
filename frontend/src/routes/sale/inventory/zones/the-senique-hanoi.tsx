@@ -3,7 +3,7 @@
 // inside this page so the nav menu can still scroll to them.
 import { AmenityPhotoBanner, FloorPlanTabs, PriceTable, SidebarLayoutTabs, type ImageTab } from "../shared";
 
-const IMG = "http://localhost:9000/project-images/the-senique-hanoi";
+const IMG = "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi";
 
 const SENIQUE_MASTER_PLANS: ImageTab[] = [
   { label: "Tổng mặt bằng", src: `${IMG}/tong-mat-bang-the-senique-hanoi-ocean-park.jpg` },
@@ -52,7 +52,7 @@ function SeniqueSpotlight() {
         </div>
         <div className="zone-spotlight-media">
           <img
-            src="http://localhost:9000/project-images/the-senique-hanoi/the-senique-hanoi-phoi-canh.jpg"
+            src="https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/the-senique-hanoi-phoi-canh.jpg"
             alt="Phân khu The Senique Hanoi"
           />
         </div>
@@ -66,28 +66,28 @@ function SeniqueSpotlight() {
 // ranges in the_senique_hanoi.json (2BR 54-81m², 3BR 83-108m², 4BR 154-188m²,
 // Duplex 118-190m²) — figures are not invented.
 const SENIQUE_LAYOUTS: ImageTab[] = [
-  { label: "Căn 1PN | 42m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-1PN-medium-42-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 2PN | 53,5m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-2PN-small-535-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 2PN | 54,4m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-2PN-small-544-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 2PN | 64,3m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-2PN-medium-643-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 2PN | 81,3m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-2PN-large-813-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 3PN | 83,2m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-3PN-small-832-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 3PN | 84,9m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-3PN-small-849-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 3PN | 85,9m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-3PN-small-859-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 3PN | 96,8m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-3PN-medium-968-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 3PN | 97,3m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-3PN-medium-973-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 3PN | 101,5m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-3PN-large-1015-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 3PN | 107,5m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-3PN-large-1075-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 4PN | 153,6m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-4PN-large-1536-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 4PN | 177,5m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-4PN-large-1775-m2-the-senique-hanoi.jpg" },
-  { label: "Căn 4PN | 187,4m²", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-4PN-large-1874-m2-the-senique-hanoi.jpg" },
-  { label: "Duplex 117,5m² | Tầng 1", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-duplex-small-1175-m2-tang-1-the-senique-hanoi.jpg" },
-  { label: "Duplex 117,5m² | Tầng 2", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-duplex-small-1175-m2-tang-2-the-senique-hanoi.jpg" },
-  { label: "Duplex 133,7m² | Tầng 1", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-duplex-medium-1337-m2-tang-1-the-senique-hanoi.jpg" },
-  { label: "Duplex 133,7m² | Tầng 2", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-duplex-medium-1337-m2-tang-2-the-senique-hanoi.jpg" },
-  { label: "Duplex 147,4m² | Tầng 1", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-duplex-medium-1474-m2-tang-1-the-senique-hanoi.jpg" },
-  { label: "Duplex 147,4m² | Tầng 2", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-duplex-medium-1474-m2-tang-2-the-senique-hanoi.jpg" },
-  { label: "Duplex 189,5m² | Tầng 1", src: "http://localhost:9000/project-images/the-senique-hanoi/can-ho-duplex-medium-1895-m2-tang-1-the-senique-hanoi.jpg" },
+  { label: "Căn 1PN | 42m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-1PN-medium-42-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 2PN | 53,5m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-2PN-small-535-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 2PN | 54,4m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-2PN-small-544-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 2PN | 64,3m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-2PN-medium-643-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 2PN | 81,3m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-2PN-large-813-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 3PN | 83,2m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-3PN-small-832-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 3PN | 84,9m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-3PN-small-849-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 3PN | 85,9m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-3PN-small-859-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 3PN | 96,8m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-3PN-medium-968-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 3PN | 97,3m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-3PN-medium-973-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 3PN | 101,5m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-3PN-large-1015-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 3PN | 107,5m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-3PN-large-1075-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 4PN | 153,6m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-4PN-large-1536-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 4PN | 177,5m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-4PN-large-1775-m2-the-senique-hanoi.jpg" },
+  { label: "Căn 4PN | 187,4m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-4PN-large-1874-m2-the-senique-hanoi.jpg" },
+  { label: "Duplex 117,5m² | Tầng 1", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-duplex-small-1175-m2-tang-1-the-senique-hanoi.jpg" },
+  { label: "Duplex 117,5m² | Tầng 2", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-duplex-small-1175-m2-tang-2-the-senique-hanoi.jpg" },
+  { label: "Duplex 133,7m² | Tầng 1", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-duplex-medium-1337-m2-tang-1-the-senique-hanoi.jpg" },
+  { label: "Duplex 133,7m² | Tầng 2", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-duplex-medium-1337-m2-tang-2-the-senique-hanoi.jpg" },
+  { label: "Duplex 147,4m² | Tầng 1", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-duplex-medium-1474-m2-tang-1-the-senique-hanoi.jpg" },
+  { label: "Duplex 147,4m² | Tầng 2", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-duplex-medium-1474-m2-tang-2-the-senique-hanoi.jpg" },
+  { label: "Duplex 189,5m² | Tầng 1", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/can-ho-duplex-medium-1895-m2-tang-1-the-senique-hanoi.jpg" },
 ];
 
 function SeniqueLayoutGallery() {
@@ -98,35 +98,35 @@ function SeniqueLayoutGallery() {
 // Senique 2, Senique Premier), each with several floor-group variants (matching
 // the image files already uploaded to MinIO earlier; no tower is missing).
 const SENIQUE_1_FLOOR_PLANS: ImageTab[] = [
-  { label: "Tầng 2-18", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-2-4-6-8-10-12-14-16-18-toa-the-senique-1-ocean-park-1.jpg" },
-  { label: "Tầng 3-17", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-3-5-7-9-11-13-15-17-toa-the-senique-1-ocean-park.jpg" },
-  { label: "Tầng 20", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-20-toa-the-senique-1-ocean-park.jpg" },
-  { label: "Tầng 21, 23", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-21-23-toa-the-senique-1-ocean-park.jpg" },
-  { label: "Tầng 22", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-22-toa-the-senique-1-ocean-park.jpg" },
-  { label: "Tầng 24-34", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-24-26-28-30-32-34-toa-the-senique-1-ocean-park.jpg" },
-  { label: "Tầng 25-35", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-25-27-29-31-33-35-toa-the-senique-1-ocean-park.jpg" },
-  { label: "Tầng 36", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-36-toa-the-senique-1-ocean-park.jpg" },
-  { label: "Tầng 37", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-37-toa-the-senique-1-ocean-park.jpg" },
+  { label: "Tầng 2-18", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-2-4-6-8-10-12-14-16-18-toa-the-senique-1-ocean-park-1.jpg" },
+  { label: "Tầng 3-17", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-3-5-7-9-11-13-15-17-toa-the-senique-1-ocean-park.jpg" },
+  { label: "Tầng 20", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-20-toa-the-senique-1-ocean-park.jpg" },
+  { label: "Tầng 21, 23", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-21-23-toa-the-senique-1-ocean-park.jpg" },
+  { label: "Tầng 22", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-22-toa-the-senique-1-ocean-park.jpg" },
+  { label: "Tầng 24-34", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-24-26-28-30-32-34-toa-the-senique-1-ocean-park.jpg" },
+  { label: "Tầng 25-35", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-25-27-29-31-33-35-toa-the-senique-1-ocean-park.jpg" },
+  { label: "Tầng 36", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-36-toa-the-senique-1-ocean-park.jpg" },
+  { label: "Tầng 37", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-37-toa-the-senique-1-ocean-park.jpg" },
 ];
 
 const SENIQUE_2_FLOOR_PLANS: ImageTab[] = [
-  { label: "Tầng 2-18", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-2-4-6-8-10-12-14-16-18-toa-the-senique-2-ocean-park-1.jpg" },
-  { label: "Tầng 3-17", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-3-5-7-9-11-13-15-17-toa-the-senique-2-ocean-park.jpg" },
-  { label: "Tầng 20", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-20-toa-the-senique-2-ocean-park.jpg" },
-  { label: "Tầng 21, 23", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-21-23-toa-the-senique-2-ocean-park.jpg" },
-  { label: "Tầng 22", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-22-toa-the-senique-2-ocean-park.jpg" },
-  { label: "Tầng 24-34", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-24-26-28-30-32-34-toa-the-senique-2-ocean-park.jpg" },
-  { label: "Tầng 25-35", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-25-27-29-31-33-35-toa-the-senique-2-ocean-park-2048x1463.jpg" },
-  { label: "Tầng 36", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-36-toa-the-senique-2-ocean-park.jpg" },
+  { label: "Tầng 2-18", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-2-4-6-8-10-12-14-16-18-toa-the-senique-2-ocean-park-1.jpg" },
+  { label: "Tầng 3-17", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-3-5-7-9-11-13-15-17-toa-the-senique-2-ocean-park.jpg" },
+  { label: "Tầng 20", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-20-toa-the-senique-2-ocean-park.jpg" },
+  { label: "Tầng 21, 23", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-21-23-toa-the-senique-2-ocean-park.jpg" },
+  { label: "Tầng 22", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-22-toa-the-senique-2-ocean-park.jpg" },
+  { label: "Tầng 24-34", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-24-26-28-30-32-34-toa-the-senique-2-ocean-park.jpg" },
+  { label: "Tầng 25-35", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-25-27-29-31-33-35-toa-the-senique-2-ocean-park-2048x1463.jpg" },
+  { label: "Tầng 36", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-36-toa-the-senique-2-ocean-park.jpg" },
 ];
 
 const SENIQUE_PREMIER_FLOOR_PLANS: ImageTab[] = [
-  { label: "Tầng 3-17", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-3-5-7-9-11-13-15-17-toa-the-senique-premier.jpg" },
-  { label: "Tầng 21", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-21-toa-the-senique-premier.jpg" },
-  { label: "Tầng 22-34", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-22-24-26-28-30-32-34-toa-the-senique-premier-ocean-park.jpg" },
-  { label: "Tầng 23-35", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-23-25-27-29-31-33-35-toa-the-senique-premier.jpg" },
-  { label: "Tầng 36", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-36-toa-the-senique-premier.jpg" },
-  { label: "Tầng 37", src: "http://localhost:9000/project-images/the-senique-hanoi/mat-bang-tang-37-toa-the-senique-premier.jpg" },
+  { label: "Tầng 3-17", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-3-5-7-9-11-13-15-17-toa-the-senique-premier.jpg" },
+  { label: "Tầng 21", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-21-toa-the-senique-premier.jpg" },
+  { label: "Tầng 22-34", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-22-24-26-28-30-32-34-toa-the-senique-premier-ocean-park.jpg" },
+  { label: "Tầng 23-35", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-23-25-27-29-31-33-35-toa-the-senique-premier.jpg" },
+  { label: "Tầng 36", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-36-toa-the-senique-premier.jpg" },
+  { label: "Tầng 37", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/mat-bang-tang-37-toa-the-senique-premier.jpg" },
 ];
 
 export function TheSeniqueHanoiZone() {

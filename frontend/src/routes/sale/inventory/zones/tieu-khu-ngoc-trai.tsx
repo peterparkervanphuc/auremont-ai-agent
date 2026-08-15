@@ -7,8 +7,8 @@ import { FloorPlanTabs, TowerSpotlight, ZoneHeaderBanner, type ImageTab } from "
 // covered by VillaLocationMap above, so only the remaining 2 tabs are kept here
 // to avoid duplication).
 const NGOC_TRAI_LOCATION_TABS: ImageTab[] = [
-  { label: "Vị trí Tiểu khu Ngọc Trai", src: "http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-ngoc-trai.jpg" },
-  { label: "Phối cảnh Ngọc Trai", src: "http://localhost:9000/project-images/ngoc-trai/phan-khu-ngoc-trai-vinhomes-ocean-park.jpg" },
+  { label: "Vị trí Tiểu khu Ngọc Trai", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/vinhomes-ocean-park-ngoc-trai.jpg" },
+  { label: "Phối cảnh Ngọc Trai", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/phan-khu-ngoc-trai-vinhomes-ocean-park.jpg" },
 ];
 
 // Size/storey figures for Ngọc Trai villa types — sourced directly from pricing
@@ -23,21 +23,21 @@ const NGOC_TRAI_UNIT_TYPES = [
 // Exterior rendering images for each Ngọc Trai villa type — a dedicated section
 // right below the size intro, BEFORE the "floor plan" (technical drawing) section.
 const NGOC_TRAI_UNIT_PHOTOS: ImageTab[] = [
-  { label: "Đơn lập", src: "http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-don-lap.jpg" },
-  { label: "Song lập", src: "http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-song-lap.jpg" },
-  { label: "Liền kề", src: "http://localhost:9000/project-images/ngoc-trai/lien-ke-vinhomes-ocean-park.jpg" },
-  { label: "Shophouse", src: "http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-shop-house.jpg" },
+  { label: "Đơn lập", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/vinhomes-ocean-park-don-lap.jpg" },
+  { label: "Song lập", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/vinhomes-ocean-park-song-lap.jpg" },
+  { label: "Liền kề", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/lien-ke-vinhomes-ocean-park.jpg" },
+  { label: "Shophouse", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/vinhomes-ocean-park-shop-house.jpg" },
 ];
 
 // Real floor plans for Ngọc Trai — covers detached/semi-detached/townhouse/
 // shophouse types per the crawled image files; types without an image are not invented.
 const NGOC_TRAI_FLOOR_PLANS: ImageTab[] = [
-  { label: "Đơn lập", src: "http://localhost:9000/project-images/ngoc-trai/don-lap-ngoc-trai-vinhomes-ocean-park-1500x925.jpg" },
-  { label: "Song lập", src: "http://localhost:9000/project-images/ngoc-trai/song-lap-lap-ngoc-trai-vinhomes-ocean-park-1500x1024.jpg" },
-  { label: "Song lập (mẫu 2)", src: "http://localhost:9000/project-images/ngoc-trai/song-lap-2-ngoc-trai-vinhomes-ocean-park-1500x968.jpg" },
-  { label: "Liền kề", src: "http://localhost:9000/project-images/ngoc-trai/lien-ke-ngoc-trai-vinhomes-ocean-park-1500x959.jpg" },
-  { label: "Shophouse (mẫu 1)", src: "http://localhost:9000/project-images/ngoc-trai/shophouse-1-ngoc-trai-vinhomes-ocean-park-1500x1009.jpg" },
-  { label: "Shophouse (mẫu 2)", src: "http://localhost:9000/project-images/ngoc-trai/shophouse-2-ngoc-trai-vinhomes-ocean-park-1500x919.jpg" },
+  { label: "Đơn lập", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/don-lap-ngoc-trai-vinhomes-ocean-park-1500x925.jpg" },
+  { label: "Song lập", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/song-lap-lap-ngoc-trai-vinhomes-ocean-park-1500x1024.jpg" },
+  { label: "Song lập (mẫu 2)", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/song-lap-2-ngoc-trai-vinhomes-ocean-park-1500x968.jpg" },
+  { label: "Liền kề", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/lien-ke-ngoc-trai-vinhomes-ocean-park-1500x959.jpg" },
+  { label: "Shophouse (mẫu 1)", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/shophouse-1-ngoc-trai-vinhomes-ocean-park-1500x1009.jpg" },
+  { label: "Shophouse (mẫu 2)", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/shophouse-2-ngoc-trai-vinhomes-ocean-park-1500x919.jpg" },
 ];
 
 export function NgocTraiZone() {
@@ -49,7 +49,7 @@ export function NgocTraiZone() {
       />
       <TowerSpotlight
         projectId="ngoc-trai"
-        image="http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-ngoc-trai.jpg"
+        image="https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/vinhomes-ocean-park-ngoc-trai.jpg"
         oval={false}
         hideImage
       />
@@ -64,7 +64,7 @@ export function NgocTraiZone() {
       </p>
       <section className="section-block zone-spotlight-media-solo">
         <img
-          src="http://localhost:9000/project-images/ngoc-trai/tien-ich-ngoc-trai.jpg"
+          src="https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/tien-ich-ngoc-trai.jpg"
           alt="Tiện ích Tiểu khu Ngọc Trai"
         />
       </section>

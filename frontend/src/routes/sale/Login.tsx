@@ -6,7 +6,7 @@ import type { UserRole } from "../../types";
 import { EyeIcon, EyeOffIcon, LoaderIcon, LogInIcon, AuremontLogoIcon } from "../../components/Icons";
 
 const HERO_IMAGE_URL =
-  "http://localhost:9000/project-images/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
+  "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
 
 interface TokenResponse {
   access_token: string;

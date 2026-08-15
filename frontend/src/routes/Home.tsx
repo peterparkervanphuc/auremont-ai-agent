@@ -17,12 +17,12 @@ import {
 } from "../components/Icons";
 
 const HERO_IMAGE_URL =
-  "http://localhost:9000/project-images/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
+  "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
 
 const OVERVIEW_IMAGE_URL =
-  "http://localhost:9000/project-images/vinhomes-ocean-park/masterise-vinhomes-ocean-park-night.jpg";
+  "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/vinhomes-ocean-park/masterise-vinhomes-ocean-park-night.jpg";
 
-const PROJECT_IMG = "http://localhost:9000/project-images/vinhomes-ocean-park";
+const PROJECT_IMG = "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/vinhomes-ocean-park";
 
 const MASTER_PLAN_TABS = [
   { label: "Mặt bằng phân khu", src: `${PROJECT_IMG}/mat-bang-phan-khu-vinhomes-ocean-park.jpg` },
