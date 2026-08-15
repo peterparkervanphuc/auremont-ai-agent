@@ -8,22 +8,29 @@
 # Exits 0 silently if no Python is found — hooks must never block the AI tool.
 set -u
 
-if command -v python3 >/dev/null 2>&1; then
-  PY=python3
-elif command -v python >/dev/null 2>&1; then
-  PY=python
-elif command -v py >/dev/null 2>&1; then
-  PY="py -3"
-else
+# A name on PATH is not proof of a working interpreter: on Windows,
+# ~/AppData/Local/Microsoft/WindowsApps/python3 is an App Execution Alias that
+# only opens the Microsoft Store and exits non-zero. Probe each candidate by
+# actually running it before committing to it.
+works() {
+  # shellcheck disable=SC2086
+  $1 -c "import sys; sys.exit(0)" >/dev/null 2>&1
+}
+
+PY=""
+for cand in python3 python "py -3"; do
+  if works "$cand"; then PY="$cand"; break; fi
+done
+
+if [ -z "$PY" ]; then
   # PATH lookup failed — probe standard Windows install locations.
-  PY=""
   shopt -s nullglob 2>/dev/null || true
   for cand in \
     /c/Users/*/AppData/Local/Programs/Python/Python*/python.exe \
     "/c/Program Files/Python"*/python.exe \
     "/c/Program Files (x86)/Python"*/python.exe \
     /c/Python*/python.exe; do
-    if [ -x "$cand" ]; then PY="$cand"; break; fi
+    if [ -x "$cand" ] && works "$cand"; then PY="$cand"; break; fi
   done
   shopt -u nullglob 2>/dev/null || true
   [ -n "$PY" ] || exit 0

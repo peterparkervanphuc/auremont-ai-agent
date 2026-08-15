@@ -1,29 +1,58 @@
-from unittest.mock import AsyncMock
+import logging
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
+from fastapi.testclient import TestClient
 
-from src.main import app
-
-
-@pytest_asyncio.fixture
-async def client():
-    """Async HTTP client for testing API endpoints."""
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
+from backend.core.context import request_id_var
+from backend.core.logging_config import AUDIT_LOGGER_NAME
+from backend.main import app
 
 
 @pytest.fixture
-def mock_llm():
-    """Mock LLM to avoid calling OpenAI during tests.
+def client():
+    return TestClient(app)
 
-    Usage in test:
-        def test_something(mock_llm):
-            # LLM calls will return mock response instead of hitting OpenAI
-            ...
+
+@pytest.fixture
+def raw_client():
+    """Client that lets the app's own 500 handler run.
+
+    TestClient defaults to `raise_server_exceptions=True`, where
+    ServerErrorMiddleware re-raises instead of calling our handler — so the
+    response body can never be asserted. Kept separate from `client` on purpose:
+    flipping the default globally would turn every unexpected error in the
+    existing tests from a clear traceback into a puzzling `assert 200 == 500`.
     """
-    mock = AsyncMock()
-    mock.ainvoke.return_value = AsyncMock(content="Mocked LLM response")
-    return mock
+    return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_request_id():
+    """Stop a request id set by one test from leaking into the next."""
+    token = request_id_var.set("")
+    yield
+    request_id_var.reset(token)
+
+
+@pytest.fixture
+def capture_audit():
+    """Collect records from the audit logger.
+
+    `caplog` cannot see these: it attaches to the root logger and relies on
+    propagation, while the audit logger sets `propagate = False` by design.
+    Attaching a handler directly is immune to that and yields the real
+    LogRecords, so tests can assert on `record.__dict__` fields.
+    """
+    records: list[logging.LogRecord] = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Collector()
+    logger = logging.getLogger(AUDIT_LOGGER_NAME)
+    logger.addHandler(handler)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)

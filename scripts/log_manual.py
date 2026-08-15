@@ -38,7 +38,7 @@ def git(cmd):
 
 
 def interactive_mode():
-    """Prompt user for log info interactively."""
+    """Prompt the user for log info interactively."""
     print("\n📝 Manual AI Log Entry")
     print("=" * 40)
 

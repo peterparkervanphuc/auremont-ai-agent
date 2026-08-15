@@ -1,19 +1,100 @@
-version: "3.8"
-
 services:
   backend:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: ai20k_backend
     ports:
       - "8000:8000"
     env_file:
       - .env
-    volumes:
-      - ./data:/app/data
+    environment:
+      DATABASE_URL: mysql+pymysql://salesmate:salesmate@mysql:3306/salesmate_db
+      QDRANT_URL: http://qdrant:6333
+      MINIO_ENDPOINT: minio:9000
+      # Dia chi trinh duyet dung de tai anh cong khai. Phai la localhost, khong
+      # phai `minio:9000` — the <img> chay tren may host, khong trong network Docker.
+      MINIO_PUBLIC_ENDPOINT: localhost:9000
+      # Nguon anh du an (~58MB, khong nam trong git). Backend tai ve MinIO luc
+      # khoi dong. Dat gia tri trong .env — bo trong thi catalogue chay khong anh.
+      PROJECT_IMAGES_BASE_URL: ${PROJECT_IMAGES_BASE_URL:-}
+      # Mot file .tar.gz chua toan bo anh; mot request thay vi ~180.
+      PROJECT_IMAGES_ARCHIVE_URL: ${PROJECT_IMAGES_ARCHIVE_URL:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      minio:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000/api/v1
+        VITE_WS_URL: ws://localhost:8000
+    container_name: ai20k_frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    container_name: ai20k_mysql
+    ports:
+      # 3306 is commonly occupied by a locally installed MySQL service.
+      # Containers still communicate with MySQL at mysql:3306; only the host port changes.
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: salesmate_db
+      MYSQL_USER: salesmate
+      MYSQL_PASSWORD: salesmate
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ai20k_qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  minio:
+    image: minio/minio:latest
+    container_name: ai20k_minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql_data:
+  qdrant_data:
+  minio_data:
