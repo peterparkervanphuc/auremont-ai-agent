@@ -3,10 +3,11 @@ import { useLocation, useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type { MessageResponse } from "../../types";
 import { HitlCard } from "./HitlCard";
-import { BotIcon, DocumentIcon, LoaderIcon, SendIcon, TrashIcon, UserIcon } from "../../components/Icons";
+import { BotIcon, LoaderIcon, SendIcon, TrashIcon, UserIcon } from "../../components/Icons";
 import { FeedbackButtons } from "../../components/FeedbackButtons";
+import { CitationList } from "../../components/CitationList";
 import { AuremontMascot } from "../../components/AuremontMascot";
-import { ChatContextPanel } from "./ChatContextPanel";
+import { AnswerImageStrip } from "./AnswerImageStrip";
 import { ChatSuggestions } from "./ChatSuggestions";
 
 function formatTime(iso: string): string {
@@ -73,6 +74,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
       sender: "sale",
       content,
       citations: null,
+      images: null,
       verifier_score: null,
       requires_hitl: false,
       created_at: new Date().toISOString(),
@@ -127,7 +129,6 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
   };
 
   return (
-    <>
     <div className="chat-page">
       <header className="chat-topbar">
         <div className="chat-topbar-info">
@@ -189,17 +190,10 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
                     <p className="chat-bubble-text">{m.content}</p>
 
                     {!isUser && m.citations && m.citations.length > 0 && (
-                      <div className="chat-citations">
-                        <span className="chat-citations-label">Nguồn</span>
-                        {m.citations.map((c) => (
-                          <span key={`${c.document_id}-${c.page ?? 0}`} className="chat-citation">
-                            <DocumentIcon size={12} />
-                            {c.title}
-                            {c.page != null && ` · tr.${c.page}`}
-                          </span>
-                        ))}
-                      </div>
+                      <CitationList citations={m.citations} className="chat-citations" label="Nguồn" />
                     )}
+
+                    {!isUser && m.images && m.images.length > 0 && <AnswerImageStrip images={m.images} />}
                   </div>
                   <span className="chat-timestamp">{formatTime(m.created_at)}</span>
                   {!isUser && <FeedbackButtons messageId={m.id} />}
@@ -249,7 +243,5 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
         </form>
       </div>
     </div>
-    <ChatContextPanel messages={messages} />
-    </>
   );
 }

@@ -18,11 +18,12 @@ class ChatSession(Base):
     # The customer this session belongs to — each session keeps its own Memory per customer.
     customer_name = Column(String(255), nullable=True)
 
-    # The project this consultation session belongs to. The Agent needs it for
-    # real-time inventory lookups (`lookup_inventory` requires a project_id) and to
-    # filter retrieval to the right project's documents. Nullable because sessions
-    # created before this column exist, and a Sale may ask general questions that
-    # belong to no specific project.
+    # The project this consultation session belongs to: it narrows retrieval to that
+    # project's documents and picks which project's stock the inventory API is asked for.
+    # Nullable, and genuinely optional — the session-creation form no longer asks the Sale
+    # to choose a project, so most rows carry NULL. Inventory still works in that case:
+    # `inventory_service.resolve_api_project_id` falls back to the INVENTORY_PROJECT_MAP
+    # catch-all rather than refusing the lookup.
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
 
     created_at = Column(DateTime, default=utcnow, nullable=False)

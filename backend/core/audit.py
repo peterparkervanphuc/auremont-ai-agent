@@ -1,36 +1,68 @@
-"""Business audit trail — who did what, distinct from diagnostic logging.
+"""Business-event audit trail on a dedicated logger.
 
-These events answer questions the Admin dashboard asks (README §5.3 Tab 2):
-which answers scored badly, which documents were blocked, who confirmed a
-price commitment. They go to a dedicated logger pinned at INFO so raising
-`LOG_LEVEL` for noise control cannot switch the trail off.
+Separate from diagnostic logging on purpose. These lines answer *who did what*,
+are always INFO, and are pinned to INFO in `logging_config` so that running
+production at `LOG_LEVEL=WARNING` cannot silently switch off the trail. Routing
+them to their own sink later (a file, a SIEM) means editing one entry in the
+dictConfig rather than touching any call site.
 
-`log_event` never raises. An audit record is valuable, but not so valuable that
-failing to write one should break the Sale's request that triggered it.
+Every event carries the `request_id` through the formatter, so an audit line
+joins to its access line and to any traceback from the same request.
+
+**What must never appear here**: passwords or hashes, JWTs (not even a prefix),
+the HITL confirmed content going to a customer, document file contents, or any
+inventory field *value*. Truncate free text with `truncate()`.
 """
 
 import logging
-from typing import Any
 
-from backend.core.logging_config import AUDIT_LOGGER_NAME
-
-_audit_logger = logging.getLogger(AUDIT_LOGGER_NAME)
+_audit = logging.getLogger("salesmate.audit")
 
 DEFAULT_TRUNCATE_LIMIT = 200
 
+# `logging` raises KeyError if `extra` carries a name LogRecord already uses, and
+# the whole event is then lost. `filename` is the one that bites in practice —
+# it is a natural name for a document upload and also LogRecord's source file.
+# Colliding names are prefixed rather than dropped, so no field is ever silently
+# discarded.
+_RESERVED_RECORD_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {
+    "message",
+    "asctime",
+    "taskName",
+}
+
+
+def _safe_fields(fields: dict) -> dict:
+    return {(f"field_{key}" if key in _RESERVED_RECORD_ATTRS else key): value for key, value in fields.items()}
+
+
+def log_event(event: str, **fields: object) -> None:
+    """Emit one audit record to stdout, then persist it to MySQL.
+
+    Never raises — auditing must not break a request.
+
+    Two sinks with different jobs: stdout is immediate and joins to the
+    tracebacks of the same request while they are still in the collector's
+    window; the table survives the container and answers questions months later.
+    stdout goes first so a database outage degrades the trail instead of
+    erasing the event.
+    """
+    try:
+        # The event name is both the message and a queryable field: the console
+        # formatter then reads naturally, and the JSON has a stable `event` key.
+        _audit.info(event, extra={"event": event, "audit": True, **_safe_fields(fields)})
+    except Exception:  # pragma: no cover - defensive; logging must never propagate
+        _audit.warning("Audit event failed to emit", extra={"event": "audit.failed", "failed_event": event})
+
+    # Imported here, not at module scope: backend.core.audit_sink imports the
+    # models, which import Base, and several modules import this one very early.
+    from backend.core.audit_sink import persist_event
+
+    persist_event(event, fields)
+
 
 def truncate(text: str | None, limit: int = DEFAULT_TRUNCATE_LIMIT) -> str | None:
-    """Shorten free text for logging, marking that it was cut."""
+    """Cap free text so one long input cannot dominate the log."""
     if text is None:
         return None
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "…"
-
-
-def log_event(event: str, **fields: Any) -> None:
-    """Emit one audit event. Swallows its own errors by design."""
-    try:
-        _audit_logger.info(event, extra={"event": event, "audit": True, **fields})
-    except Exception:  # pragma: no cover - audit must never break a request
-        pass
+    return text if len(text) <= limit else text[:limit] + "…"

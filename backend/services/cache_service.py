@@ -17,7 +17,7 @@ skipping it is a few extra tokens.
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from qdrant_client import models
 
@@ -39,6 +39,9 @@ class CachedAnswer:
     answer: str
     citations: list[dict]
     verifier_score: float
+    # Cached alongside the answer so a cache hit still shows the photos the question
+    # asked for. Defaulted because rows written before this field existed have no key.
+    images: list[dict] = field(default_factory=list)
 
 
 def lookup_cache(query: str, project_id: str | None = None) -> CachedAnswer | None:
@@ -89,6 +92,7 @@ def lookup_cache(query: str, project_id: str | None = None) -> CachedAnswer | No
         answer=answer,
         citations=payload.get("citations") or [],
         verifier_score=payload.get("verifier_score") or 0.0,
+        images=payload.get("images") or [],
     )
 
 
@@ -98,6 +102,7 @@ def store_cache(
     citations: list[dict],
     verifier_score: float,
     project_id: str | None = None,
+    images: list[dict] | None = None,
 ) -> None:
     """Store a (question, answer) pair that has met the quality bar.
 
@@ -124,6 +129,7 @@ def store_cache(
                         "query": query,
                         "answer": answer,
                         "citations": citations,
+                        "images": images or [],
                         "verifier_score": verifier_score,
                         "project_id": project_id,
                     },

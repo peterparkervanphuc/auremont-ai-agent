@@ -18,6 +18,12 @@ class Message(Base):
     # Retrieval citations, e.g. [{"document_id": 12, "title": "...", "page": 3}]
     citations = Column(JSON, nullable=True)
 
+    # Project gallery images shown as a swipeable strip under the answer, e.g.
+    # [{"url": "http://.../hai-au/don-lap.jpg", "project_id": "hai-au", "project_name": "Hải Âu"}].
+    # Stored per message rather than resolved on read so reopening an old conversation
+    # shows what the Sale actually saw, even after the catalogue changes.
+    images = Column(JSON, nullable=True)
+
     verifier_score = Column(Float, nullable=True)  # Overall Verifier score: min(faithfulness, relevancy)
     # The two component scores behind verifier_score, kept apart for the Admin dashboard:
     # low faithfulness means invented figures, low relevancy means retrieval fetched the wrong

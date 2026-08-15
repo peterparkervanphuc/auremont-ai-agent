@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useMatch, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
-import type { ChatSessionResponse, ProjectResponse } from "../../types";
+import type { ChatSessionResponse } from "../../types";
 import { ArrowLeftIcon, ChatIcon, PlusIcon, SearchIcon, TrashIcon } from "../../components/Icons";
 
 function formatDate(iso: string): string {
@@ -17,7 +17,7 @@ interface Props {
   onChange: (next: ChatSessionResponse[]) => void;
 }
 
-// Sidebar: "new Session" button + list of "Session: Customer...".
+// Sidebar: "new conversation" button + the list of past conversations.
 export function SessionList({ sessions, loading, onChange }: Props) {
   // This component sits outside <Route path="sessions/:sessionId">, so useParams()
   // would always be undefined here — use useMatch to read sessionId directly from
@@ -25,20 +25,15 @@ export function SessionList({ sessions, loading, onChange }: Props) {
   const match = useMatch("/chat/sessions/:sessionId");
   const sessionId = match?.params.sessionId;
   const navigate = useNavigate();
-  const [projects, setProjects] = useState<ProjectResponse[]>([]);
 
   const [naming, setNaming] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
 
-  useEffect(() => {
-    api.get<ProjectResponse[]>("/projects").then(setProjects).catch(() => setProjects([]));
-  }, []);
-
   const filteredSessions = useMemo(() => {
     const q = historyQuery.trim().toLowerCase();
     if (!q) return sessions;
-    return sessions.filter((s) => (s.customer_name ?? s.title ?? `Session: Khách #${s.id}`).toLowerCase().includes(q));
+    return sessions.filter((s) => (s.customer_name ?? s.title ?? `Cuộc trò chuyện #${s.id}`).toLowerCase().includes(q));
   }, [sessions, historyQuery]);
 
   const closeNaming = () => {
@@ -46,10 +41,10 @@ export function SessionList({ sessions, loading, onChange }: Props) {
     setCustomerName("");
   };
 
-  // The customer name is all a new session needs; Sale goes straight into the chat.
-  // A session therefore carries no project_id, so real-time inventory lookups
-  // answer with the "khong tra duoc ton kho" notice — document retrieval (price
-  // lists, floor plans, policies) still searches across every project.
+  // A name is the only thing a new conversation takes, and even that is optional —
+  // Sale goes straight into the chat. No project is chosen here: the Agent resolves
+  // which project a question is about from the question itself, and document
+  // retrieval searches across every project either way.
   const submitNewSession = async (e: FormEvent) => {
     e.preventDefault();
     const name = customerName.trim();
@@ -98,7 +93,7 @@ export function SessionList({ sessions, loading, onChange }: Props) {
             />
             <div className="chat-new-form-actions">
               <button type="submit" className="btn btn-primary chat-new-form-submit">
-                Tạo phiên
+                Bắt đầu
               </button>
               <button type="button" className="chat-new-form-cancel" onClick={closeNaming}>
                 Huỷ
@@ -106,15 +101,9 @@ export function SessionList({ sessions, loading, onChange }: Props) {
             </div>
           </form>
         ) : (
-          <button
-            onClick={() => setNaming(true)}
-            className="chat-new-btn"
-            type="button"
-            disabled={projects.length === 0}
-            title={projects.length === 0 ? "Chưa có dữ liệu dự án" : undefined}
-          >
+          <button onClick={() => setNaming(true)} className="chat-new-btn" type="button">
             <PlusIcon size={17} />
-            Phiên khách hàng mới
+            Cuộc trò chuyện mới
           </button>
         )}
 
@@ -128,11 +117,6 @@ export function SessionList({ sessions, loading, onChange }: Props) {
         </div>
       </div>
 
-      {/* Spec §5.2a — no project data means Sale cannot consult anything yet. */}
-      {projects.length === 0 && !loading && (
-        <p className="chat-conv-empty">Chưa có dữ liệu dự án, vui lòng báo Admin cập nhật.</p>
-      )}
-
       <div className="chat-conv-list">
         {loading ? (
           <>
@@ -142,12 +126,12 @@ export function SessionList({ sessions, loading, onChange }: Props) {
           </>
         ) : sessions.length === 0 ? (
           <p className="chat-conv-empty">
-            Chưa có phiên tư vấn nào.
+            Chưa có cuộc trò chuyện nào.
             <br />
-            Bấm &ldquo;Phiên khách hàng mới&rdquo; để bắt đầu.
+            Bấm &ldquo;Cuộc trò chuyện mới&rdquo; để bắt đầu.
           </p>
         ) : filteredSessions.length === 0 ? (
-          <p className="chat-conv-empty">Không tìm thấy phiên nào khớp &ldquo;{historyQuery}&rdquo;.</p>
+          <p className="chat-conv-empty">Không tìm thấy cuộc trò chuyện nào khớp &ldquo;{historyQuery}&rdquo;.</p>
         ) : (
           filteredSessions.map((s) => (
             <Link
@@ -156,13 +140,13 @@ export function SessionList({ sessions, loading, onChange }: Props) {
               className={`chat-conv-item ${String(s.id) === sessionId ? "chat-conv-item--active" : ""}`}
             >
               <span className="chat-conv-title">
-                {s.customer_name ?? s.title ?? `Session: Khách #${s.id}`}
+                {s.customer_name ?? s.title ?? `Cuộc trò chuyện #${s.id}`}
               </span>
               <span className="chat-conv-time">{formatDate(s.created_at)}</span>
               <button
                 className="chat-conv-delete"
                 onClick={(e) => removeSession(e, s.id)}
-                aria-label="Xoá phiên"
+                aria-label="Xoá cuộc trò chuyện"
                 type="button"
               >
                 <TrashIcon size={14} />

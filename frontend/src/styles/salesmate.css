@@ -1171,6 +1171,9 @@
     radial-gradient(circle at 100% 0%, rgba(245, 158, 11, 0.09), transparent 42%),
     var(--bg-2);
   box-shadow: 0 12px 38px rgba(245, 158, 11, 0.14);
+  /* The children all carry `padding-bottom: 0` so they can sit flush against each
+     other; the card supplies the bottom gap once, whichever child ends up last. */
+  padding-bottom: 18px;
   overflow: hidden;
   animation: card-in 0.3s var(--ease) both;
 }
@@ -1197,6 +1200,34 @@
   text-transform: uppercase;
 }
 
+/* The mandatory confirm-and-copy gate, as a corner icon. `margin-left: auto` pins it
+   to the right of the header regardless of how long the title wraps. */
+.hitl-copy-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--amber);
+  background: none;
+  color: var(--amber);
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+
+.hitl-copy-btn:hover:not(:disabled) {
+  background: var(--amber);
+  color: #fff;
+}
+
+.hitl-copy-btn--done {
+  border-color: var(--emerald);
+  color: var(--emerald);
+  cursor: default;
+}
+
 .hitl-body {
   padding: 12px 20px 0;
   font-size: 0.9375rem;
@@ -1217,7 +1248,7 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 18px 20px;
+  padding: 14px 20px 0;
 }
 
 .hitl-confirmed {
@@ -1229,65 +1260,64 @@
   color: var(--emerald);
 }
 
+
 /* ── Feedback ───────────────────────────────────────────── */
+/* Reveals on hover so the row does not compete with the answer itself. Only opacity
+   and visibility animate — an earlier version also animated a fixed max-height, which
+   clipped the row and left its contents overlapping the timestamp beside it. */
 .feedback-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 0;
-  max-height: 0;
-  overflow: hidden;
+  gap: 4px;
   opacity: 0;
-  transition: opacity var(--t-fast), max-height var(--t-fast), margin-top var(--t-fast);
+  visibility: hidden;
+  transition: opacity var(--t-fast), visibility var(--t-fast);
 }
 
 .chat-message:hover .feedback-row,
 .chat-message:focus-within .feedback-row,
 .chat-hitl-row:hover .feedback-row,
-.chat-hitl-row:focus-within .feedback-row,
-.feedback-row--sent {
-  margin-top: 5px;
-  max-height: 30px;
+.chat-hitl-row:focus-within .feedback-row {
   opacity: 1;
+  visibility: visible;
 }
 
-.feedback-label {
-  font-size: 0.72rem;
-  color: var(--text-3);
+/* A recorded verdict stays visible without hovering — it is the state of the answer,
+   not a control. */
+.feedback-row:has(.feedback-icon-btn--active) {
+  opacity: 1;
+  visibility: visible;
 }
 
-.feedback-btn {
+.feedback-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border-radius: 7px;
   color: var(--text-3);
   border: 1px solid transparent;
+  background: none;
+  cursor: pointer;
   transition: all var(--t-fast);
 }
 
-.feedback-btn:hover {
+.feedback-icon-btn:hover:not(:disabled) {
   background: var(--bg-glass-h);
   border-color: var(--border);
   color: var(--text-1);
 }
 
-.feedback-btn--up:hover {
-  color: var(--emerald);
-  border-color: rgba(16, 185, 129, 0.3);
-}
+/* Once a verdict is recorded the pair stops responding to hover, but the chosen one
+   stays lit so the Sale can see which way they voted. */
+.feedback-icon-btn:disabled { cursor: default; }
 
-.feedback-btn--down:hover {
-  color: var(--rose);
-  border-color: rgba(190, 18, 60, 0.3);
-}
-
-.feedback-btn--active {
+.feedback-icon-btn--active {
   color: var(--accent);
   border-color: rgba(0, 80, 239, 0.35);
   background: rgba(0, 80, 239, 0.08);
+  opacity: 1;
 }
 
 /* ── Chat citations ─────────────────────────────────────── */
@@ -1319,6 +1349,82 @@
   color: var(--accent);
   background: rgba(0, 80, 239, 0.08);
   border: 1px solid rgba(0, 80, 239, 0.2);
+}
+
+/* ── Answer image strip ─────────────────────────────────── */
+.answer-images {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+}
+
+.answer-images-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+
+/* Wraps rather than scrolls. The backend no longer caps how many photos an answer
+   carries, and a single scrolling row of 60 thumbnails hides most of them behind a
+   gesture a mouse cannot make; wrapping keeps every one reachable. */
+.answer-images-track {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.answer-image-card {
+  flex: 0 0 auto;
+  width: 120px;
+  height: 84px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  cursor: zoom-in;
+}
+
+.answer-image-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.answer-image-card:hover { border-color: var(--accent); }
+
+/* Portalled to <body>, so it is positioned against the viewport and sits above the
+   topbar and sidebar. `cursor: zoom-out` on the backdrop advertises click-to-close. */
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(9, 12, 20, 0.82);
+  cursor: zoom-out;
+  animation: lightbox-in 0.16s var(--ease);
+}
+
+.image-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  cursor: default;
+}
+
+@keyframes lightbox-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* ── Thinking indicator ─────────────────────────────────── */
@@ -1505,6 +1611,52 @@
   top: 14px;
   right: 16px;
   color: var(--accent);
+}
+
+/* ── Duyệt phân loại tài liệu ──────────────────────────── */
+.review-layout {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.7fr) minmax(0, 1.3fr);
+  gap: 20px;
+  margin-top: 24px;
+}
+
+.review-list { align-content: start; }
+
+.review-item {
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  cursor: pointer;
+  color: inherit;
+}
+
+.review-item--active { border-color: var(--accent); }
+
+.review-form {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+
+.review-reason { color: var(--text-2); font-size: 0.875rem; }
+
+.review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.review-grid label, .review-summary {
+  display: grid;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 0.8125rem;
 }
 
 /* ── Project lookup ──────────────────────────────────────── */
@@ -2055,6 +2207,22 @@
   background: var(--bg-2);
   color: var(--text-2);
   font-size: 0.8125rem;
+}
+
+.review-grid input, .review-grid select, .review-summary textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--text-1);
+  padding: 9px 10px;
+  font: inherit;
+}
+
+.review-summary { margin: 16px 0; }
+
+@media (max-width: 860px) {
+  .review-layout, .review-grid { grid-template-columns: 1fr; }
 }
 
 .detail-amenity-chip svg {

@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # "Không đủ thông tin, liên hệ Admin" notice instead of the answer.
     verifier_threshold_sale: float = 0.7
 
+    # Documents at or above this classification confidence are auto-approved.
+    classification_auto_approve_threshold: float = Field(
+        default=0.9, ge=0, le=1
+    )
+
     # Object storage (MinIO) — document originals
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
@@ -94,6 +99,16 @@ class Settings(BaseSettings):
     # Inventory API — real-time unit availability from the company's internal API
     inventory_api_url: str = ""
     inventory_api_key: str = ""
+    # Bridges two different project-id namespaces. The `projects` table is keyed by
+    # catalogue slug (`the-palma`, `vinhomes-ocean-park`), while the inventory API keys
+    # units by its own project code (`ocean-park-3`) — a slug sent straight through
+    # returns 404 and the Sale sees "Tạm thời không tra được tồn kho" for every project.
+    #
+    # Format: comma-separated `slug=code` pairs. `*=code` is the catch-all, used for any
+    # slug not listed and for sessions carrying no project at all (the session flow no
+    # longer asks the Sale to pick one). Left blank, the slug is passed through unchanged,
+    # which is what a production API keyed by the same slugs would want.
+    inventory_project_map: str = ""
 
     # Model embedding
     embedding_model: str = "gemini-embedding-001"

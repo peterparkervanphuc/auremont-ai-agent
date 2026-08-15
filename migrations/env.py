@@ -15,9 +15,11 @@ from backend.core.mysql_client import Base
 # Import để mọi bảng được đăng ký vào Base.metadata trước khi autogenerate chạy;
 # thiếu một dòng ở đây thì Alembic sẽ tưởng bảng đó bị xoá.
 from backend.models import (  # noqa: F401
+    audit_log,
     chat_session,
     conflict_flag,
     document,
+    document_relation,
     feedback,
     hitl_log,
     message,

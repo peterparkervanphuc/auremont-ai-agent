@@ -20,6 +20,7 @@ from backend.models import (  # noqa: F401
     chat_session,
     conflict_flag,
     document,
+    document_relation,
     hitl_log,
     message,
     project,
@@ -34,6 +35,7 @@ from backend.routers import (
     auth,
     dev_seed,
     documents,
+    document_relations,
     feedback,
     hitl,
     projects,
@@ -98,6 +100,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(projects.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
+app.include_router(document_relations.router, prefix="/api/v1")
 app.include_router(sale_chat.router, prefix="/api/v1")
 app.include_router(hitl.router, prefix="/api/v1")
 app.include_router(feedback.router, prefix="/api/v1")

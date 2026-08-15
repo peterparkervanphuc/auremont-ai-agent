@@ -109,6 +109,49 @@ def test_chunk_sections_handles_document_with_heading_only():
     assert chunks[0].page == 9
 
 
+def test_chunk_sections_handles_pdf_heading_without_blank_line():
+    sections = [
+        ParsedSection(
+            text=(
+                "I. CHINH SACH BAN HANG\n"
+                "Ma van ban: VHOP3_CSBH-V64-260901\n"
+                "1. UU DAI THANH TOAN SOM\n"
+                "Khach hang thanh toan som duoc chiet khau 5%."
+            ),
+            page=1,
+        )
+    ]
+
+    chunks = chunk_sections(sections, chunk_chars=300, overlap_chars=30)
+
+    assert len(chunks) == 2
+    assert "Ma van ban: VHOP3_CSBH-V64-260901" in chunks[0].text
+    assert "I. CHINH SACH BAN HANG > 1. UU DAI THANH TOAN SOM" in chunks[1].text
+    assert "chiet khau 5%" in chunks[1].text
+
+
+def test_chunk_sections_keeps_bullet_terms_as_logical_units():
+    sections = [
+        ParsedSection(
+            text=(
+                "II. DIEU KHOAN\n"
+                "- Ap dung cho can 2PN khi thanh toan som 95%.\n"
+                "- Khong cong don voi uu dai khac.\n"
+                "- Hieu luc den ngay 31/08/2026."
+            ),
+            page=4,
+        )
+    ]
+
+    chunks = chunk_sections(sections, chunk_chars=100, overlap_chars=20)
+
+    assert len(chunks) >= 2
+    assert all(chunk.page == 4 for chunk in chunks)
+    assert all(len(chunk.text) <= 100 for chunk in chunks)
+    assert any("Ap dung cho can 2PN" in chunk.text for chunk in chunks)
+    assert any("Khong cong don" in chunk.text for chunk in chunks)
+
+
 @pytest.mark.parametrize(
     ("chunk_chars", "overlap_chars"),
     [

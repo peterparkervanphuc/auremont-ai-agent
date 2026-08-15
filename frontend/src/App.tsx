@@ -14,6 +14,8 @@ import { CatalogGroupPage } from "./routes/sale/CatalogGroupPage";
 import { ProjectOverviewPage } from "./routes/sale/ProjectOverviewPage";
 import { AdminHome } from "./routes/admin/AdminHome";
 import { DocumentsTab } from "./routes/admin/DocumentsTab";
+import { DocumentReviewTab } from "./routes/admin/DocumentReviewTab";
+import { DocumentRelationsTab } from "./routes/admin/DocumentRelationsTab";
 import { EvalTab } from "./routes/admin/EvalTab";
 import { ConflictsTab } from "./routes/admin/ConflictsTab";
 import { SettingsTab } from "./routes/admin/SettingsTab";
@@ -97,6 +99,22 @@ function AppShell() {
             element={
               <ProtectedRoute allowedRole="admin">
                 <DocumentsTab />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/document-review"
+            element={
+              <ProtectedRoute allowedRole="admin">
+                <DocumentReviewTab />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/document-relations"
+            element={
+              <ProtectedRoute allowedRole="admin">
+                <DocumentRelationsTab />
               </ProtectedRoute>
             }
           />
