@@ -22,11 +22,7 @@ def test_chunk_sections_preserves_page_and_global_index():
 def test_chunk_sections_includes_roman_and_number_breadcrumb():
     sections = [
         ParsedSection(
-            text=(
-                "I. CHINH SACH BAN HANG\n\n"
-                "1. GIA BAN\n\n"
-                "Gia can ho 2PN tu 3.5 ty dong."
-            ),
+            text=("I. CHINH SACH BAN HANG\n\n1. GIA BAN\n\nGia can ho 2PN tu 3.5 ty dong."),
             page=3,
         )
     ]
@@ -81,10 +77,7 @@ def test_chunk_sections_splits_large_table_without_exceeding_limit():
         [
             "| Ma can | Loai | Gia |",
             "| --- | --- | --- |",
-            *[
-                f"| A-{number:03d} | 2PN | {3 + number / 10:.1f} ty |"
-                for number in range(20)
-            ],
+            *[f"| A-{number:03d} | 2PN | {3 + number / 10:.1f} ty |" for number in range(20)],
         ]
     )
     sections = [ParsedSection(text=table, page=8)]
@@ -210,12 +203,7 @@ def test_legal_chunking_preserves_article_clause_and_point_breadcrumbs():
     )
 
     assert all(chunk.page == 4 for chunk in chunks)
-    assert any(
-        "Điều 12" in chunk.text
-        and "Khoản 1" in chunk.text
-        and "Điểm a" in chunk.text
-        for chunk in chunks
-    )
+    assert any("Điều 12" in chunk.text and "Khoản 1" in chunk.text and "Điểm a" in chunk.text for chunk in chunks)
     assert any("Điều 12" in chunk.text and "Khoản 2" in chunk.text for chunk in chunks)
     assert any("Điều 13" in chunk.text and "Khoản 1" in chunk.text for chunk in chunks)
     assert not any("Điều 12" in chunk.text and "Điều 13" in chunk.text for chunk in chunks)
@@ -224,10 +212,7 @@ def test_legal_chunking_preserves_article_clause_and_point_breadcrumbs():
 def test_price_table_repeats_header_and_never_splits_a_row():
     header = "| Mã căn | Loại căn | Diện tích | Giá bán |"
     separator = "| --- | --- | --- | --- |"
-    rows = [
-        f"| BE1-{number:02d} | 2PN | 68 m2 | {3.2 + number / 10:.1f} tỷ |"
-        for number in range(8)
-    ]
+    rows = [f"| BE1-{number:02d} | 2PN | 68 m2 | {3.2 + number / 10:.1f} tỷ |" for number in range(8)]
     sections = [
         ParsedSection(
             text="\n".join([header, separator, *rows]),

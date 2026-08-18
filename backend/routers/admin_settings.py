@@ -5,7 +5,9 @@ from backend.core.config import get_settings
 from backend.core.deps import require_role
 from backend.core.enums import UserRole
 
-router = APIRouter(prefix="/admin/settings", tags=["Admin Settings"], dependencies=[Depends(require_role(UserRole.ADMIN))])
+router = APIRouter(
+    prefix="/admin/settings", tags=["Admin Settings"], dependencies=[Depends(require_role(UserRole.ADMIN))]
+)
 
 
 class SettingsResponse(BaseModel):

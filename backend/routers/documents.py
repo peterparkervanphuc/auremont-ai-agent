@@ -53,6 +53,22 @@ router = APIRouter(
 
 ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".docx"}
 
+# Leading bytes each accepted format must start with. The extension is attacker-chosen —
+# renaming an HTML or script file to .pdf passes an extension check — so the content is
+# verified before the parsers, which are the code most exposed to a malformed file.
+# DOCX is a ZIP container, hence the PK signature.
+_MAGIC_BYTES = {
+    ".pdf": (b"%PDF-",),
+    ".docx": (b"PK", b"PK", b"PK"),
+}
+
+
+def _content_matches_extension(suffix: str, file_bytes: bytes) -> bool:
+    signatures = _MAGIC_BYTES.get(suffix)
+    if not signatures:
+        return False
+    return any(file_bytes.startswith(signature) for signature in signatures)
+
 
 class IngestRequest(BaseModel):
     """Legacy raw-text endpoint; kept so the older flow does not break."""
@@ -110,13 +126,23 @@ async def upload_document(
             detail="Uploaded file is empty.",
         )
 
+    if not _content_matches_extension(suffix, file_bytes):
+        log_event(
+            "document.upload.rejected",
+            filename=file.filename,
+            reason="content_does_not_match_extension",
+            content_type=file.content_type,
+            admin_id=admin.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="File content does not match its extension.",
+        )
+
     if len(file_bytes) > settings.upload_max_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=(
-                f"File exceeds the maximum allowed size of "
-                f"{settings.upload_max_bytes} bytes."
-            ),
+            detail=(f"File exceeds the maximum allowed size of {settings.upload_max_bytes} bytes."),
         )
 
     document = create_document(
@@ -290,6 +316,7 @@ async def remove_document(
             detail=str(exc),
         ) from exc
 
+
 @router.get(
     "/pending-review",
     response_model=list[DocumentResponse],
@@ -297,7 +324,7 @@ async def remove_document(
 async def get_pending_review_documents(
     db: Session = Depends(get_db),
 ) -> list[DocumentResponse]:
-    """Danh sách file chờ Admin xác nhận phân loại."""
+    """Files awaiting an Admin classification decision."""
 
     return list_documents_pending_review(db)
 
@@ -312,7 +339,7 @@ async def approve_document_classification(
     db: Session = Depends(get_db),
     admin: User = Depends(require_role(UserRole.ADMIN)),
 ) -> DocumentResponse:
-    """Admin sửa metadata và duyệt file để bước sau cho phép RAG sử dụng."""
+    """Correct metadata and approve a file, which is what makes it retrievable by RAG."""
 
     try:
         document = update_document_classification(

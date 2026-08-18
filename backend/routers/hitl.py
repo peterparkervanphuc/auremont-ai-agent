@@ -6,7 +6,8 @@ from backend.core.deps import require_role
 from backend.core.enums import UserRole
 from backend.core.mysql_client import get_db
 from backend.models.user import User
-from backend.repositories.hitl_log import confirm_hitl_log, create_hitl_log
+from backend.repositories.chat_session import get_session
+from backend.repositories.hitl_log import confirm_message
 from backend.repositories.message import get_message
 from backend.schemas.hitl_log import HitlConfirmRequest, HitlLogResponse
 
@@ -20,27 +21,37 @@ async def confirm_hitl(
     db: Session = Depends(get_db),
     user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN)),
 ) -> HitlLogResponse:
-    """Mandatory 'XÁC NHẬN & GỬI' action before a price/commitment answer can be sent or copied.
+    """Mandatory confirmation before a price/commitment answer may be sent to a customer.
 
-    Both SALE and ADMIN can chat, so both can confirm; hitl_log.sale_id records
-    whoever actually pressed confirm, for later auditing.
+    Only the owner of the conversation may confirm. Without that check any authenticated
+    Sale could confirm any message by guessing its id, putting another user's name against
+    a commitment they never read.
     """
     message = get_message(db, message_id)
     if message is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
+    session = get_session(db, message.session_id) if message.session_id else None
+    if session is None or session.sale_id != user.id:
+        # 404 rather than 403: a 403 would confirm that this message id exists.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
     if not message.requires_hitl:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message does not require HITL")
 
-    log = create_hitl_log(db, message_id=message_id, sale_id=user.id)
-    confirmed = confirm_hitl_log(db, log_id=log.id, confirmed_content=payload.confirmed_content)
+    confirmed = confirm_message(
+        db,
+        message_id=message_id,
+        sale_id=user.id,
+        confirmed_content=payload.confirmed_content,
+    )
 
-    # Do not log `confirmed_content`: it is the exact price/commitment text sent
-    # to the customer. What matters for the audit is whether the Sale EDITED the
-    # AI-generated content (`edited`).
+    # Never log `confirmed_content`: it is the exact price/commitment text going to the
+    # customer. What the audit needs is whether the Sale edited the generated answer.
     log_event(
         "hitl.confirm",
         message_id=message_id,
-        hitl_log_id=log.id,
+        hitl_log_id=confirmed.id,
         user_id=user.id,
         content_len=len(payload.confirmed_content or ""),
         edited=(payload.confirmed_content or "") != (message.content or ""),

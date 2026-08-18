@@ -238,11 +238,7 @@ def test_price_lists_with_different_names_and_prices_create_conflict(
     monkeypatch.setattr(
         ingestion_service,
         "_read_original_text",
-        lambda document: (
-            "Ma can | Loai | Gia\nBE1-1201 | 2PN | 3.5 ty"
-            if document.id == old.id
-            else ""
-        ),
+        lambda document: "Ma can | Loai | Gia\nBE1-1201 | 2PN | 3.5 ty" if document.id == old.id else "",
     )
 
     conflict_ids = ingestion_service.flag_conflicts_for(
@@ -276,8 +272,11 @@ def test_price_lists_with_same_unit_and_same_price_do_not_conflict(
         lambda _document: "BE1-1201 | 2PN | 3.5 ty",
     )
 
-    assert ingestion_service.flag_conflicts_for(
-        db_session,
-        new,
-        raw_text="BE1-1201 | 2PN | 3.5 ty",
-    ) == []
+    assert (
+        ingestion_service.flag_conflicts_for(
+            db_session,
+            new,
+            raw_text="BE1-1201 | 2PN | 3.5 ty",
+        )
+        == []
+    )

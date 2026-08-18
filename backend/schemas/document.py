@@ -77,6 +77,7 @@ class DocumentResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+
 class DocumentClassificationUpdate(BaseModel):
     category: DocumentCategory
     subcategory: str | None = None

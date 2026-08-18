@@ -40,8 +40,7 @@ def parse_document(filename: str, data: bytes) -> list[ParsedSection]:
         return _parse_docx(data)
 
     raise UnsupportedDocumentTypeError(
-        f"Unsupported file type: {suffix or '(no extension)'}. "
-        "Only .pdf and .docx are supported."
+        f"Unsupported file type: {suffix or '(no extension)'}. Only .pdf and .docx are supported."
     )
 
 
@@ -58,15 +57,13 @@ def _parse_pdf(data: bytes) -> list[ParsedSection]:
             ]
     except Exception as exc:
         logger.exception(
-            "Parse PDF that bai.",
+            "PDF parsing failed.",
             extra={"event": "parser.pdf.failed", "size_bytes": len(data)},
         )
         raise DocumentParseError("Could not parse PDF.") from exc
 
     if not sections:
-        raise DocumentParseError(
-            "PDF contains no extractable text. OCR is not supported yet."
-        )
+        raise DocumentParseError("PDF contains no extractable text. OCR is not supported yet.")
 
     return sections
 
@@ -78,7 +75,7 @@ def _parse_docx(data: bytes) -> list[ParsedSection]:
         text = "\n".join(item for item in paragraphs if item)
     except Exception as exc:
         logger.exception(
-            "Parse DOCX that bai.",
+            "DOCX parsing failed.",
             extra={"event": "parser.docx.failed", "size_bytes": len(data)},
         )
         raise DocumentParseError("Could not parse DOCX.") from exc

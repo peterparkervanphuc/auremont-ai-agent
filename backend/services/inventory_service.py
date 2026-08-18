@@ -33,14 +33,34 @@ _UNIT_TYPE_PATTERN = re.compile(
     r"\b(\d+\s*(?:pn|phòng\s*ngủ|phong\s*ngu)|penthouse|studio|shophouse|duplex)\b",
     re.IGNORECASE,
 )
-_AREA_RANGE_PATTERN = re.compile(r"\b(?:từ\s*)?(\d+(?:[.,]\d+)?)\s*(?:-|đến|tới)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
+_AREA_RANGE_PATTERN = re.compile(
+    r"\b(?:từ\s*)?(\d+(?:[.,]\d+)?)\s*(?:-|đến|tới)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE
+)
 _AREA_MAX_PATTERN = re.compile(r"\b(?:dưới|<=?|không quá|tối đa)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
 _AREA_MIN_PATTERN = re.compile(r"\b(?:trên|>=?|từ)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
-_PRICE_RANGE_PATTERN = re.compile(r"\b(?:từ\s*)?(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)?\s*(?:-|đến|tới)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)\b", re.IGNORECASE)
-_PRICE_MAX_PATTERN = re.compile(r"\b(?:dưới|<=?|không quá|tối đa)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)\b", re.IGNORECASE)
+_PRICE_RANGE_PATTERN = re.compile(
+    r"\b(?:từ\s*)?(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)?\s*(?:-|đến|tới)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)\b",
+    re.IGNORECASE,
+)
+_PRICE_MAX_PATTERN = re.compile(
+    r"\b(?:dưới|<=?|không quá|tối đa)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)\b", re.IGNORECASE
+)
 _PRICE_MIN_PATTERN = re.compile(r"\b(?:trên|>=?|từ)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)\b", re.IGNORECASE)
-_STATUS_PATTERN = re.compile(r"\b(còn căn|còn bán|còn hàng|còn trống|available|giữ chỗ|đặt chỗ|reserved|đã bán|sold)\b", re.IGNORECASE)
-_STATUS_ALIASES = {"còn căn": "available", "còn bán": "available", "còn hàng": "available", "còn trống": "available", "available": "available", "giữ chỗ": "reserved", "đặt chỗ": "reserved", "reserved": "reserved", "đã bán": "sold", "sold": "sold"}
+_STATUS_PATTERN = re.compile(
+    r"\b(còn căn|còn bán|còn hàng|còn trống|available|giữ chỗ|đặt chỗ|reserved|đã bán|sold)\b", re.IGNORECASE
+)
+_STATUS_ALIASES = {
+    "còn căn": "available",
+    "còn bán": "available",
+    "còn hàng": "available",
+    "còn trống": "available",
+    "available": "available",
+    "giữ chỗ": "reserved",
+    "đặt chỗ": "reserved",
+    "reserved": "reserved",
+    "đã bán": "sold",
+    "sold": "sold",
+}
 
 
 class InventoryApiError(Exception):
@@ -129,7 +149,7 @@ def _project_map() -> dict[str, str]:
         key, value = key.strip(), value.strip()
         if not separator or not key or not value:
             logger.warning(
-                "Bo qua muc INVENTORY_PROJECT_MAP khong hop le.",
+                "Skipping a malformed INVENTORY_PROJECT_MAP entry.",
                 extra={"event": "inventory.project_map.invalid_entry", "entry": entry},
             )
             continue
@@ -183,7 +203,7 @@ def _parse_unit(item: object) -> InventoryUnit | None:
     """
     if not isinstance(item, dict):
         logger.warning(
-            "Bo qua ban ghi ton kho khong phai object.",
+            "Skipping an inventory record that is not an object.",
             extra={"event": "inventory.record.not_dict", "record_type": type(item).__name__},
         )
         return None
@@ -193,7 +213,7 @@ def _parse_unit(item: object) -> InventoryUnit | None:
         # Log only the NAMES of missing fields, not the values: the record may contain
         # the unit code and price.
         logger.warning(
-            "Bo qua ban ghi ton kho thieu truong bat buoc.",
+            "Skipping an inventory record missing required fields.",
             extra={
                 "event": "inventory.record.incomplete",
                 "missing_fields": sorted({"unit_code", "project_id", "status"} - data.keys()),
@@ -224,7 +244,7 @@ def _to_float(value: object) -> float | None:
         # DEBUG: an unparseable price only blanks the price field; the unit record is
         # still valid and kept.
         logger.debug(
-            "Gia ton kho khong doc duoc, de trong.",
+            "Unreadable inventory price; leaving it blank.",
             extra={"event": "inventory.price.unparseable", "value_type": type(value).__name__},
         )
         return None
@@ -297,7 +317,9 @@ def _extract_area_range(query: str) -> tuple[float, float] | None:
 def _extract_price_range(query: str) -> tuple[float, float] | None:
     match = _PRICE_RANGE_PATTERN.search(query)
     if match:
-        return _ordered_range(_price_to_vnd(match.group(1), match.group(2)), _price_to_vnd(match.group(3), match.group(4)))
+        return _ordered_range(
+            _price_to_vnd(match.group(1), match.group(2)), _price_to_vnd(match.group(3), match.group(4))
+        )
     match = _PRICE_MAX_PATTERN.search(query)
     if match:
         return 0.0, _price_to_vnd(match.group(1), match.group(2))
@@ -323,7 +345,9 @@ def _to_number(value: str) -> float:
 
 
 def _price_to_vnd(value: str, unit: str | None) -> float:
-    multiplier = {"tỷ": 1_000_000_000, "t": 1_000_000_000, "triệu": 1_000_000, "tr": 1_000_000}.get((unit or "").lower(), 1.0)
+    multiplier = {"tỷ": 1_000_000_000, "t": 1_000_000_000, "triệu": 1_000_000, "tr": 1_000_000}.get(
+        (unit or "").lower(), 1.0
+    )
     return _to_number(value) * multiplier
 
 

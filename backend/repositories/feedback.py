@@ -40,9 +40,7 @@ def delete_feedback_for_session(db: Session, session_id: int) -> None:
     so either all three go or none do.
     """
     message_ids = db.query(Message.id).filter(Message.session_id == session_id).subquery()
-    db.query(Feedback).filter(Feedback.message_id.in_(db.query(message_ids.c.id))).delete(
-        synchronize_session=False
-    )
+    db.query(Feedback).filter(Feedback.message_id.in_(db.query(message_ids.c.id))).delete(synchronize_session=False)
 
 
 def list_top_failed(db: Session, limit: int = 10) -> list[tuple[int, int]]:

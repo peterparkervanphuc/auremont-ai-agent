@@ -40,14 +40,23 @@ export interface Citation {
   page: number | null;
 }
 
+export interface AnswerImage {
+  url: string;
+  project_id: string;
+  project_name: string;
+}
+
 export interface MessageResponse {
   id: number;
   session_id: number | null;
   sender: MessageSender;
   content: string;
   citations: Citation[] | null;
+  images: AnswerImage[] | null;
   verifier_score: number | null;
   requires_hitl: boolean;
+  /** Derived server-side from the audit trail; never sent by this client. */
+  hitl_confirmed: boolean;
   created_at: string;
 }
 

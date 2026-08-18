@@ -65,9 +65,7 @@ class Settings(BaseSettings):
     verifier_threshold_sale: float = 0.7
 
     # Documents at or above this classification confidence are auto-approved.
-    classification_auto_approve_threshold: float = Field(
-        default=0.9, ge=0, le=1
-    )
+    classification_auto_approve_threshold: float = Field(default=0.9, ge=0, le=1)
 
     # Object storage (MinIO) — document originals
     minio_endpoint: str = "localhost:9000"
@@ -141,10 +139,9 @@ class Settings(BaseSettings):
         if self.is_production and self.secret_key == self.DEFAULT_INSECURE_SECRET_KEY:
             raise ValueError(
                 "SECRET_KEY must be set to a unique value when APP_ENV is not a development "
-                "environment. Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+                'environment. Generate one with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
             )
         return self
-
 
 
 @lru_cache

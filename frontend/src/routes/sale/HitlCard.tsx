@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { api } from "../../api/client";
 import type { MessageResponse } from "../../types";
-import { AlertIcon, CheckIcon, CopyIcon, DocumentIcon, LoaderIcon } from "../../components/Icons";
+import { AlertIcon, CheckIcon, CopyIcon, LoaderIcon } from "../../components/Icons";
+import { CitationList } from "../../components/CitationList";
 
 interface HitlCardProps {
   message: MessageResponse;
@@ -11,7 +12,9 @@ interface HitlCardProps {
 // Commitment-risk warning card — confirmation is mandatory before send/copy.
 export function HitlCard({ message, onConfirmed }: HitlCardProps) {
   const [confirming, setConfirming] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
+  // Seeded from the server: confirmation lives in the audit trail, so reopening a
+  // conversation must show an already-approved answer as approved.
+  const [confirmed, setConfirmed] = useState(message.hitl_confirmed);
   const [copied, setCopied] = useState(false);
 
   const confirm = async () => {
@@ -39,36 +42,44 @@ export function HitlCard({ message, onConfirmed }: HitlCardProps) {
       <div className="hitl-head">
         <AlertIcon size={16} />
         <span className="hitl-title">Cảnh báo thông tin cam kết</span>
+
+        {/* Confirmation stays mandatory (spec §5.2d) — this is the same gate as before,
+            just as a corner icon instead of a full-width button. Copying still only
+            happens through it, never straight from the card body. */}
+        <button
+          onClick={confirm}
+          disabled={confirming || confirmed}
+          className={`hitl-copy-btn ${confirmed ? "hitl-copy-btn--done" : ""}`}
+          type="button"
+          title={confirmed ? "Đã xác nhận & copy" : "Xác nhận & copy gửi khách"}
+          aria-label={confirmed ? "Đã xác nhận và copy" : "Xác nhận và copy gửi khách"}
+        >
+          {confirming ? (
+            <LoaderIcon size={15} className="icon-spin" />
+          ) : confirmed ? (
+            <CheckIcon size={15} />
+          ) : (
+            <CopyIcon size={15} />
+          )}
+        </button>
       </div>
 
       <div className="hitl-body">{message.content}</div>
 
       {message.citations && message.citations.length > 0 && (
-        <div className="hitl-sources">
-          <span className="chat-citations-label">Tài liệu</span>
-          {message.citations.map((c) => (
-            <span key={`${c.document_id}-${c.page ?? 0}`} className="chat-citation">
-              <DocumentIcon size={12} />
-              {c.title}
-              {c.page != null && ` · tr.${c.page}`}
-            </span>
-          ))}
-        </div>
+        <CitationList citations={message.citations} className="hitl-sources" label="Tài liệu" />
       )}
 
-      <div className="hitl-actions">
-        {confirmed ? (
+      {/* Only the confirmed state gets a line of its own — before confirming, the copy
+          icon in the header is the whole affordance and needs no caption. */}
+      {confirmed && (
+        <div className="hitl-actions">
           <span className="hitl-confirmed">
-            <CheckIcon size={16} />
+            <CheckIcon size={14} />
             {copied ? "Đã xác nhận & copy vào clipboard" : "Đã xác nhận"}
           </span>
-        ) : (
-          <button onClick={confirm} disabled={confirming} className="btn btn-primary" type="button">
-            {confirming ? <LoaderIcon size={16} className="icon-spin" /> : <CopyIcon size={16} />}
-            XÁC NHẬN &amp; COPY GỬI KHÁCH
-          </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

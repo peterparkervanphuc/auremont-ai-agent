@@ -12,8 +12,8 @@ from backend.core.mysql_client import Base, get_db
 from backend.main import app
 from backend.models.user import User
 from backend.repositories.document import create_document, get_document
-from backend.schemas.document import DocumentCreate
 from backend.routers import document_relations as relations_router
+from backend.schemas.document import DocumentCreate
 
 
 @pytest.fixture

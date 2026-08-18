@@ -4,7 +4,6 @@ import { api } from "../../api/client";
 import type { ChatSessionResponse } from "../../types";
 import { ChatWindow } from "./ChatWindow";
 import { SessionList } from "./SessionList";
-import { ChatContextPanel } from "./ChatContextPanel";
 import { ChatSuggestions } from "./ChatSuggestions";
 import { AuremontMascot } from "../../components/AuremontMascot";
 import { useAuth } from "../../hooks/useAuth";
@@ -46,24 +45,21 @@ export function SalePage() {
         <Route
           path="*"
           element={
-            <>
-              <div className="chat-page">
-                <div className="chat-messages">
-                  <div className="chat-messages-inner">
-                    <div className="chat-landing">
-                      <AuremontMascot size={64} className="chat-landing-mascot" />
-                      <h2 className="chat-empty-title">Hỏi Auremont bằng câu nói của bạn</h2>
-                      <p className="chat-empty-text">
-                        Chào {username ?? "bạn"}, mô tả điều cần tra cứu — bảng giá, mặt bằng, chính sách bán hàng —
-                        Auremont sẽ tự mở phiên khách hàng mới và trả lời kèm trích nguồn.
-                      </p>
-                      <ChatSuggestions onPick={startSession} />
-                    </div>
+            <div className="chat-page">
+              <div className="chat-messages">
+                <div className="chat-messages-inner">
+                  <div className="chat-landing">
+                    <AuremontMascot size={64} className="chat-landing-mascot" />
+                    <h2 className="chat-empty-title">Hỏi Auremont bằng câu nói của bạn</h2>
+                    <p className="chat-empty-text">
+                      Chào {username ?? "bạn"}, mô tả điều cần tra cứu — bảng giá, mặt bằng, chính sách bán hàng —
+                      Auremont sẽ tự mở cuộc trò chuyện mới và trả lời kèm trích nguồn.
+                    </p>
+                    <ChatSuggestions onPick={startSession} />
                   </div>
                 </div>
               </div>
-              <ChatContextPanel messages={[]} />
-            </>
+            </div>
           }
         />
       </Routes>

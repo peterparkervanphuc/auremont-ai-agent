@@ -4,14 +4,14 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from backend.core.deps import require_role
 from backend.core.config import get_settings
+from backend.core.deps import require_role
 from backend.core.enums import UserRole
 from backend.core.mysql_client import get_db
+from backend.models.chat_session import ChatSession
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
 from backend.models.feedback import Feedback
-from backend.models.chat_session import ChatSession
 from backend.models.hitl_log import HitlLog
 from backend.models.message import Message
 from backend.models.project import Project
@@ -87,9 +87,7 @@ async def get_business_dashboard(
     # headline session/question totals include Admin and E2E traffic while the
     # active-Sale card excludes it, producing an internally inconsistent dashboard.
     official_sales = (
-        db.query(User)
-        .filter(User.role == "sale", User.is_active.is_(True), ~User.username.like("e2e_sale_%"))
-        .all()
+        db.query(User).filter(User.role == "sale", User.is_active.is_(True), ~User.username.like("e2e_sale_%")).all()
     )
     sale_names = {row.id: row.username for row in official_sales}
     official_sale_ids = set(sale_names)
@@ -154,9 +152,7 @@ async def get_business_dashboard(
         for project_id, count in sorted(project_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
     ]
     if unknown_project_count:
-        top_projects.append(
-            {"project_id": None, "name": "Chưa xác định dự án", "sessions": unknown_project_count}
-        )
+        top_projects.append({"project_id": None, "name": "Chưa xác định dự án", "sessions": unknown_project_count})
         top_projects.sort(key=lambda item: (-item["sessions"], item["name"]))
         top_projects = top_projects[:6]
 
@@ -182,9 +178,7 @@ async def get_business_dashboard(
             "customers": counts["customers"],
             "questions": counts.get("questions", 0),
         }
-        for sale_id, counts in sorted(
-            sale_counts.items(), key=lambda item: (-item[1]["sessions"], item[0])
-        )[:5]
+        for sale_id, counts in sorted(sale_counts.items(), key=lambda item: (-item[1]["sessions"], item[0]))[:5]
     ]
 
     feedback_distribution = {"helpful": 0, "wrong": 0, "incomplete": 0, "unrated": 0}

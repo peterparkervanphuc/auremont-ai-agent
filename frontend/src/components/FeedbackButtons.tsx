@@ -1,16 +1,14 @@
 import { useState } from "react";
 import { api } from "../api/client";
-import { CheckIcon } from "./Icons";
+import { ThumbsDownIcon, ThumbsUpIcon } from "./Icons";
 
-type FeedbackType = "helpful" | "wrong" | "incomplete";
+type FeedbackType = "helpful" | "wrong";
 
-const OPTIONS: { type: FeedbackType; label: string; title: string }[] = [
-  { type: "helpful", label: "Hữu ích", title: "Câu trả lời đúng và đủ" },
-  { type: "wrong", label: "Sai", title: "Câu trả lời sai" },
-  { type: "incomplete", label: "Thiếu", title: "Câu trả lời thiếu thông tin" },
-];
-
-// Feedback buttons under each answer — lets Sale flag wrong/incomplete replies, feeding the Admin loop.
+// Feedback under each answer — lets Sale flag a bad reply, feeding the Admin loop.
+// Two icons rather than the three labelled buttons this used to be: the row sat under
+// every answer and the labels crowded the timestamp beside them. `FeedbackType` on the
+// backend still has a third value (`incomplete`); it keeps working for rows already
+// stored, it simply has no button of its own any more.
 export function FeedbackButtons({ messageId }: { messageId: number }) {
   const [sent, setSent] = useState<FeedbackType | null>(null);
   const [busy, setBusy] = useState(false);
@@ -28,29 +26,26 @@ export function FeedbackButtons({ messageId }: { messageId: number }) {
     }
   };
 
-  if (sent) {
-    return (
-      <div className="feedback-row feedback-row--sent">
-        <CheckIcon size={13} />
-        Cảm ơn phản hồi của bạn
-      </div>
-    );
-  }
-
   return (
     <div className="feedback-row">
-      <span className="feedback-label">Câu trả lời này thế nào?</span>
-      {OPTIONS.map((o) => (
-        <button
-          key={o.type}
-          className="feedback-btn"
-          title={o.title}
-          disabled={busy}
-          onClick={() => send(o.type)}
-        >
-          {o.label}
-        </button>
-      ))}
+      <button
+        className={`feedback-icon-btn ${sent === "helpful" ? "feedback-icon-btn--active" : ""}`}
+        title="Câu trả lời hữu ích"
+        aria-label="Câu trả lời hữu ích"
+        disabled={busy || sent !== null}
+        onClick={() => send("helpful")}
+      >
+        <ThumbsUpIcon size={14} />
+      </button>
+      <button
+        className={`feedback-icon-btn ${sent === "wrong" ? "feedback-icon-btn--active" : ""}`}
+        title="Câu trả lời sai hoặc thiếu"
+        aria-label="Câu trả lời sai hoặc thiếu"
+        disabled={busy || sent !== null}
+        onClick={() => send("wrong")}
+      >
+        <ThumbsDownIcon size={14} />
+      </button>
     </div>
   );
 }

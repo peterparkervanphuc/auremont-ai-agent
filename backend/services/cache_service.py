@@ -17,7 +17,7 @@ skipping it is a few extra tokens.
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from qdrant_client import models
 
@@ -39,6 +39,9 @@ class CachedAnswer:
     answer: str
     citations: list[dict]
     verifier_score: float
+    # Cached alongside the answer so a cache hit still shows the photos the question
+    # asked for. Defaulted because rows written before this field existed have no key.
+    images: list[dict] = field(default_factory=list)
 
 
 def lookup_cache(query: str, project_id: str | None = None) -> CachedAnswer | None:
@@ -64,7 +67,7 @@ def lookup_cache(query: str, project_id: str | None = None) -> CachedAnswer | No
         # still correct, only more expensive. But it must be logged — a permanently dead
         # cache burns tokens on every single request with no other outward symptom.
         logger.warning(
-            "Tra cuu cache that bai — coi nhu cache miss.",
+            "Cache lookup failed; treating as a miss.",
             exc_info=True,
             extra={"event": "cache.lookup.failed", "project_id": project_id},
         )
@@ -89,6 +92,7 @@ def lookup_cache(query: str, project_id: str | None = None) -> CachedAnswer | No
         answer=answer,
         citations=payload.get("citations") or [],
         verifier_score=payload.get("verifier_score") or 0.0,
+        images=payload.get("images") or [],
     )
 
 
@@ -98,6 +102,7 @@ def store_cache(
     citations: list[dict],
     verifier_score: float,
     project_id: str | None = None,
+    images: list[dict] | None = None,
 ) -> None:
     """Store a (question, answer) pair that has met the quality bar.
 
@@ -124,6 +129,7 @@ def store_cache(
                         "query": query,
                         "answer": answer,
                         "citations": citations,
+                        "images": images or [],
                         "verifier_score": verifier_score,
                         "project_id": project_id,
                     },
@@ -133,7 +139,7 @@ def store_cache(
     except Exception:
         # A failed cache write has no bearing on the answer already being served.
         logger.warning(
-            "Ghi cache that bai — cau tra loi da gui van khong bi anh huong.",
+            "Cache write failed; the answer already served is unaffected.",
             exc_info=True,
             extra={"event": "cache.store.failed", "project_id": project_id},
         )

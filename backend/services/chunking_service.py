@@ -34,9 +34,7 @@ def chunk_sections(
         raise ValueError("chunk_chars must be greater than 0")
 
     if overlap_chars < 0 or overlap_chars >= chunk_chars:
-        raise ValueError(
-            "overlap_chars must be >= 0 and smaller than chunk_chars"
-        )
+        raise ValueError("overlap_chars must be >= 0 and smaller than chunk_chars")
 
     chunks: list[DocumentChunk] = []
 
@@ -78,6 +76,7 @@ LEGAL_CHAPTER_RE = re.compile(r"^(chuong|phan|muc|tieu muc)\s+([ivxlcdm0-9]+)\b.
 LEGAL_CLAUSE_RE = re.compile(r"^(\d+)\s*[.)]\s+\S.*$")
 LEGAL_POINT_RE = re.compile(r"^([a-z]|d)\s*[.)]\s+\S.*$", re.IGNORECASE)
 
+
 def _split_text(
     text: str,
     *,
@@ -90,16 +89,8 @@ def _split_text(
         return []
 
     text = _normalise_extracted_text(text)
-    raw_blocks = [
-        block.strip()
-        for block in SECTION_BOUNDARY_RE.split(text)
-        if block.strip()
-    ]
-    blocks = [
-        item
-        for block in raw_blocks
-        for item in _separate_inline_headings(block)
-    ]
+    raw_blocks = [block.strip() for block in SECTION_BOUNDARY_RE.split(text) if block.strip()]
+    blocks = [item for block in raw_blocks for item in _separate_inline_headings(block)]
 
     result: list[str] = []
     current = ""
@@ -165,11 +156,7 @@ def _split_text(
             )
 
     if not current:
-        trailing_headers = [
-            header
-            for header in (roman_header, number_header)
-            if header
-        ]
+        trailing_headers = [header for header in (roman_header, number_header) if header]
         trailing_header = " > ".join(trailing_headers)
 
         if trailing_header:
@@ -329,10 +316,7 @@ def _split_logical_block(block: str, *, table_mode: bool = False) -> list[str]:
 
 def _is_table_block(block: str) -> bool:
     lines = [line for line in block.splitlines() if line.strip()]
-    return bool(lines) and all(
-        TABLE_ROW_RE.match(line) or TABULAR_ROW_RE.match(line)
-        for line in lines
-    )
+    return bool(lines) and all(TABLE_ROW_RE.match(line) or TABULAR_ROW_RE.match(line) for line in lines)
 
 
 def _chunk_table_block(
@@ -354,9 +338,7 @@ def _chunk_table_block(
     header_count = 2 if len(rows) > 1 and re.search(r"---|===", rows[1]) else 1
     header_rows = rows[:header_count]
     data_rows = rows[header_count:]
-    prefix = "\n".join(
-        part for part in (active_header.strip(), "\n".join(header_rows)) if part
-    )
+    prefix = "\n".join(part for part in (active_header.strip(), "\n".join(header_rows)) if part)
     if not data_rows:
         return [prefix[:chunk_chars]] if prefix else []
 
@@ -395,11 +377,7 @@ def _split_legal_text(
     the necessary context instead.
     """
     del overlap_chars, table_mode
-    lines = [
-        line.strip()
-        for line in _normalise_extracted_text(text).splitlines()
-        if line.strip()
-    ]
+    lines = [line.strip() for line in _normalise_extracted_text(text).splitlines() if line.strip()]
     if not lines:
         return []
 
@@ -411,9 +389,7 @@ def _split_legal_text(
         nonlocal body
         if not body:
             return
-        breadcrumb = " > ".join(
-            item for item in (chapter, article, clause, point) if item
-        )
+        breadcrumb = " > ".join(item for item in (chapter, article, clause, point) if item)
         chunks.extend(_pack_with_header("\n".join(body), breadcrumb, chunk_chars))
         body = []
 
@@ -443,9 +419,7 @@ def _split_legal_text(
     flush()
 
     if not chunks:
-        heading = " > ".join(
-            item for item in (chapter, article, clause, point) if item
-        )
+        heading = " > ".join(item for item in (chapter, article, clause, point) if item)
         return [heading[:chunk_chars]] if heading else []
     return chunks
 
@@ -496,10 +470,7 @@ def _is_heading_line(line: str) -> bool:
         return True
     # Numeric/alpha clauses are headings only when they are short labels.  A
     # full legal sentence beginning with "1." remains content, not a breadcrumb.
-    return len(line) <= 100 and (
-        NUMBER_HEADING_RE.match(line) is not None
-        or ALPHA_HEADING_RE.match(line) is not None
-    )
+    return len(line) <= 100 and (NUMBER_HEADING_RE.match(line) is not None or ALPHA_HEADING_RE.match(line) is not None)
 
 
 def _tail(text: str, limit: int) -> str:

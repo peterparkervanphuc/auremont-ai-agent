@@ -1,7 +1,8 @@
-"""Phân loại sơ bộ tài liệu dự án từ tên file và nội dung.
+"""Provisional classification of an uploaded document from its filename and content.
 
-Đây là lớp rule-based: nhanh, rẻ, có thể test và dễ giải thích.
-Kết quả chỉ là đề xuất cho Admin, không tự động approved tài liệu.
+Rule-based on purpose: fast, free, testable and explainable. The result is only a
+suggestion for the Admin — nothing here approves a document for retrieval, because a
+misclassified price list that auto-approved would go straight into customer-facing answers.
 """
 
 import re
@@ -115,9 +116,7 @@ _DOCUMENT_NUMBER_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
-_DD_MM_YYYY_RE = re.compile(
-    r"\b(?P<day>\d{1,2})[/-](?P<month>\d{1,2})[/-](?P<year>\d{4})\b"
-)
+_DD_MM_YYYY_RE = re.compile(r"\b(?P<day>\d{1,2})[/-](?P<month>\d{1,2})[/-](?P<year>\d{4})\b")
 
 _VIETNAMESE_DATE_RE = re.compile(
     r"ngay\s+(?P<day>\d{1,2})\s+thang\s+(?P<month>\d{1,2})\s+nam\s+(?P<year>\d{4})",
@@ -172,7 +171,7 @@ def classify_document(
     filename: str,
     raw_text: str,
 ) -> DocumentClassification:
-    """Trả về metadata đề xuất từ tên file và phần đầu nội dung."""
+    """Propose document metadata from the filename and the opening of the content."""
 
     source = f"{filename}\n{raw_text[:12000]}"
     normalized = strip_diacritics(source).lower()
@@ -249,10 +248,7 @@ def _classify_legal_document(
 
     if legal_type and document_number:
         confidence = max(confidence, 0.97)
-        reason = (
-            f"{reason} Tìm thấy loại văn bản '{legal_type}' "
-            f"và số hiệu '{document_number}'."
-        )
+        reason = f"{reason} Tìm thấy loại văn bản '{legal_type}' và số hiệu '{document_number}'."
 
     legal_status = LegalStatus.EFFECTIVE if effective_date else LegalStatus.UNKNOWN
 
@@ -379,10 +375,7 @@ def _date_from_parts(
 
 
 def _find_subdivisions(source: str) -> list[str]:
-    return [
-        _display_name(match.group("name").strip(" -:"))
-        for match in _SUBDIVISION_RE.finditer(source)
-    ]
+    return [_display_name(match.group("name").strip(" -:")) for match in _SUBDIVISION_RE.finditer(source)]
 
 
 def _find_matches(

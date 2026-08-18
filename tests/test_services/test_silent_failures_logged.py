@@ -52,7 +52,7 @@ def test_cache_store_failure_is_logged_and_swallowed(monkeypatch, caplog):
 
 def test_judge_failure_is_logged_at_error_and_still_fails_closed(monkeypatch, caplog):
     """A broken Verifier and a bad answer both score 0.0 - only the log separates them."""
-    monkeypatch.setattr(verifier_service, "generate_text", _raise)
+    monkeypatch.setattr(verifier_service, "generate_json", _raise)
 
     with caplog.at_level(logging.ERROR, logger="backend.services.verifier_service"):
         result = verifier_service.score_answer("gia?", "3.6 ty", ["context"])
@@ -63,37 +63,38 @@ def test_judge_failure_is_logged_at_error_and_still_fails_closed(monkeypatch, ca
     assert record.exc_info is not None
 
 
-@pytest.mark.parametrize(
-    ("raw", "event"),
-    [
-        ("no json at all here", "verifier.parse.no_json"),
-        ("{not valid json,}", "verifier.parse.bad_json"),
-    ],
-)
-def test_unparseable_judge_output_is_logged(monkeypatch, caplog, raw, event):
-    monkeypatch.setattr(verifier_service, "generate_text", lambda *a, **k: raw)
+def test_a_judge_with_no_verdict_is_logged_and_fails_closed(monkeypatch, caplog):
+    """Scores are now schema-constrained, so the failure mode is an absent verdict rather
+    than unparseable prose. It must still fail closed and still leave a trace."""
+    monkeypatch.setattr(verifier_service, "generate_json", lambda *a, **k: None)
 
     with caplog.at_level(logging.WARNING, logger="backend.services.verifier_service"):
         result = verifier_service.score_answer("gia?", "3.6 ty", ["context"])
 
     assert result.score == 0.0
-    assert any(getattr(r, "event", None) == event for r in caplog.records)
+    assert any(getattr(r, "event", None) == "verifier.judge.empty" for r in caplog.records)
 
 
-def test_null_score_is_only_debug_noise(monkeypatch, caplog):
-    """The model returning null is common; WARNING here would be constant noise."""
-    monkeypatch.setattr(
-        verifier_service,
-        "generate_text",
-        lambda *a, **k: '{"faithfulness": null, "relevancy": 0.9}',
-    )
+@pytest.mark.parametrize(
+    ("raw_score", "expected"),
+    [
+        (None, 0.0),  # judges routinely emit null
+        ("0.85", 0.85),  # and strings
+        (85, 0.85),  # and the wrong scale
+        (1.5, 1.0),  # a slight overshoot is clamped, not rescaled
+        (-1, 0.0),
+    ],
+)
+def test_scores_are_coerced_into_range(raw_score, expected):
+    """Validation lives on the model now, so every caller gets a score in [0, 1]."""
+    result = verifier_service.VerifierResult(faithfulness=raw_score, relevancy=1.0)
+    assert result.faithfulness == pytest.approx(expected)
 
-    with caplog.at_level(logging.DEBUG, logger="backend.services.verifier_service"):
-        result = verifier_service.score_answer("gia?", "3.6 ty", ["context"])
 
-    assert result.score == 0.0
-    record = next(r for r in caplog.records if getattr(r, "event", None) == "verifier.clamp.bad_value")
-    assert record.levelno == logging.DEBUG
+def test_the_weaker_dimension_decides_the_score():
+    """Truthful but off-topic must fail exactly like on-topic but invented."""
+    assert verifier_service.VerifierResult(faithfulness=1.0, relevancy=0.2).score == pytest.approx(0.2)
+    assert verifier_service.VerifierResult(faithfulness=0.2, relevancy=1.0).score == pytest.approx(0.2)
 
 
 # --------------------------------------------------------------------------- pipeline

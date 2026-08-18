@@ -6,7 +6,7 @@ from backend.utils.time import utcnow
 
 
 class ConflictFlag(Base):
-    """Flags contradictory content between two documents, e.g. two price-list versions """
+    """Flags contradictory content between two documents, e.g. two price-list versions"""
 
     __tablename__ = "conflict_flags"
 

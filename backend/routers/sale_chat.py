@@ -18,6 +18,7 @@ from backend.repositories.chat_session import (
     set_title_if_empty,
 )
 from backend.repositories.feedback import delete_feedback_for_session
+from backend.repositories.hitl_log import confirmed_message_ids, delete_hitl_logs_for_session
 from backend.repositories.message import (
     create_message,
     delete_messages_for_session,
@@ -54,7 +55,9 @@ def _owned_session(db: Session, session_id: int, user: User):
 
 @router.post("", response_model=ChatSessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_sale_session(
-    payload: ChatSessionCreate, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))
+    payload: ChatSessionCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN)),
 ) -> ChatSessionResponse:
     return create_session(db, sale_id=user.id, schema=payload)
 
@@ -71,7 +74,18 @@ async def list_session_messages(
     session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))
 ) -> list[MessageResponse]:
     _owned_session(db, session_id, user)
-    return list_messages_for_session(db, session_id)
+    messages = list_messages_for_session(db, session_id)
+
+    # Confirmation state comes from the audit trail, not from the client. Looked up in one
+    # batched query rather than per message.
+    confirmed = confirmed_message_ids(db, [message.id for message in messages if message.requires_hitl])
+
+    responses = []
+    for message in messages:
+        response = MessageResponse.model_validate(message)
+        response.hitl_confirmed = message.id in confirmed
+        responses.append(response)
+    return responses
 
 
 @router.post("/{session_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
@@ -88,7 +102,7 @@ async def ask_in_session(
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
 
     started = time.perf_counter()
-    result = agent_pipeline.run_pipeline(payload.content, project_id=session.project_id)
+    result = agent_pipeline.run_pipeline(payload.content, project_id=session.project_id, db=db)
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
 
     # The core business record for Admin Tab 2 (AI Evaluation): the Verifier score
@@ -114,6 +128,7 @@ async def ask_in_session(
         sender=MessageSender.AGENT,
         content=result.draft_answer,
         citations=result.citations,
+        images=result.images,
         verifier_score=result.verifier_score,
         requires_hitl=result.requires_hitl,
         faithfulness=result.faithfulness,
@@ -125,8 +140,13 @@ async def ask_in_session(
 async def clear_session_messages(
     session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))
 ) -> None:
-    """Clear the chat history but keep the session — the 'Xóa chat' button in ChatWindow."""
+    """Clear the chat history but keep the session (the "Xóa chat" button in ChatWindow).
+
+    Order matters: both feedback and HITL confirmations reference messages with non-null
+    foreign keys, so they have to go first or the delete fails outright.
+    """
     _owned_session(db, session_id, user)
+    delete_hitl_logs_for_session(db, session_id)
     delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)
 
@@ -137,6 +157,7 @@ async def remove_sale_session(
 ) -> None:
     """Delete the consultation session and all its messages — the delete button in SessionList."""
     _owned_session(db, session_id, user)
+    delete_hitl_logs_for_session(db, session_id)
     delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)
     delete_session(db, session_id)

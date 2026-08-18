@@ -205,7 +205,9 @@ def test_token_refresh_keeps_the_session_alive(accounts):
     assert me.json()["username"] == accounts["sale"]
 
     # Access token không được dùng để tự gia hạn vô hạn.
-    assert httpx.post(f"{API}/auth/refresh", json={"refresh_token": login["access_token"]}, timeout=15).status_code == 401
+    assert (
+        httpx.post(f"{API}/auth/refresh", json={"refresh_token": login["access_token"]}, timeout=15).status_code == 401
+    )
 
 
 @pytest.mark.parametrize(("method", "path"), FRONTEND_ENDPOINTS)

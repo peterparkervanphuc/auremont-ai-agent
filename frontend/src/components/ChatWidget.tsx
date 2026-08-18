@@ -80,8 +80,10 @@ export function ChatWidget() {
       sender: "sale",
       content: trimmed,
       citations: null,
+      images: null,
       verifier_score: null,
       requires_hitl: false,
+      hitl_confirmed: false,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
@@ -99,8 +101,10 @@ export function ChatWidget() {
           sender: "agent",
           content: "Tạm thời không tra được tồn kho — vui lòng thử lại.",
           citations: null,
+          images: null,
           verifier_score: null,
           requires_hitl: false,
+          hitl_confirmed: false,
           created_at: new Date().toISOString(),
         },
       ]);

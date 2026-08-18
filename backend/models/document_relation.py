@@ -2,8 +2,6 @@ from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Tex
 
 from backend.core.enums import DocumentRelationType, DocumentReviewStatus
 from backend.core.mysql_client import Base
-from backend.utils.time import utcnow
-
 from backend.models import (  # noqa: F401
     chat_session,
     conflict_flag,
@@ -15,9 +13,11 @@ from backend.models import (  # noqa: F401
     project,
     user,
 )
+from backend.utils.time import utcnow
+
 
 class DocumentRelation(Base):
-    """Mô tả tác động của tài liệu mới lên tài liệu cũ.
+    """How a newly uploaded document affects an existing one.
 
     Ví dụ:
     - Chính sách tháng 08 thay thế chính sách tháng 07.

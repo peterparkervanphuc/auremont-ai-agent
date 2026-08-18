@@ -1,3 +1,4 @@
+from backend.ai import prompts
 from backend.services import agent_pipeline
 from backend.services.inventory_service import InventoryApiError, InventoryUnit
 
@@ -41,13 +42,9 @@ def test_mixed_inventory_and_policy_question_uses_both_sources(monkeypatch):
     monkeypatch.setattr(agent_pipeline, "retrieve", fake_retrieve)
     monkeypatch.setattr(agent_pipeline, "lookup_inventory", fake_inventory)
 
-    retrieved = agent_pipeline._retrieve(
-        {"query": query, "project_id": "ocean-park-3"}
-    )
-    inventory = agent_pipeline._tool_call(
-        {"query": query, "project_id": "ocean-park-3", **retrieved}
-    )
-    prompt = agent_pipeline._build_prompt(
+    retrieved = agent_pipeline._retrieve({"query": query, "project_id": "ocean-park-3"})
+    inventory = agent_pipeline._tool_call({"query": query, "project_id": "ocean-park-3", **retrieved})
+    prompt = prompts.build_prompt(
         query,
         retrieved["retrieved_docs"],
         inventory["inventory_units"],
@@ -119,9 +116,7 @@ def test_prompt_keeps_unavailable_notice_when_lookup_cannot_resolve_a_project(mo
     result = agent_pipeline._tool_call(
         {"query": "Có căn nào 2 phòng ngủ?", "project_id": None, "retrieved_docs": [_policy_hit()]}
     )
-    prompt = agent_pipeline._build_prompt(
-        "Có căn nào 2 phòng ngủ?", [_policy_hit()], [], True, result["inventory_failed"]
-    )
+    prompt = prompts.build_prompt("Có căn nào 2 phòng ngủ?", [_policy_hit()], [], True, result["inventory_failed"])
 
     assert result["inventory_failed"] is True
     assert "LIVE INVENTORY STATUS: unavailable" in prompt

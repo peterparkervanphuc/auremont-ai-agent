@@ -75,7 +75,7 @@ def stub_pipeline(monkeypatch):
     monkeypatch.setattr(
         agent_pipeline,
         "run_pipeline",
-        lambda query, project_id=None: PipelineResult(
+        lambda query, project_id=None, db=None: PipelineResult(
             draft_answer=f"Trả lời cho: {query}",
             citations=[],
             verifier_score=0.9,
@@ -148,12 +148,7 @@ def test_a_sale_cannot_touch_another_sales_session(as_sale, sales, stub_pipeline
     # 404 (not 403) so session ids of other sales stay unguessable.
     assert other_client.get(f"/api/v1/sale/sessions/{session_id}/messages").status_code == 404
     assert other_client.delete(f"/api/v1/sale/sessions/{session_id}").status_code == 404
-    assert (
-        other_client.post(
-            f"/api/v1/sale/sessions/{session_id}/messages", json={"content": "hi"}
-        ).status_code
-        == 404
-    )
+    assert other_client.post(f"/api/v1/sale/sessions/{session_id}/messages", json={"content": "hi"}).status_code == 404
 
     # And the owner's session is untouched.
     assert [s["id"] for s in as_sale(owner).get("/api/v1/sale/sessions").json()] == [session_id]

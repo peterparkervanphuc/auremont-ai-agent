@@ -34,8 +34,8 @@ from backend.routers import (
     admin_stats,
     auth,
     dev_seed,
-    documents,
     document_relations,
+    documents,
     feedback,
     hitl,
     projects,
@@ -174,7 +174,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         {"loc": error.get("loc"), "type": error.get("type"), "msg": error.get("msg")} for error in exc.errors()
     ]
     logger.warning(
-        "Request khong hop le: %s %s",
+        "Invalid request: %s %s",
         request.method,
         request.url.path,
         extra={
@@ -199,7 +199,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     """
     request_id = _request_id_of(request)
     logger.exception(
-        "Loi khong xu ly duoc: %s %s",
+        "Unhandled error: %s %s",
         request.method,
         request.url.path,
         extra={

@@ -11,6 +11,14 @@ class Citation(BaseModel):
     page: int | None = None
 
 
+class AnswerImage(BaseModel):
+    """One project photo shown in the swipeable strip under an answer."""
+
+    url: str
+    project_id: str
+    project_name: str
+
+
 class MessageCreate(BaseModel):
     session_id: int | None = None
     content: str
@@ -22,8 +30,13 @@ class MessageResponse(BaseModel):
     sender: MessageSender
     content: str
     citations: list[Citation] | None = None
+    images: list[AnswerImage] | None = None
     verifier_score: float | None = None
     requires_hitl: bool
+    # Whether a confirmation exists for this answer. Derived server-side from hitl_logs,
+    # never sent by the client: a client-supplied flag could present an unread commitment
+    # as approved.
+    hitl_confirmed: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -61,7 +61,7 @@ def seed_projects() -> None:
         for seed in SEED_PROJECTS:
             ensure_seed_project(db, **seed)
         logger.info(
-            "Seed %d du an mau.",
+            "Seeded %d demo projects.",
             len(SEED_PROJECTS),
             extra={
                 "event": "seed.projects",
@@ -96,7 +96,7 @@ def seed_users() -> None:
             ensure_seed_user(db, **seed)
         # Log usernames only — never log the `password` field from SEED_USERS.
         logger.info(
-            "Seed %d tai khoan test.",
+            "Seeded %d test accounts.",
             len(SEED_USERS),
             extra={
                 "event": "seed.users",

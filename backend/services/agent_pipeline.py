@@ -26,17 +26,23 @@ Two principles govern this whole file:
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from sqlalchemy.orm import Session
 
+from backend.ai import prompts
+from backend.ai.answer_cleanup import drop_image_denials
+from backend.ai.citations import build_citations
+from backend.ai.intent import needs_document_retrieval as query_needs_documents
+from backend.ai.intent import needs_inventory as query_needs_inventory
 from backend.core.enums import DocumentVisibility
 from backend.core.gemini_client import generate_text
-from backend.services import cache_service, risk_service, verifier_service
+from backend.services import answer_images_service, cache_service, risk_service, verifier_service
 from backend.services.inventory_service import InventoryApiError, InventoryUnit, lookup_inventory
 from backend.services.rag_service import RetrievalError, retrieve
-from backend.utils.text import strip_diacritics, strip_markdown
+from backend.utils.text import strip_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -52,115 +58,6 @@ INVENTORY_UNAVAILABLE_MESSAGE = "Tạm thời không tra được tồn kho."
 LOW_CONFIDENCE_MESSAGE = "Không đủ thông tin, liên hệ Admin."
 RETRIEVAL_ERROR_MESSAGE = "Tạm thời không tra cứu được tài liệu, vui lòng thử lại sau."
 GENERATION_ERROR_MESSAGE = "Tạm thời không tạo được câu trả lời, vui lòng thử lại sau."
-
-# Signals that a question needs the real-time inventory table rather than static docs.
-# Deliberately keyed on *inventory intent* instead of merely spotting a unit type
-# ("2PN"): "giá căn 2PN?" mentions a unit type, but its answer lives in the ingested
-# price list.
-_REALTIME_INTENT_KEYWORDS = (
-    "còn căn",
-    "còn bao nhiêu",
-    "còn không",
-    "còn trống",
-    "trống không",
-    "tồn kho",
-    "bảng hàng",
-    "sẵn hàng",
-    "còn hàng",
-    "hết hàng",
-    "đã bán",
-    "chưa bán",
-    "giữ chỗ",
-    "căn nào",
-    "suất nào",
-)
-
-_DOCUMENT_INTENT_KEYWORDS = (
-    "chinh sach",
-    "chính sách",
-    "csbh",
-    "chiet khau",
-    "chiết khấu",
-    "uu dai",
-    "ưu đãi",
-    "khuyen mai",
-    "khuyến mại",
-    "thanh toan",
-    "thanh toán",
-    "phap ly",
-    "pháp lý",
-    "hop dong",
-    "hợp đồng",
-    "bang gia",
-    "bảng giá",
-)
-# The order of these blocks is deliberate and should not be reshuffled: role -> depth ->
-# structure -> format -> grounding constraints. A model reading "senior real-estate
-# consultant" slides easily into a sales pitch and fills in market figures it "knows"
-# from pre-training, so the grounding-constraints block must come last and be phrased
-# absolutely, so it overrides every requirement stated above it.
-_SYSTEM_INSTRUCTION = (
-    "Bạn là chuyên viên tư vấn bất động sản cao cấp với nhiều năm kinh nghiệm bán hàng dự án, "
-    "đang hỗ trợ đồng nghiệp trong đội sale chuẩn bị nội dung tư vấn cho khách hàng. Đồng nghiệp "
-    "sẽ dùng thẳng câu trả lời của bạn để nói với khách, nên nội dung phải đủ đầy đủ để họ không "
-    "phải hỏi lại lần thứ hai.\n"
-    "\n"
-    "CHIỀU SÂU CHUYÊN MÔN — đây là yêu cầu quan trọng nhất về nội dung:\n"
-    "- Trả lời đầy đủ, chi tiết, khai thác hết thông tin liên quan có trong ngữ cảnh. Thà dài mà "
-    "đủ còn hơn ngắn mà Sale phải hỏi lại. Độ dài tự nhiên thường là 6-12 câu; câu hỏi phức tạp "
-    "(so sánh nhiều loại căn, chính sách nhiều giai đoạn) thì viết dài hơn.\n"
-    "- Không chỉ đưa con số: giải thích con số đó áp dụng cho loại căn / phân khu / tòa nào, "
-    "kèm điều kiện gì, tính trên diện tích thông thủy hay tim tường, đã gồm hay chưa gồm VAT, "
-    "phí bảo trì, nội thất.\n"
-    "- Nêu đủ các thông tin đi kèm mà một chuyên viên giỏi luôn chủ động nói ra khi ngữ cảnh có: "
-    "giá và đơn giá/m², diện tích, hướng, tầng, tiến độ thanh toán, chiết khấu và điều kiện hưởng, "
-    "chính sách vay - ân hạn nợ gốc - hỗ trợ lãi suất, thời hạn áp dụng, thời điểm bàn giao, "
-    "hình thức sở hữu, tình trạng pháp lý.\n"
-    "- Chủ động cảnh báo những điểm Sale dễ tư vấn sai: điều kiện kèm theo, mốc thời gian hết hạn "
-    "chính sách, khoản chi phí khách thường không lường trước, khác biệt giữa các phiên bản tài liệu.\n"
-    "- Khi có thể so sánh (giữa các loại căn, các phương án thanh toán), hãy so sánh — đó là giá trị "
-    "tư vấn thật sự, không chỉ tra cứu.\n"
-    "- Nếu câu hỏi có phần chưa rõ (chưa nói rõ tòa, loại căn, phương án thanh toán), cứ trả lời "
-    "đầy đủ cho các trường hợp phổ biến trong ngữ cảnh, rồi nêu rõ cần khách xác nhận thêm điều gì.\n"
-    "\n"
-    "CẤU TRÚC VÀ GIỌNG VĂN:\n"
-    "- Viết như đang trao đổi với đồng nghiệp có nghề: thành câu, có mạch, tự nhiên, không máy móc.\n"
-    "- Mở đầu bằng câu trả lời trực tiếp cho đúng điều Sale hỏi, rồi mới triển khai chi tiết. "
-    "Không bắt Sale đọc hết đoạn mới thấy con số.\n"
-    "- Trình bày theo logic tư vấn: thông tin chính (giá, diện tích, loại căn) trước, rồi điều kiện "
-    "và chính sách đi kèm, cuối cùng là lưu ý và phần còn thiếu dữ liệu.\n"
-    "- Dùng văn xuôi cho phần giải thích. Chỉ tách gạch đầu dòng khi liệt kê nhiều mục song song "
-    "cần đối chiếu (bảng giá theo loại căn, các mốc thanh toán, các gói chính sách) — khi đó liệt kê "
-    "đầy đủ các mục có trong ngữ cảnh, không cắt bớt.\n"
-    "- Nếu số mục quá nhiều để liệt kê hết, nhóm theo tiêu chí (theo loại căn, theo khoảng giá, "
-    "theo tòa), nêu dải giá trị của từng nhóm và tổng số mục, thay vì bỏ lửng.\n"
-    "- Dùng thuật ngữ đúng chuẩn ngành: căn 2PN, diện tích thông thủy, bàn giao thô/hoàn thiện, "
-    "chiết khấu, ân hạn nợ gốc, sở hữu lâu dài, tiến độ thanh toán.\n"
-    "- Mọi số liệu phải kèm đơn vị (m², tỷ đồng, triệu đồng/m², %) và kèm tên tài liệu nguồn "
-    "cho các con số quan trọng.\n"
-    "\n"
-    "ĐỊNH DẠNG — giao diện hiển thị văn bản thuần, KHÔNG render Markdown:\n"
-    "- Tuyệt đối không dùng ký tự Markdown: không **in đậm**, không *nghiêng*, không ###, "
-    "không bảng, không khối mã. Chúng sẽ hiện nguyên dấu sao trên màn hình và trông rất lỗi.\n"
-    "- Nếu cần gạch đầu dòng, mỗi dòng bắt đầu bằng '- ' rồi viết thẳng nội dung. Không lồng "
-    "gạch đầu dòng nhiều cấp.\n"
-    "- Cần nhấn mạnh thì đặt thông tin đó vào đầu câu, không tô đậm.\n"
-    "- Tách đoạn bằng dòng trống để dễ đọc khi câu trả lời dài.\n"
-    "- Không chào hỏi dài dòng, không văn quảng cáo sáo rỗng, không emoji.\n"
-    "\n"
-    "RÀNG BUỘC BẮT BUỘC — quan trọng hơn mọi yêu cầu về chiều sâu và phong cách ở trên:\n"
-    "- CHỈ dùng thông tin có trong NGỮ CẢNH được cung cấp. Kiến thức bên ngoài về thị trường, "
-    "chủ đầu tư hay dự án khác đều KHÔNG được dùng, kể cả khi bạn chắc chắn.\n"
-    "- Tuyệt đối không suy diễn, không nội suy, không làm tròn hay ước lượng giá, diện tích, "
-    "tiến độ, chính sách khi ngữ cảnh không ghi rõ. Không tự tính đơn giá/m² hay tổng giá nếu "
-    "ngữ cảnh không cho đủ dữ kiện.\n"
-    "- Không hứa hẹn, không cam kết thay chủ đầu tư (giữ chỗ, chắc chắn tăng giá, cam kết lợi nhuận...).\n"
-    "- Nếu ngữ cảnh thiếu thông tin để trả lời, nói thẳng phần nào chưa có dữ liệu và đề nghị "
-    "kiểm tra lại với Admin — không lấp đầy bằng phỏng đoán. Một câu trả lời đầy đủ gồm cả việc "
-    "chỉ rõ ranh giới của dữ liệu hiện có.\n"
-    "- Khi ngữ cảnh có nhiều số liệu mâu thuẫn, nêu rõ sự khác biệt kèm nguồn và thời điểm của "
-    "từng tài liệu, thay vì tự chọn một số."
-)
 
 
 @dataclass
@@ -178,6 +75,8 @@ class PipelineResult:
     # the wrong documents. Collapsing both into one number loses that diagnosis.
     faithfulness: float | None = None
     answer_relevancy: float | None = None
+    # Project photos the question asked to see; empty whenever it asked for none.
+    images: list[dict] = field(default_factory=list)
 
 
 class PipelineState(TypedDict, total=False):
@@ -196,6 +95,10 @@ class PipelineState(TypedDict, total=False):
     faithfulness: float
     answer_relevancy: float
     requires_hitl: bool
+    images: list[dict]
+    # Only the image tool reads this; it is threaded through rather than imported so the
+    # pipeline keeps working when no session exists (see `run_pipeline`).
+    db: Session | None
     retry_count: int
     # When set, this replaces draft_answer as the final answer: one of the edge-case
     # messages above. A notice means the flow stops here and goes no further.
@@ -219,6 +122,7 @@ def _cache_check(state: PipelineState) -> dict[str, Any]:
         "verifier_score": cached.verifier_score,
         # The cache only holds answers that passed RiskCheck and need no HITL (see `_store_cache`).
         "requires_hitl": False,
+        "images": cached.images,
     }
 
 
@@ -231,8 +135,8 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     """
     query = state["query"]
 
-    needs_inventory = _needs_inventory(query)
-    needs_document_retrieval = _needs_document_retrieval(query)
+    needs_inventory = query_needs_inventory(query)
+    needs_document_retrieval = query_needs_documents(query)
     hits: list[dict] = []
 
     if needs_document_retrieval:
@@ -304,19 +208,20 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     docs = state.get("retrieved_docs") or []
     units = state.get("inventory_units") or []
 
-    prompt = _build_prompt(
+    prompt = prompts.build_prompt(
         state["query"],
         docs,
         units,
         state.get("needs_inventory", False),
         state.get("inventory_failed", False),
+        state.get("images") or [],
     )
 
     try:
-        answer = generate_text(prompt, system_instruction=_SYSTEM_INSTRUCTION)
+        answer = generate_text(prompt, system_instruction=prompts.SYSTEM_INSTRUCTION)
     except Exception:
         logger.exception(
-            "Sinh cau tra loi that bai.",
+            "Answer generation failed.",
             extra={
                 "event": "pipeline.generate.failed",
                 "project_id": state.get("project_id"),
@@ -334,13 +239,15 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     if not answer:
         return {"notice": GENERATION_ERROR_MESSAGE}
 
-    return {"draft_answer": answer, "citations": _build_citations(docs)}
+    answer = drop_image_denials(answer, state.get("images") or [])
+
+    return {"draft_answer": answer, "citations": build_citations(docs)}
 
 
 def _verify(state: PipelineState) -> dict[str, Any]:
     """The Verifier Agent scores Faithfulness/Relevancy, independently of Generate."""
     context = [doc["content"] for doc in state.get("retrieved_docs") or []]
-    context.extend(_format_unit_for_verifier(unit) for unit in state.get("inventory_units") or [])
+    context.extend(prompts.format_unit_for_verifier(unit) for unit in state.get("inventory_units") or [])
     result = verifier_service.score_answer(state["query"], state.get("draft_answer", ""), context)
 
     return {
@@ -353,6 +260,32 @@ def _verify(state: PipelineState) -> dict[str, Any]:
 def _risk_check(state: PipelineState) -> dict[str, Any]:
     """Touches price/commitment -> raise the HITL flag so the Sale must read and confirm."""
     return {"requires_hitl": risk_service.detect_commitment_risk(state.get("draft_answer", ""))}
+
+
+def _image_tool(state: PipelineState) -> dict[str, Any]:
+    """Fetch project photos, but only for a question that asked to see something.
+
+    Runs *before* Generate, like the inventory tool: the model has to know the photos are
+    coming. When this ran afterwards it read "the context contains no images" off its own
+    prompt and told the Sale to go ask Admin for pictures — printed directly above a strip
+    of those pictures.
+
+    The project is resolved from the question plus the retrieved documents, since a Sale
+    often asks "cho xem mặt bằng" without naming one, and retrieval has already grounded
+    on the right project by this point.
+
+    Needs a DB session to read the catalogue. `run_pipeline` leaves `db` unset in contexts
+    that have none (unit tests calling the pipeline directly), and the tool is then simply
+    skipped — an answer without photos, never an error.
+    """
+    db = state.get("db")
+    if db is None:
+        return {"images": []}
+
+    context = "\n".join(
+        f"{doc.get('title') or ''} {doc.get('content') or ''}" for doc in state.get("retrieved_docs") or []
+    )
+    return {"images": answer_images_service.collect_images(db, state["query"], context)}
 
 
 # --------------------------------------------------------------------------- routing
@@ -373,7 +306,22 @@ def _route_after_tool_call(state: PipelineState) -> str:
 
 
 def _route_after_generate(state: PipelineState) -> str:
-    return "stop" if state.get("notice") else "verify"
+    if state.get("notice"):
+        return "stop"
+
+    # A question answered by photographs skips Verify. Answer-relevancy scores the *text*
+    # against the question, and for "cho xem hình ảnh The Palma" no text can score well —
+    # the photos are the answer. Left in, it drove every such question into
+    # "Không đủ thông tin, liên hệ Admin." while the requested photos sat right below it.
+    #
+    # Nothing is loosened by this: the images come from the catalogue rather than from the
+    # model, and RiskCheck still runs, so a price mentioned in passing still raises HITL.
+    # Faithfulness/relevancy stay None, so these answers are excluded from the Admin
+    # dashboard averages exactly like cache hits are.
+    if state.get("images") and answer_images_service.wants_images(state["query"]):
+        return "risk_check"
+
+    return "verify"
 
 
 def _route_after_verify(state: PipelineState) -> str:
@@ -408,16 +356,19 @@ def _build_graph():
     graph.add_node("generate", _generate)
     graph.add_node("verify", _verify)
     graph.add_node("risk_check", _risk_check)
+    graph.add_node("image_tool", _image_tool)
     graph.add_node("bump_retry", _bump_retry)
     graph.add_node("low_confidence", _low_confidence)
 
     graph.add_edge(START, "cache_check")
     graph.add_conditional_edges("cache_check", _route_after_cache, {"hit": END, "miss": "retrieve"})
     graph.add_conditional_edges(
-        "retrieve", _route_after_retrieve, {"stop": END, "tool_call": "tool_call", "generate": "generate"}
+        "retrieve", _route_after_retrieve, {"stop": END, "tool_call": "tool_call", "generate": "image_tool"}
     )
-    graph.add_conditional_edges("tool_call", _route_after_tool_call, {"stop": END, "generate": "generate"})
-    graph.add_conditional_edges("generate", _route_after_generate, {"stop": END, "verify": "verify"})
+    graph.add_conditional_edges("tool_call", _route_after_tool_call, {"stop": END, "generate": "image_tool"})
+    graph.add_conditional_edges(
+        "generate", _route_after_generate, {"stop": END, "verify": "verify", "risk_check": "risk_check"}
+    )
     graph.add_conditional_edges(
         "verify",
         _route_after_verify,
@@ -425,6 +376,7 @@ def _build_graph():
     )
     graph.add_edge("bump_retry", "generate")
     graph.add_edge("low_confidence", END)
+    graph.add_edge("image_tool", "generate")
     graph.add_edge("risk_check", END)
 
     return graph.compile()
@@ -444,8 +396,12 @@ def _get_graph():
 # --------------------------------------------------------------------------- entry point
 
 
-def run_pipeline(query: str, project_id: str | None = None) -> PipelineResult:
+def run_pipeline(query: str, project_id: str | None = None, db: Session | None = None) -> PipelineResult:
     """Entry point for the Sale chat flow.
+
+    `db` is only used by the image tool, to read the project catalogue. It is optional so
+    callers with no session (unit tests driving the pipeline directly) keep working; those
+    simply get an answer with no photos attached.
 
     Never raises under any circumstance — the router calls this directly to build the
     response message, so every failure must collapse into a readable `PipelineResult`.
@@ -462,6 +418,8 @@ def run_pipeline(query: str, project_id: str | None = None) -> PipelineResult:
         "requires_hitl": False,
         "retry_count": 0,
         "used_cache": False,
+        "images": [],
+        "db": db,
     }
 
     try:
@@ -484,7 +442,10 @@ def run_pipeline(query: str, project_id: str | None = None) -> PipelineResult:
     if notice:
         # Edge-case branch: a message instead of an answer, with no citations and always
         # score 0 so the Admin dashboard correctly counts it as a failed answer.
-        return PipelineResult(notice, [], 0.0, False)
+        #
+        # Photos still ride along. They were requested explicitly and assert nothing, so
+        # withholding them because the *text* could not be verified helps nobody.
+        return PipelineResult(notice, [], 0.0, False, images=state.get("images") or [])
 
     result = PipelineResult(
         draft_answer=state.get("draft_answer", ""),
@@ -494,6 +455,7 @@ def run_pipeline(query: str, project_id: str | None = None) -> PipelineResult:
         used_cache=state.get("used_cache", False),
         faithfulness=state.get("faithfulness"),
         answer_relevancy=state.get("answer_relevancy"),
+        images=state.get("images") or [],
     )
 
     if not result.used_cache:
@@ -507,8 +469,16 @@ def _store_cache(query: str, result: PipelineResult, project_id: str | None) -> 
 
     Price-touching answers must re-run RiskCheck every time so the Sale always gets the
     HITL card — serving them from cache would skip that mandatory confirmation step.
+
+    Image requests are never cached either. The cache matches on meaning, and "cho xem
+    hình ảnh The Palma" and "cho xem mặt bằng The Palma" are close enough to collide —
+    which served the whole gallery to someone who asked only for floor plans. The photo
+    set is chosen per question, so it cannot be shared between two questions.
     """
     if result.requires_hitl or result.verifier_score < _threshold():
+        return
+
+    if answer_images_service.wants_images(query):
         return
 
     cache_service.store_cache(
@@ -517,6 +487,7 @@ def _store_cache(query: str, result: PipelineResult, project_id: str | None) -> 
         citations=result.citations,
         verifier_score=result.verifier_score,
         project_id=project_id,
+        images=result.images,
     )
 
 
@@ -528,121 +499,3 @@ def _threshold() -> float:
     from backend.core.config import get_settings
 
     return get_settings().verifier_threshold_sale
-
-
-def _needs_inventory(query: str) -> bool:
-    """Diacritic-insensitive matching: a Sale typing fast on a phone rarely uses accents.
-
-    "con can 2pn nao trong khong" must be recognised as an inventory question exactly
-    like its fully accented form — otherwise the Agent quietly answers with stale unit
-    counts from a PDF.
-    """
-    normalized = strip_diacritics(query)
-    return any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS)
-
-
-def _needs_document_retrieval(query: str) -> bool:
-    """Keep policy/legal RAG independent from the live-inventory decision."""
-    normalized = strip_diacritics(query)
-    return (
-        any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
-        or not _needs_inventory(query)
-    )
-
-
-def _build_citations(docs: list[dict]) -> list[dict]:
-    """Normalise citations into the exact shape of the `Citation` schema.
-
-    Filtering is mandatory: `document_id` from a Qdrant payload may be None, while
-    `Citation` declares a non-nullable `document_id: int` — letting one through becomes a
-    ValidationError 500 while serializing the response. `content`/`score` are dropped too,
-    since the schema does not accept those fields.
-    """
-    citations: list[dict] = []
-    seen: set[tuple[int, Any]] = set()
-
-    for doc in docs:
-        document_id = doc.get("document_id")
-        if document_id is None:
-            continue
-
-        key = (document_id, doc.get("page"))
-        if key in seen:
-            continue
-        seen.add(key)
-
-        citations.append(
-            {
-                "document_id": document_id,
-                "title": doc.get("title") or "Tài liệu",
-                "page": doc.get("page"),
-            }
-        )
-
-    return citations
-
-
-def _build_prompt(
-    query: str,
-    docs: list[dict],
-    units: list[InventoryUnit],
-    needs_inventory: bool,
-    inventory_failed: bool,
-) -> str:
-    sections = [f"CÂU HỎI CỦA SALE:\n{query}"]
-
-    if docs:
-        context = "\n\n".join(_format_doc_for_prompt(index, doc) for index, doc in enumerate(docs, start=1))
-        sections.append(f"NGỮ CẢNH TỪ TÀI LIỆU DỰ ÁN:\n{context}")
-
-    if needs_inventory and not inventory_failed:
-        sections.append(f"TỒN KHO REAL-TIME:\n{_format_units(units)}")
-
-    sections.append(
-        "Trả lời câu hỏi trên với tư cách chuyên viên tư vấn dự án, đầy đủ và chi tiết như đang "
-        "brief cho đồng nghiệp sắp gặp khách. Viết văn xuôi tự nhiên, văn bản thuần, không dùng "
-        "ký tự Markdown nào (không dấu sao, không thăng).\n"
-        "- Bám sát đúng loại căn / phân khu / tòa mà câu hỏi nhắc tới, đừng trả lời chung chung "
-        "cho cả dự án khi Sale đang hỏi một loại căn cụ thể.\n"
-        "- Rà lại toàn bộ ngữ cảnh ở trên và đưa vào mọi chi tiết liên quan tới câu hỏi: con số, "
-        "điều kiện áp dụng, mốc thời gian, chính sách và ưu đãi đi kèm. Đừng dừng lại ở một con số "
-        "trần trụi khi ngữ cảnh còn nói thêm điều kiện.\n"
-        "- Dẫn tên tài liệu nguồn (và trang nếu có) cho từng số liệu quan trọng.\n"
-        "- Nêu rõ phần nào ngữ cảnh chưa có dữ liệu thay vì suy đoán, và gợi ý Sale cần xác nhận "
-        "thêm điều gì với khách hoặc với Admin."
-    )
-
-    if needs_inventory and inventory_failed:
-        sections.append(
-            "LIVE INVENTORY STATUS: unavailable. Do not infer stock from project documents; "
-            "state that live inventory could not be checked."
-        )
-
-    return "\n\n".join(sections)
-
-
-def _format_doc_for_prompt(index: int, doc: dict) -> str:
-    """One context block: index + document title + page so the LLM can cite down to the page."""
-    title = doc.get("title") or "Tài liệu"
-    page = doc.get("page")
-    header = f"[{index}] {title}" + (f" (trang {page})" if page else "")
-    return f"{header}\n{doc.get('content') or ''}"
-
-
-def _format_units(units: list[InventoryUnit]) -> str:
-    if not units:
-        return "Hiện không còn căn nào khớp với yêu cầu."
-
-    return "\n".join(
-        f"- {unit.unit_code} | loại {unit.unit_type or 'không rõ'} | "
-        f"giá {f'{unit.price:,.0f} VNĐ' if unit.price is not None else 'chưa có'} | {unit.status}"
-        for unit in units
-    )
-
-
-def _format_unit_for_verifier(unit: InventoryUnit) -> str:
-    """Give the verifier the same live facts that were supplied to the LLM."""
-    return (
-        f"Live inventory: {unit.unit_code}; type {unit.unit_type or 'unknown'}; "
-        f"price {unit.price if unit.price is not None else 'unknown'}; status {unit.status}."
-    )

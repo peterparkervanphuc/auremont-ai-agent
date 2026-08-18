@@ -56,9 +56,7 @@ def sanitize_and_scan(raw_text: str) -> str:
 
     for pattern in SUSPICIOUS_PATTERNS:
         if re.search(pattern, cleaned, flags=re.IGNORECASE):
-            raise PromptInjectionError(
-                "Potential prompt-injection content detected."
-            )
+            raise PromptInjectionError("Potential prompt-injection content detected.")
 
     return cleaned
 
@@ -88,10 +86,7 @@ def ingest_uploaded_document(
             db,
             document_id=document.id,
             classification=classification,
-            auto_approve=(
-                classification.confidence
-                >= settings.classification_auto_approve_threshold
-            ),
+            auto_approve=(classification.confidence >= settings.classification_auto_approve_threshold),
         )
 
         object_key = _store_original_file(
@@ -148,7 +143,7 @@ def ingest_uploaded_document(
             flag_conflicts_for(db, completed, raw_text=raw_text)
         except Exception:  # pragma: no cover - advisory step, never fatal
             logger.warning(
-                "Bo qua quet mau thuan cho tai lieu %s.",
+                "Skipping the conflict scan for document %s.",
                 completed.id,
                 exc_info=True,
                 extra={"event": "document.conflict_scan.failed", "document_id": completed.id},
@@ -166,9 +161,7 @@ def ingest_uploaded_document(
         if isinstance(exc, DocumentIngestionError):
             raise
 
-        raise DocumentIngestionError(
-            f"Could not ingest document {document.id}."
-        ) from exc
+        raise DocumentIngestionError(f"Could not ingest document {document.id}.") from exc
 
 
 def flag_conflicts_for(
@@ -239,14 +232,8 @@ def _same_business_scope(left: Document, right: Document) -> bool:
     if left.category != right.category:
         return False
     for field in ("subdivision_names", "building_codes", "unit_types"):
-        left_values = {
-            strip_diacritics(str(value)).lower()
-            for value in (getattr(left, field) or [])
-        }
-        right_values = {
-            strip_diacritics(str(value)).lower()
-            for value in (getattr(right, field) or [])
-        }
+        left_values = {strip_diacritics(str(value)).lower() for value in (getattr(left, field) or [])}
+        right_values = {strip_diacritics(str(value)).lower() for value in (getattr(right, field) or [])}
         if left_values and right_values and left_values.isdisjoint(right_values):
             return False
     return True
@@ -257,17 +244,11 @@ def _price_facts(text: str) -> dict[str, set[int]]:
     facts: dict[str, set[int]] = {}
     unkeyed: set[int] = set()
     for line in text.splitlines():
-        prices = {
-            _price_to_vnd(match.group(1), match.group(2))
-            for match in _PRICE_RE.finditer(line)
-        }
+        prices = {_price_to_vnd(match.group(1), match.group(2)) for match in _PRICE_RE.finditer(line)}
         prices.discard(0)
         if not prices:
             continue
-        codes = {
-            match.group(0).upper()
-            for match in _UNIT_CODE_RE.finditer(line)
-        }
+        codes = {match.group(0).upper() for match in _UNIT_CODE_RE.finditer(line)}
         if codes:
             for code in codes:
                 facts.setdefault(code, set()).update(prices)
@@ -343,10 +324,7 @@ def _store_original_file(
 ) -> str:
     """Store the original file in MinIO; the DB keeps only the object key."""
     safe_filename = PurePath(filename).name
-    object_key = (
-        f"documents/{document_id}/"
-        f"{uuid.uuid4().hex}-{safe_filename}"
-    )
+    object_key = f"documents/{document_id}/{uuid.uuid4().hex}-{safe_filename}"
 
     try:
         ensure_bucket(settings.minio_bucket_documents)
@@ -359,8 +337,6 @@ def _store_original_file(
             content_type=content_type or "application/octet-stream",
         )
     except Exception as exc:
-        raise DocumentIngestionError(
-            "Could not store original file in MinIO."
-        ) from exc
+        raise DocumentIngestionError("Could not store original file in MinIO.") from exc
 
     return object_key
