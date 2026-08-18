@@ -75,7 +75,7 @@ def _mock_external_services(monkeypatch, text: str):
     monkeypatch.setattr(
         ingestion_service,
         "flag_conflicts_for",
-        lambda _db, _document: [],
+        lambda _db, _document, **_kwargs: [],
     )
 
 
@@ -217,3 +217,67 @@ def test_prompt_injection_is_blocked_before_classification(
     db_session.refresh(document)
     assert classifier_called is False
     assert document.status == DocumentStatus.BLOCKED
+
+
+def test_price_lists_with_different_names_and_prices_create_conflict(
+    db_session,
+    monkeypatch,
+):
+    old = _document(db_session, "Bang gia Beverly 01-08-2026.pdf")
+    old.project_id = "the-beverly"
+    old.category = DocumentCategory.PRICE_LIST
+    old.status = DocumentStatus.COMPLETED
+    old.file_path = "documents/old.pdf"
+
+    new = _document(db_session, "Bang gia Beverly 15-08-2026.pdf")
+    new.project_id = "the-beverly"
+    new.category = DocumentCategory.PRICE_LIST
+    new.status = DocumentStatus.COMPLETED
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ingestion_service,
+        "_read_original_text",
+        lambda document: (
+            "Ma can | Loai | Gia\nBE1-1201 | 2PN | 3.5 ty"
+            if document.id == old.id
+            else ""
+        ),
+    )
+
+    conflict_ids = ingestion_service.flag_conflicts_for(
+        db_session,
+        new,
+        raw_text="Ma can | Loai | Gia\nBE1-1201 | 2PN | 3.8 ty",
+    )
+
+    assert len(conflict_ids) == 1
+
+
+def test_price_lists_with_same_unit_and_same_price_do_not_conflict(
+    db_session,
+    monkeypatch,
+):
+    old = _document(db_session, "Bang gia dot 1.pdf")
+    old.project_id = "the-beverly"
+    old.category = DocumentCategory.PRICE_LIST
+    old.status = DocumentStatus.COMPLETED
+    old.file_path = "documents/old.pdf"
+
+    new = _document(db_session, "Bang gia dot 2.pdf")
+    new.project_id = "the-beverly"
+    new.category = DocumentCategory.PRICE_LIST
+    new.status = DocumentStatus.COMPLETED
+    db_session.commit()
+
+    monkeypatch.setattr(
+        ingestion_service,
+        "_read_original_text",
+        lambda _document: "BE1-1201 | 2PN | 3.5 ty",
+    )
+
+    assert ingestion_service.flag_conflicts_for(
+        db_session,
+        new,
+        raw_text="BE1-1201 | 2PN | 3.5 ty",
+    ) == []

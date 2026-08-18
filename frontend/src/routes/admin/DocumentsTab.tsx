@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type {
   DocumentResponse,
@@ -48,6 +49,7 @@ function isSupportedFile(file: File): boolean {
 }
 
 export function DocumentsTab() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,8 +57,13 @@ export function DocumentsTab() {
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   // Which project the uploaded document belongs to. Retrieval filters on this, and
   // conflict detection only compares documents within the same project.
-  const [projectId, setProjectId] = useState<string>("");
+  const [projectId, setProjectId] = useState<string>(() => searchParams.get("project_id") ?? "");
+  const categoryFilter = searchParams.get("category") ?? "";
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const filteredDocuments = documents.filter((document) =>
+    (!searchParams.get("project_id") || document.project_id === searchParams.get("project_id")) &&
+    (!categoryFilter || document.category === categoryFilter)
+  );
 
   const loadDocuments = useCallback(() => {
     api
@@ -240,7 +247,9 @@ export function DocumentsTab() {
       <div style={{ marginTop: 32 }}>
         <h3 className="section-title">Danh sách tài liệu</h3>
 
-        {documents.length === 0 ? (
+        {(searchParams.get("project_id") || categoryFilter) && <div className="document-filter-notice"><span>Đang xem tài liệu được chọn từ dashboard.</span><button type="button" onClick={() => setSearchParams({})}>Xóa bộ lọc</button></div>}
+
+        {filteredDocuments.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">
               <InboxIcon size={26} />
@@ -249,7 +258,7 @@ export function DocumentsTab() {
           </div>
         ) : (
           <div className="data-list">
-            {documents.map((document) => {
+            {filteredDocuments.map((document) => {
               const displayStatus =
                 STATUS_LABEL[document.status] ?? {
                   text: document.status,

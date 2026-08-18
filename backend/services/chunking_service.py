@@ -2,6 +2,7 @@ import re
 from dataclasses import dataclass
 
 from backend.services.parser_service import ParsedSection
+from backend.utils.text import strip_diacritics
 
 # PDFs in MinIO are primarily sales policies and legal documents.  Their text is
 # extracted line-by-line, often without useful blank paragraphs, so section-aware
@@ -27,6 +28,7 @@ def chunk_sections(
     *,
     chunk_chars: int = 3200,
     overlap_chars: int = 400,
+    document_category: str | None = None,
 ) -> list[DocumentChunk]:
     if chunk_chars <= 0:
         raise ValueError("chunk_chars must be greater than 0")
@@ -38,11 +40,15 @@ def chunk_sections(
 
     chunks: list[DocumentChunk] = []
 
+    category = str(document_category or "").lower()
+    splitter = _split_legal_text if category == "legal_document" else _split_text
+
     for section in sections:
-        for text in _split_text(
+        for text in splitter(
             section.text,
             chunk_chars=chunk_chars,
             overlap_chars=overlap_chars,
+            table_mode=category in {"price_list", "inventory_snapshot", "payment_schedule"},
         ):
             chunks.append(
                 DocumentChunk(
@@ -62,13 +68,22 @@ ALPHA_HEADING_RE = re.compile(r"^[a-zđ]\.\s+[^\n]+$", re.IGNORECASE)
 CHAPTER_HEADING_RE = re.compile(r"^CHƯƠNG\s+[IVXLCDM0-9]+\b[^\n]*$", re.IGNORECASE)
 ARTICLE_HEADING_RE = re.compile(r"^ĐIỀU\s+\d+\b[^\n]*$", re.IGNORECASE)
 TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
+TABULAR_ROW_RE = re.compile(r"^\s*\S.*(?:\t|\s{2,})\S.*$")
 BULLET_RE = re.compile(r"^\s*(?:[-•*]|\(?[a-zđ]\)|\d+\))\s+", re.IGNORECASE)
+
+# These patterns run against diacritic-free lowercase text. Vietnamese legal
+# documents are structured by Chương/Mục -> Điều -> Khoản -> Điểm.
+LEGAL_ARTICLE_RE = re.compile(r"^dieu\s+(\d+[a-z]?)\s*[.:\-]?\s*(.*)$", re.IGNORECASE)
+LEGAL_CHAPTER_RE = re.compile(r"^(chuong|phan|muc|tieu muc)\s+([ivxlcdm0-9]+)\b.*$", re.IGNORECASE)
+LEGAL_CLAUSE_RE = re.compile(r"^(\d+)\s*[.)]\s+\S.*$")
+LEGAL_POINT_RE = re.compile(r"^([a-z]|d)\s*[.)]\s+\S.*$", re.IGNORECASE)
 
 def _split_text(
     text: str,
     *,
     chunk_chars: int,
     overlap_chars: int,
+    table_mode: bool = False,
 ) -> list[str]:
     """Split text while maintaining a 3-level context breadcrumb (I. -> 1. -> a.)."""
     if not text or not text.strip():
@@ -127,7 +142,19 @@ def _split_text(
         headers = [h for h in (roman_header, number_header) if h]
         active_header = " > ".join(headers) if headers else ""
 
-        for logical_block in _split_logical_block(block):
+        for logical_block in _split_logical_block(block, table_mode=table_mode):
+            if table_mode and _is_table_block(logical_block):
+                if current:
+                    result.append(current)
+                    current = ""
+                result.extend(
+                    _chunk_table_block(
+                        logical_block,
+                        active_header=active_header,
+                        chunk_chars=chunk_chars,
+                    )
+                )
+                continue
             current = _append_block(
                 result=result,
                 current=current,
@@ -263,7 +290,7 @@ def _normalise_extracted_text(text: str) -> str:
     return text.strip()
 
 
-def _split_logical_block(block: str) -> list[str]:
+def _split_logical_block(block: str, *, table_mode: bool = False) -> list[str]:
     """Keep tables and lists intact as units before character-level splitting.
 
     A policy PDF usually contains discount/payment tables and nested bullet terms.
@@ -279,7 +306,13 @@ def _split_logical_block(block: str) -> list[str]:
     current_kind = "text"
 
     for line in lines:
-        kind = "table" if TABLE_ROW_RE.match(line) else "bullet" if BULLET_RE.match(line) else "text"
+        kind = (
+            "table"
+            if TABLE_ROW_RE.match(line) or (table_mode and TABULAR_ROW_RE.match(line))
+            else "bullet"
+            if BULLET_RE.match(line)
+            else "text"
+        )
         # Consecutive rows/items stay together.  A new row/item after prose starts
         # a fresh logical unit so it can never be split in the middle by default.
         if current and kind != current_kind and (kind != "text" or current_kind != "text"):
@@ -292,6 +325,142 @@ def _split_logical_block(block: str) -> list[str]:
         groups.append(current)
 
     return ["\n".join(group) for group in groups]
+
+
+def _is_table_block(block: str) -> bool:
+    lines = [line for line in block.splitlines() if line.strip()]
+    return bool(lines) and all(
+        TABLE_ROW_RE.match(line) or TABULAR_ROW_RE.match(line)
+        for line in lines
+    )
+
+
+def _chunk_table_block(
+    block: str,
+    *,
+    active_header: str,
+    chunk_chars: int,
+) -> list[str]:
+    """Split only between rows and repeat the column header in every chunk.
+
+    A single very wide row may exceed ``chunk_chars``. Keeping a unit code, its
+    price and the column names together is safer than satisfying a soft size
+    target by cutting a business record in half.
+    """
+    rows = [line.strip() for line in block.splitlines() if line.strip()]
+    if not rows:
+        return []
+
+    header_count = 2 if len(rows) > 1 and re.search(r"---|===", rows[1]) else 1
+    header_rows = rows[:header_count]
+    data_rows = rows[header_count:]
+    prefix = "\n".join(
+        part for part in (active_header.strip(), "\n".join(header_rows)) if part
+    )
+    if not data_rows:
+        return [prefix[:chunk_chars]] if prefix else []
+
+    chunks: list[str] = []
+    current = prefix
+    for row in data_rows:
+        candidate = f"{current}\n{row}" if current else row
+        if len(candidate) <= chunk_chars:
+            current = candidate
+            continue
+        if current and current != prefix:
+            chunks.append(current)
+            current = prefix
+        candidate = f"{current}\n{row}" if current else row
+        if len(candidate) > chunk_chars:
+            chunks.append(candidate)
+            current = prefix
+        else:
+            current = candidate
+    if current and (current != prefix or not chunks):
+        chunks.append(current)
+    return chunks
+
+
+def _split_legal_text(
+    text: str,
+    *,
+    chunk_chars: int,
+    overlap_chars: int,
+    table_mode: bool = False,
+) -> list[str]:
+    """Split Vietnamese law on Article/Clause/Point boundaries.
+
+    No raw overlap is copied across articles because text from one article inside
+    another article's chunk changes legal meaning. Explicit breadcrumbs provide
+    the necessary context instead.
+    """
+    del overlap_chars, table_mode
+    lines = [
+        line.strip()
+        for line in _normalise_extracted_text(text).splitlines()
+        if line.strip()
+    ]
+    if not lines:
+        return []
+
+    chapter = article = clause = point = ""
+    chunks: list[str] = []
+    body: list[str] = []
+
+    def flush() -> None:
+        nonlocal body
+        if not body:
+            return
+        breadcrumb = " > ".join(
+            item for item in (chapter, article, clause, point) if item
+        )
+        chunks.extend(_pack_with_header("\n".join(body), breadcrumb, chunk_chars))
+        body = []
+
+    for line in lines:
+        key = strip_diacritics(line).lower()
+        if LEGAL_CHAPTER_RE.match(key):
+            flush()
+            chapter, article, clause, point = line, "", "", ""
+            continue
+        if LEGAL_ARTICLE_RE.match(key):
+            flush()
+            article, clause, point = line, "", ""
+            continue
+        clause_match = LEGAL_CLAUSE_RE.match(key)
+        if clause_match:
+            flush()
+            clause, point = f"Khoản {clause_match.group(1)}", ""
+            body.append(line)
+            continue
+        point_match = LEGAL_POINT_RE.match(key)
+        if point_match:
+            flush()
+            point = f"Điểm {point_match.group(1)}"
+            body.append(line)
+            continue
+        body.append(line)
+    flush()
+
+    if not chunks:
+        heading = " > ".join(
+            item for item in (chapter, article, clause, point) if item
+        )
+        return [heading[:chunk_chars]] if heading else []
+    return chunks
+
+
+def _pack_with_header(content: str, header: str, chunk_chars: int) -> list[str]:
+    result: list[str] = []
+    remaining = content
+    while remaining:
+        prefix = header[:chunk_chars]
+        available = chunk_chars - len(prefix) - (2 if prefix else 0)
+        if available <= 0:
+            return [prefix]
+        piece, remaining = _take_prefix(remaining, available)
+        result.append(f"{prefix}\n\n{piece}" if prefix else piece)
+    return result
 
 
 def _separate_inline_headings(block: str) -> list[str]:

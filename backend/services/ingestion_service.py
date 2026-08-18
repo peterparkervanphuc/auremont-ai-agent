@@ -7,7 +7,7 @@ from pathlib import PurePath
 from sqlalchemy.orm import Session
 
 from backend.core.config import settings
-from backend.core.enums import DocumentStatus
+from backend.core.enums import DocumentCategory, DocumentStatus
 from backend.core.gemini_client import embed_documents
 from backend.core.minio_client import ensure_bucket, get_minio_client
 from backend.models.document import Document
@@ -102,7 +102,10 @@ def ingest_uploaded_document(
         )
         update_document_storage_path(db, document.id, object_key)
 
-        chunks = chunk_sections(sections)
+        chunks = chunk_sections(
+            sections,
+            document_category=document.category,
+        )
         if not chunks:
             raise DocumentIngestionError("No chunks were produced.")
 
@@ -142,7 +145,7 @@ def ingest_uploaded_document(
         # flagging a possible conflict is an Admin convenience, so a failure here
         # must not undo an ingest that already succeeded.
         try:
-            flag_conflicts_for(db, completed)
+            flag_conflicts_for(db, completed, raw_text=raw_text)
         except Exception:  # pragma: no cover - advisory step, never fatal
             logger.warning(
                 "Bo qua quet mau thuan cho tai lieu %s.",
@@ -168,28 +171,33 @@ def ingest_uploaded_document(
         ) from exc
 
 
-def flag_conflicts_for(db: Session, document: Document) -> list[int]:
-    """Flag older documents of the same project that the new upload may contradict.
-
-    Implements the README §5.4 row "Hai tài liệu mâu thuẫn nội dung": two price-list
-    versions of one project cannot both be authoritative, so an Admin has to decide
-    which one wins (Tab 3 → keep new / delete old).
-
-    Matching is on the **normalised title** rather than the document body. Comparing
-    full text would need another LLM pass on every upload — too slow and too costly
-    for something that only raises an advisory flag — while in practice the repeated
-    upload of "Bảng giá Ocean Park 3" is exactly the case this needs to catch.
-    Diacritics are stripped so "Bang gia" and "Bảng giá" are treated as the same title.
-
-    Returns the ids of the conflict flags created (empty when nothing conflicts).
-    """
-    title_key = _title_key(document.title)
-    if not title_key:
-        return []
-
+def flag_conflicts_for(
+    db: Session,
+    document: Document,
+    *,
+    raw_text: str | None = None,
+) -> list[int]:
+    """Compare actual business content with older documents of the same project."""
+    current_text = raw_text if raw_text is not None else _read_original_text(document)
     created: list[int] = []
+
     for sibling in list_completed_siblings(db, document.project_id, exclude_id=document.id):
-        if _title_key(sibling.title) != title_key:
+        if not _same_business_scope(document, sibling):
+            continue
+
+        price_differences = _price_differences(
+            _read_original_text(sibling),
+            current_text,
+        )
+        same_title = _title_key(sibling.title) == _title_key(document.title)
+        is_price_list = document.category == DocumentCategory.PRICE_LIST
+
+        # Price-list conflicts are driven by row content, not filenames. Other
+        # categories retain the duplicate-title warning until they have their own
+        # domain comparator (legal effect, policy clauses, etc.).
+        if is_price_list and not price_differences:
+            continue
+        if not is_price_list and not same_title:
             continue
 
         conflict = create_conflict(
@@ -197,7 +205,9 @@ def flag_conflicts_for(db: Session, document: Document) -> list[int]:
             document_id_a=sibling.id,
             document_id_b=document.id,
             description=(
-                f"Hai tài liệu cùng dự án có tiêu đề trùng nhau: '{sibling.title}'. "
+                f"Phát hiện nội dung khác nhau giữa '{sibling.title}' và "
+                f"'{document.title}' trong cùng dự án."
+                f"{_format_price_differences(price_differences)} "
                 "Kiểm tra và chọn bản được ưu tiên."
             ),
         )
@@ -211,6 +221,117 @@ def _title_key(title: str | None) -> str:
     if not title:
         return ""
     return " ".join(strip_diacritics(title).split())
+
+
+_UNIT_CODE_RE = re.compile(
+    r"\b(?=[A-Z0-9.-]*[A-Z])(?=[A-Z0-9.-]*\d)"
+    r"[A-Z0-9]+(?:[-.][A-Z0-9]+)+\b",
+    re.IGNORECASE,
+)
+_PRICE_RE = re.compile(
+    r"(?<!\w)(\d{1,3}(?:[.,]\d{3}){2,}|\d+(?:[.,]\d+)?)\s*"
+    r"(tỷ|ty|triệu|trieu|tr|million|billion|vnđ|vnd|đ|đồng|dong)\b",
+    re.IGNORECASE,
+)
+
+
+def _same_business_scope(left: Document, right: Document) -> bool:
+    if left.category != right.category:
+        return False
+    for field in ("subdivision_names", "building_codes", "unit_types"):
+        left_values = {
+            strip_diacritics(str(value)).lower()
+            for value in (getattr(left, field) or [])
+        }
+        right_values = {
+            strip_diacritics(str(value)).lower()
+            for value in (getattr(right, field) or [])
+        }
+        if left_values and right_values and left_values.isdisjoint(right_values):
+            return False
+    return True
+
+
+def _price_facts(text: str) -> dict[str, set[int]]:
+    """Extract unit/product identifiers and prices from table-like lines."""
+    facts: dict[str, set[int]] = {}
+    unkeyed: set[int] = set()
+    for line in text.splitlines():
+        prices = {
+            _price_to_vnd(match.group(1), match.group(2))
+            for match in _PRICE_RE.finditer(line)
+        }
+        prices.discard(0)
+        if not prices:
+            continue
+        codes = {
+            match.group(0).upper()
+            for match in _UNIT_CODE_RE.finditer(line)
+        }
+        if codes:
+            for code in codes:
+                facts.setdefault(code, set()).update(prices)
+        else:
+            unkeyed.update(prices)
+    if unkeyed:
+        facts["__DOCUMENT_PRICES__"] = unkeyed
+    return facts
+
+
+def _price_to_vnd(number: str, unit: str) -> int:
+    compact = number.strip()
+    normalised_unit = strip_diacritics(unit).lower()
+    if re.fullmatch(r"\d{1,3}(?:[.,]\d{3}){2,}", compact):
+        return int(re.sub(r"[.,]", "", compact))
+    value = float(compact.replace(",", "."))
+    if normalised_unit in {"ty", "billion"}:
+        value *= 1_000_000_000
+    elif normalised_unit in {"trieu", "tr", "million"}:
+        value *= 1_000_000
+    return round(value)
+
+
+def _price_differences(
+    old_text: str,
+    new_text: str,
+) -> list[tuple[str, set[int], set[int]]]:
+    old_facts = _price_facts(old_text)
+    new_facts = _price_facts(new_text)
+    return [
+        (key, old_facts[key], new_facts[key])
+        for key in sorted(old_facts.keys() & new_facts.keys())
+        if old_facts[key] != new_facts[key]
+    ]
+
+
+def _format_price_differences(
+    differences: list[tuple[str, set[int], set[int]]],
+) -> str:
+    if not differences:
+        return ""
+    samples = []
+    for key, old_prices, new_prices in differences[:5]:
+        label = "toàn bảng" if key == "__DOCUMENT_PRICES__" else key
+        old_value = "/".join(f"{value:,}" for value in sorted(old_prices))
+        new_value = "/".join(f"{value:,}" for value in sorted(new_prices))
+        samples.append(f" {label}: {old_value} → {new_value} VNĐ")
+    return " Các mức giá thay đổi:" + ";".join(samples) + "."
+
+
+def _read_original_text(document: Document) -> str:
+    if not document.file_path:
+        return ""
+    response = get_minio_client().get_object(
+        settings.minio_bucket_documents,
+        document.file_path,
+    )
+    try:
+        data = response.read()
+    finally:
+        response.close()
+        response.release_conn()
+    sections = parse_document(document.title, data)
+    return "\n\n".join(section.text for section in sections)
 
 
 def _store_original_file(
