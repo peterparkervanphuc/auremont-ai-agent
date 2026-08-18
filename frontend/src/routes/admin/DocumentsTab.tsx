@@ -190,7 +190,8 @@ export function DocumentsTab() {
         </select>
         {!projectId && (
           <span className="upload-project-hint">
-            Nên chọn dự án để lọc tài liệu khi tư vấn và phát hiện mâu thuẫn.
+            Để trống nghĩa là tài liệu áp dụng chung: Sale không lọc được theo dự án, và hệ thống chỉ đối
+            chiếu mâu thuẫn với các tài liệu cũng không gắn dự án và cùng phân khu / tòa / loại căn.
           </span>
         )}
       </div>

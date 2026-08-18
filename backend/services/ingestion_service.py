@@ -178,19 +178,33 @@ def flag_conflicts_for(
         if not _same_business_scope(document, sibling):
             continue
 
+        same_title = _title_key(sibling.title) == _title_key(document.title)
+
+        # No project on either side means the anchor that normally ties two documents
+        # together is missing, so one has to be earned: an overlapping subdivision,
+        # building or unit type, or the very same title. Without this, two unrelated
+        # unassigned price lists would flag each other and bury the Admin in noise.
+        if not document.project_id and not (same_title or _shares_explicit_scope(document, sibling)):
+            continue
+
+        is_price_list = document.category == DocumentCategory.PRICE_LIST
+
+        # Reading the sibling's text downloads and re-parses the original from MinIO, so
+        # bail out first when no flag can come of it. A price-list conflict is decided by
+        # the rows; for every other category the title already decided it and the prices
+        # only enrich the description.
+        if not is_price_list and not same_title:
+            continue
+
         price_differences = _price_differences(
             _read_original_text(sibling),
             current_text,
         )
-        same_title = _title_key(sibling.title) == _title_key(document.title)
-        is_price_list = document.category == DocumentCategory.PRICE_LIST
 
         # Price-list conflicts are driven by row content, not filenames. Other
         # categories retain the duplicate-title warning until they have their own
         # domain comparator (legal effect, policy clauses, etc.).
         if is_price_list and not price_differences:
-            continue
-        if not is_price_list and not same_title:
             continue
 
         conflict = create_conflict(
@@ -228,15 +242,37 @@ _PRICE_RE = re.compile(
 )
 
 
+_SCOPE_FIELDS = ("subdivision_names", "building_codes", "unit_types")
+
+
+def _scope_values(document: Document, field: str) -> set[str]:
+    return {strip_diacritics(str(value)).lower() for value in (getattr(document, field) or [])}
+
+
 def _same_business_scope(left: Document, right: Document) -> bool:
+    """Permissive on purpose: an empty field counts as "might overlap".
+
+    Metadata is extracted automatically and is often incomplete, so a missing subdivision
+    must not be read as proof that two documents are unrelated. Only a field populated on
+    both sides with no value in common rules the pair out.
+    """
     if left.category != right.category:
         return False
-    for field in ("subdivision_names", "building_codes", "unit_types"):
-        left_values = {strip_diacritics(str(value)).lower() for value in (getattr(left, field) or [])}
-        right_values = {strip_diacritics(str(value)).lower() for value in (getattr(right, field) or [])}
+    for field in _SCOPE_FIELDS:
+        left_values = _scope_values(left, field)
+        right_values = _scope_values(right, field)
         if left_values and right_values and left_values.isdisjoint(right_values):
             return False
     return True
+
+
+def _shares_explicit_scope(left: Document, right: Document) -> bool:
+    """True when both documents name at least one identical subdivision, building or unit type.
+
+    The strict counterpart to `_same_business_scope`, for documents carrying no project:
+    there, "might overlap" would match everything, so real evidence is required.
+    """
+    return any(_scope_values(left, field) & _scope_values(right, field) for field in _SCOPE_FIELDS)
 
 
 def _price_facts(text: str) -> dict[str, set[int]]:

@@ -56,20 +56,24 @@ def get_document(db: Session, doc_id: int) -> Document | None:
 
 
 def list_completed_siblings(db: Session, project_id: str | None, exclude_id: int) -> list[Document]:
-    """Other successfully ingested documents of the same project.
+    """Other successfully ingested documents that the new upload may contradict.
 
-    Used by conflict detection to find an older document the new upload may
-    contradict. Documents with no project are skipped entirely: without a project
-    there is no meaningful "same project" to compare against, and flagging every
-    unassigned document against every other would bury Admins in noise.
+    With a project, "sibling" means the same project. Without one it means the other
+    documents that also carry no project — a company-wide policy is only comparable to
+    another company-wide policy, never to one scoped to a single project.
+
+    Returning `[]` for a project-less document (the previous behaviour) meant those files
+    silently left the conflict checks altogether, and the upload form makes the project
+    optional. Two identically named price lists uploaded with no project raised nothing at
+    all. The caller compensates for the missing project anchor by demanding explicit
+    overlapping scope instead — see `_shares_explicit_scope` in ingestion_service.
     """
-    if not project_id:
-        return []
+    scope = Document.project_id == project_id if project_id else Document.project_id.is_(None)
 
     return (
         db.query(Document)
         .filter(
-            Document.project_id == project_id,
+            scope,
             Document.id != exclude_id,
             Document.status == DocumentStatus.COMPLETED,
         )

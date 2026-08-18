@@ -280,3 +280,139 @@ def test_price_lists_with_same_unit_and_same_price_do_not_conflict(
         )
         == []
     )
+
+
+def _completed(db_session, title: str, **fields) -> Document:
+    """Tài liệu đã ingest xong, không gắn dự án trừ khi truyền project_id."""
+    document = Document(title=title, status=DocumentStatus.COMPLETED, **fields)
+    db_session.add(document)
+    db_session.commit()
+    db_session.refresh(document)
+    return document
+
+
+def test_price_lists_without_a_project_still_conflict_when_scope_overlaps(
+    db_session,
+    monkeypatch,
+):
+    """Form upload cho phép bỏ trống dự án, nên không được im lặng bỏ qua quét.
+
+    Trước đây `list_completed_siblings` trả [] ngay khi project_id rỗng, khiến mọi
+    tài liệu upload không gắn dự án rơi khỏi toàn bộ cơ chế phát hiện mâu thuẫn.
+    """
+    old = _completed(
+        db_session,
+        "Bang gia dot 1.pdf",
+        category=DocumentCategory.PRICE_LIST,
+        building_codes=["BE1"],
+        file_path="documents/old.pdf",
+    )
+    new = _completed(
+        db_session,
+        "Bang gia dot 2.pdf",
+        category=DocumentCategory.PRICE_LIST,
+        building_codes=["BE1"],
+    )
+
+    monkeypatch.setattr(
+        ingestion_service,
+        "_read_original_text",
+        lambda document: "BE1-1201 | 2PN | 3.5 ty" if document.id == old.id else "",
+    )
+
+    assert len(ingestion_service.flag_conflicts_for(db_session, new, raw_text="BE1-1201 | 2PN | 3.8 ty")) == 1
+
+
+def test_unrelated_documents_without_a_project_do_not_conflict(
+    db_session,
+    monkeypatch,
+):
+    """Không có dự án làm mốc thì phải có bằng chứng dương về cùng phạm vi.
+
+    Nếu không, hai bảng giá của hai dự án khác nhau mà cùng bỏ trống dự án sẽ
+    flag lẫn nhau và làm Admin ngập trong cảnh báo giả.
+    """
+    old = _completed(
+        db_session,
+        "Bang gia Beverly.pdf",
+        category=DocumentCategory.PRICE_LIST,
+        building_codes=["BE1"],
+        file_path="documents/old.pdf",
+    )
+    new = _completed(
+        db_session,
+        "Bang gia Zurich.pdf",
+        category=DocumentCategory.PRICE_LIST,
+        building_codes=["ZU2"],
+    )
+
+    monkeypatch.setattr(
+        ingestion_service,
+        "_read_original_text",
+        lambda document: "BE1-1201 | 2PN | 3.5 ty" if document.id == old.id else "",
+    )
+
+    assert ingestion_service.flag_conflicts_for(db_session, new, raw_text="ZU2-0801 | 2PN | 4.2 ty") == []
+
+
+def test_identical_titles_without_a_project_still_conflict(db_session, monkeypatch):
+    """Trùng khít tên file đã là bằng chứng đủ, kể cả khi không có metadata phạm vi nào."""
+    _completed(
+        db_session,
+        "Chinh sach ban hang The Zurich.pdf",
+        category=DocumentCategory.SALES_POLICY,
+        file_path="documents/old.pdf",
+    )
+    new = _completed(
+        db_session,
+        "Chinh sach ban hang The Zurich.pdf",
+        category=DocumentCategory.SALES_POLICY,
+    )
+
+    monkeypatch.setattr(ingestion_service, "_read_original_text", lambda _document: "")
+
+    assert len(ingestion_service.flag_conflicts_for(db_session, new, raw_text="noi dung moi")) == 1
+
+
+def test_a_project_document_is_never_compared_with_a_project_less_one(db_session, monkeypatch):
+    """Chính sách toàn công ty chỉ so được với chính sách toàn công ty khác."""
+    _completed(
+        db_session,
+        "Chinh sach chung.pdf",
+        category=DocumentCategory.SALES_POLICY,
+        file_path="documents/old.pdf",
+    )
+    new = _completed(
+        db_session,
+        "Chinh sach chung.pdf",
+        category=DocumentCategory.SALES_POLICY,
+        project_id="the-beverly",
+    )
+
+    monkeypatch.setattr(ingestion_service, "_read_original_text", lambda _document: "")
+
+    assert ingestion_service.flag_conflicts_for(db_session, new, raw_text="noi dung moi") == []
+
+
+def test_a_non_price_list_with_a_different_title_never_reads_minio(db_session, monkeypatch):
+    """Tránh tải + parse lại file gốc cho một cặp không thể sinh flag."""
+    _completed(
+        db_session,
+        "Tong quan phan khu A.pdf",
+        category=DocumentCategory.SUBDIVISION_INFO,
+        project_id="the-beverly",
+        file_path="documents/old.pdf",
+    )
+    new = _completed(
+        db_session,
+        "Tong quan phan khu B.pdf",
+        category=DocumentCategory.SUBDIVISION_INFO,
+        project_id="the-beverly",
+    )
+
+    def explode(_document):
+        raise AssertionError("Không được đọc MinIO khi tên file đã khác nhau.")
+
+    monkeypatch.setattr(ingestion_service, "_read_original_text", explode)
+
+    assert ingestion_service.flag_conflicts_for(db_session, new, raw_text="noi dung") == []
