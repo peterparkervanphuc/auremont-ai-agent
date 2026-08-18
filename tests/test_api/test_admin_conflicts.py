@@ -13,6 +13,7 @@ from backend.main import app
 from backend.models.user import User
 from backend.repositories.conflict_flag import create_conflict
 from backend.repositories.document import create_document, get_document
+from backend.routers import admin_conflicts as conflicts_router
 from backend.schemas.document import DocumentCreate
 
 
@@ -39,7 +40,24 @@ def admin(db_session):
 
 
 @pytest.fixture
-def client(db_session, admin):
+def vector_syncs(monkeypatch):
+    """Stand in for Qdrant and record what the router pushed into it.
+
+    Resolving a conflict now mirrors the decision into the vector payload, and there is
+    no Qdrant in a unit test run. Recording the calls rather than dropping them keeps the
+    assertion available: MySQL saying BLOCKED means nothing if retrieval was never told.
+    """
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        conflicts_router,
+        "update_document_vector_metadata",
+        lambda document_id, **kwargs: calls.append({"document_id": document_id, **kwargs}),
+    )
+    return calls
+
+
+@pytest.fixture
+def client(db_session, admin, vector_syncs):
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_current_user] = lambda: admin
     yield TestClient(app)
@@ -65,6 +83,29 @@ def test_resolving_keeps_the_chosen_document_and_blocks_the_other(client, db_ses
     # Bản bị bác bỏ phải bị vô hiệu hoá, nếu không Agent vẫn trích dẫn nó.
     assert get_document(db_session, new.id).status != DocumentStatus.BLOCKED
     assert get_document(db_session, old.id).status == DocumentStatus.BLOCKED
+
+
+def test_rejected_document_is_removed_from_retrieval(client, db_session, conflict, vector_syncs):
+    """BLOCKED một mình không đủ: rag_service lọc theo is_current, không nhìn `status`.
+
+    Thiếu bước này, Admin bấm "ưu tiên bản mới" xong bảng giá cũ vẫn tiếp tục
+    được dùng để trả lời khách.
+    """
+    flag, old, new = conflict
+
+    client.post(f"/api/v1/admin/conflicts/{flag.id}/resolve", json={"keep_document_id": new.id})
+
+    assert get_document(db_session, old.id).is_current is False
+    assert get_document(db_session, new.id).is_current is True
+    assert vector_syncs == [
+        {
+            "document_id": old.id,
+            "review_status": get_document(db_session, old.id).review_status,
+            "legal_status": get_document(db_session, old.id).legal_status,
+            "category": get_document(db_session, old.id).category,
+            "is_current": False,
+        }
+    ]
 
 
 def test_the_two_choices_are_not_interchangeable(client, db_session, conflict):

@@ -66,3 +66,42 @@ def test_unknown_document_stays_other():
 
     assert result.category == DocumentCategory.OTHER
     assert result.confidence == 0.3
+
+
+def test_sales_policy_mentioning_a_decision_is_not_a_legal_document():
+    """LEGAL_DOCUMENT khớp 'quyet dinh' và đứng đầu bảng rule.
+
+    Với first-match, một CSBH bình thường nhắc "theo quyết định của Chủ đầu tư" sẽ bị
+    xếp thành văn bản luật, rồi bị cắt bằng splitter Điều/Khoản — sai hoàn toàn với
+    cấu trúc một file chính sách.
+    """
+    result = classify_document(
+        "Chinh_sach_ban_hang_The_Beverly.pdf",
+        """
+        CHÍNH SÁCH BÁN HÀNG THÁNG 08/2026
+        Mức chiết khấu áp dụng theo quyết định của Chủ đầu tư.
+        Công văn hướng dẫn kèm theo.
+        """,
+    )
+
+    assert result.category == DocumentCategory.SALES_POLICY
+
+
+def test_keyword_only_in_body_stays_below_the_auto_approve_bar():
+    """Một từ khóa lọt trong thân bài không đủ để tự động đưa tài liệu vào kho tri thức."""
+    result = classify_document(
+        "tai_lieu_gui_khach.pdf",
+        "Kèm theo bảng giá tham khảo của dự án.",
+    )
+
+    assert result.category == DocumentCategory.PRICE_LIST
+    assert result.confidence < 0.9
+    assert "Cần Admin xác nhận" in result.reason
+
+
+def test_keyword_in_filename_with_underscores_is_still_matched():
+    """Tên file thật dùng gạch dưới/gạch ngang, không phải dấu cách."""
+    result = classify_document("Bang-gia.Q3-2026_The-Palma.pdf", "Nội dung không có từ khóa nào.")
+
+    assert result.category == DocumentCategory.PRICE_LIST
+    assert result.confidence >= 0.88

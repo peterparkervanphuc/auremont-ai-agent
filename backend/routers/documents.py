@@ -42,6 +42,7 @@ from backend.services.ingestion_service import (
 )
 from backend.services.vector_store_service import (
     VectorStoreError,
+    delete_document_vectors,
     update_document_vector_metadata,
 )
 
@@ -308,6 +309,28 @@ async def remove_document(
     document_id: int,
     db: Session = Depends(get_db),
 ) -> None:
+    """Delete a document from the knowledge base, vectors included.
+
+    Vectors go first, on purpose. Qdrant is what retrieval actually reads, so a row
+    deleted from MySQL while its chunks survive means the Agent keeps quoting a price
+    list the Admin believes is gone — and cites a `document_id` that no longer resolves.
+    Dropping the vectors first makes the failure mode retryable instead: the row stays,
+    the Admin sees the document still listed and can press delete again.
+    """
+    if get_document(db, document_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with id={document_id} not found.",
+        )
+
+    try:
+        delete_document_vectors(document_id)
+    except VectorStoreError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not remove the document's vectors; nothing was deleted. Try again.",
+        ) from exc
+
     try:
         delete_document(db, document_id)
     except ValueError as exc:

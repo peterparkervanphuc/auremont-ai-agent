@@ -1,10 +1,14 @@
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
 import fitz
 from docx import Document as DocxDocument
+from docx.oxml.ns import qn
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +73,22 @@ def _parse_pdf(data: bytes) -> list[ParsedSection]:
 
 
 def _parse_docx(data: bytes) -> list[ParsedSection]:
+    """Extract prose AND tables, in the order they appear in the document.
+
+    `document.paragraphs` skips tables entirely. For this corpus that is not a detail:
+    discount tiers, payment schedules and price rows in a .docx CSBH live in tables and
+    nowhere else, so reading only paragraphs ingests the file "successfully" while every
+    figure in it silently disappears — the worst possible failure, because nothing looks
+    wrong until a Sale is told the policy has no discount data.
+    """
     try:
         document = DocxDocument(BytesIO(data))
-        paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs]
-        text = "\n".join(item for item in paragraphs if item)
+        blocks = []
+        for item in _iter_block_items(document):
+            rendered = _render_table(item) if isinstance(item, Table) else " ".join(item.text.split())
+            if rendered:
+                blocks.append(rendered)
+        text = "\n\n".join(blocks)
     except Exception as exc:
         logger.exception(
             "DOCX parsing failed.",
@@ -84,3 +100,39 @@ def _parse_docx(data: bytes) -> list[ParsedSection]:
         raise DocumentParseError("DOCX contains no extractable text.")
 
     return [ParsedSection(text=text, page=None)]
+
+
+def _iter_block_items(document) -> Iterator[Paragraph | Table]:
+    """Walk the document body in reading order.
+
+    python-docx exposes `.paragraphs` and `.tables` as two separate flat lists, which
+    loses the interleaving. A discount table has to stay attached to the clause that
+    introduces it, otherwise the chunk carrying the numbers has no idea what they apply to.
+    """
+    for child in document.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            yield Paragraph(child, document)
+        elif child.tag == qn("w:tbl"):
+            yield Table(child, document)
+
+
+def _render_table(table: Table) -> str:
+    """Render a table as pipe-delimited rows with a header separator.
+
+    This is the shape `chunking_service` already recognises (`TABLE_ROW_RE`), so a Word
+    table lands in the same table-aware path as a Markdown one: split only between rows,
+    with the column header repeated in every chunk.
+    """
+    rows: list[str] = []
+    for row in table.rows:
+        cells = [" ".join(cell.text.split()) for cell in row.cells]
+        if not any(cells):
+            continue
+        rows.append("| " + " | ".join(cells) + " |")
+
+    if not rows:
+        return ""
+
+    column_count = rows[0].count("|") - 1
+    separator = "| " + " | ".join(["---"] * column_count) + " |"
+    return "\n".join([rows[0], separator, *rows[1:]])

@@ -43,6 +43,16 @@ class DocumentClassification:
     reason: str = ""
 
 
+# Extra weight for a keyword found in the filename rather than only in the body. Two is
+# enough to beat any realistic number of body-only keyword hits from a competing rule.
+_FILENAME_MATCH_BONUS = 2
+
+# Ceiling for a category detected from body text alone. Deliberately below the default
+# `classification_auto_approve_threshold` (0.9) so such a document waits for an Admin.
+_BODY_ONLY_MAX_CONFIDENCE = 0.85
+
+_SEPARATOR_RE = re.compile(r"[^a-z0-9]+")
+
 _LEGAL_TYPE_PATTERNS = {
     "Luật": r"\bluat\b",
     "Bộ luật": r"\bbo luat\b",
@@ -175,8 +185,11 @@ def classify_document(
 
     source = f"{filename}\n{raw_text[:12000]}"
     normalized = strip_diacritics(source).lower()
+    # Real filenames separate words with _ . or -, so "Bang_gia_Beverly.pdf" would never
+    # contain the keyword "bang gia". Flatten every separator to a space first.
+    normalized_filename = _SEPARATOR_RE.sub(" ", strip_diacritics(filename).lower())
 
-    category, confidence, reason = _detect_category(normalized)
+    category, confidence, reason = _detect_category(normalized_filename, normalized)
     # Patterns use unaccented Vietnamese, so run them against the normalised text.
     subdivisions = _unique(_find_subdivisions(normalized))
     buildings = _unique(_find_matches(_BUILDING_RE, normalized, "code"))
@@ -213,21 +226,60 @@ def classify_document(
 
 
 def _detect_category(
+    normalized_filename: str,
     normalized_text: str,
 ) -> tuple[DocumentCategory, float, str]:
-    for category, keywords, confidence in _CATEGORY_RULES:
-        matched = [keyword for keyword in keywords if keyword in normalized_text]
-        if matched:
-            return (
-                category,
-                confidence,
-                f"Nhận diện từ từ khóa: {', '.join(matched)}.",
-            )
+    """Score every rule and keep the best, instead of returning the first that matches.
 
+    First-match made the category depend on the order of `_CATEGORY_RULES` rather than on
+    the document. LEGAL_DOCUMENT sits at the top and matches on "quyet dinh"/"cong van",
+    so an ordinary sales policy containing "theo quyết định của Chủ đầu tư" was filed as a
+    legal document — and then chunked by the Điều/Khoản splitter, which shreds a policy.
+
+    A keyword in the filename outweighs one buried in the body: Admins name these files
+    deliberately ("CSBH The Beverly T8.pdf"), whereas a passing mention inside the text is
+    weak evidence. Ties fall back to the rule's own confidence.
+    """
+    best: tuple[int, float, DocumentCategory, list[str], bool] | None = None
+
+    for category, keywords, confidence in _CATEGORY_RULES:
+        # Search both forms: `normalized_text` still carries the raw filename with its
+        # underscores, so a keyword present only in the name is invisible there.
+        matched = [keyword for keyword in keywords if keyword in normalized_text or keyword in normalized_filename]
+        if not matched:
+            continue
+
+        in_filename = any(keyword in normalized_filename for keyword in matched)
+        candidate = (
+            len(matched) + (_FILENAME_MATCH_BONUS if in_filename else 0),
+            confidence,
+            category,
+            matched,
+            in_filename,
+        )
+        if best is None or candidate[:2] > best[:2]:
+            best = candidate
+
+    if best is None:
+        return (
+            DocumentCategory.OTHER,
+            0.3,
+            "Không tìm thấy từ khóa nhận diện loại tài liệu.",
+        )
+
+    _score, confidence, category, matched, in_filename = best
+    keywords_found = ", ".join(matched)
+
+    if in_filename:
+        return category, confidence, f"Nhận diện từ từ khóa trong tên file: {keywords_found}."
+
+    # Body-only evidence stays under the auto-approve bar so an Admin looks at it. A
+    # keyword appearing somewhere in the text must not be enough to push a document
+    # straight into the knowledge base unreviewed.
     return (
-        DocumentCategory.OTHER,
-        0.3,
-        "Không tìm thấy từ khóa nhận diện loại tài liệu.",
+        category,
+        min(confidence, _BODY_ONLY_MAX_CONFIDENCE),
+        f"Nhận diện từ từ khóa trong nội dung: {keywords_found}. Cần Admin xác nhận.",
     )
 
 
