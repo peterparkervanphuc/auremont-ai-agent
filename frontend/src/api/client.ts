@@ -1,3 +1,5 @@
+import { extractErrorMessage } from "./errorMessage";
+
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
 
 export class ApiError extends Error {
@@ -72,8 +74,8 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   }
 
   if (!response.ok) {
-    const detail = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new ApiError(response.status, detail.detail ?? "Request failed");
+    const body = await response.json().catch(() => null);
+    throw new ApiError(response.status, extractErrorMessage(body, response.statusText || "Request failed"));
   }
 
   if (response.status === 204) return undefined as T;

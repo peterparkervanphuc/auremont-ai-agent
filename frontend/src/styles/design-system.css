@@ -2958,9 +2958,8 @@ code {
   animation: fade-up 0.4s var(--ease) both;
 }
 
-/* Removed the old circular frame/glow border — shows just the mascot artwork
-   (transparent background already baked into the PNG), matching the fix already
-   applied to the floating chat button (.chat-widget-fab). */
+/* No circular frame/glow border — shows just the avatar (AuremontAvatar.tsx, an SVG
+   with a transparent background), matching the floating chat button (.chat-widget-fab). */
 .chat-landing-mascot {
   margin-bottom: 16px;
   filter: drop-shadow(0 10px 20px rgba(0, 80, 239, 0.3));
@@ -3522,12 +3521,19 @@ code {
   min-width: 0;
 }
 
-.chat-shell .chat-topbar {
-  padding: 14px 22px;
+.chat-shell .chat-topbar,
+.chat-page--standalone .chat-topbar {
+  padding-left: 22px;
+  padding-right: 22px;
 }
 
 .chat-shell .chat-messages-inner,
-.chat-shell .chat-input-area {
+.chat-shell .chat-input-area,
+/* CustomerChatPage.tsx has no session sidebar, so it renders `.chat-page` on its own
+   rather than inside `.chat-shell` — same centered-column width needed here too, or
+   messages stretch edge-to-edge on a wide screen. */
+.chat-page--standalone .chat-messages-inner,
+.chat-page--standalone .chat-input-area {
   width: min(860px, calc(100% - 40px));
   margin: 0 auto;
 }
@@ -3596,7 +3602,9 @@ code {
 
 @media (max-width: 560px) {
   .chat-shell .chat-messages-inner,
-  .chat-shell .chat-input-area {
+  .chat-shell .chat-input-area,
+  .chat-page--standalone .chat-messages-inner,
+  .chat-page--standalone .chat-input-area {
     width: calc(100% - 24px);
   }
 
@@ -3749,6 +3757,55 @@ code {
 }
 .login-submit { width: 100%; justify-content: center; padding: 12px; font-size: 0.9375rem; margin-top: 4px; }
 .login-hint { text-align: center; font-size: 0.8rem; color: var(--text-3); margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+
+/* Soft-paywall gate shown mid-conversation to an anonymous customer-chat visitor
+   (frontend/src/components/RegisterGateModal.tsx) — reuses .login-* field/button
+   classes above, adds only the backdrop/card/tabs wrapper. */
+.gate-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 13, 24, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 100;
+  animation: fade-up 0.2s var(--ease) both;
+}
+.gate-modal {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-h);
+  border-radius: calc(var(--radius) + 4px);
+  padding: 32px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+}
+.gate-modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  padding: 6px;
+  color: var(--text-3);
+  border-radius: 6px;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.gate-modal-close:hover { color: var(--text-1); background: var(--bg-3); }
+.gate-modal-title { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; padding-right: 24px; }
+.gate-modal-desc { font-size: 0.875rem; color: var(--text-2); line-height: 1.5; margin-bottom: 22px; }
+.gate-modal-tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+.gate-modal-tab {
+  padding: 8px 4px 10px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-3);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+.gate-modal-tab:hover { color: var(--text-1); }
+.gate-modal-tab--active { color: var(--accent); border-color: var(--accent); }
 
 /* Seed accounts for dev — click to auto-fill the form. Only rendered when import.meta.env.DEV. */
 .login-devbox { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; padding: 12px; background: var(--bg-2); border: 1px dashed var(--border); border-radius: var(--radius-sm); }
@@ -4317,6 +4374,22 @@ code {
   background: currentColor;
 }
 
+/* "Khách đang chờ" waiting-count badge — TopNavbar.tsx */
+.topnav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 100px;
+  background: var(--rose);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .topnav-right {
   display: flex;
   align-items: center;
@@ -4816,15 +4889,9 @@ code {
   gap: 14px;
 }
 
-/* Auremont mascot (3D artwork) — held static, no animation. */
-.auremont-mascot-greet {
-  display: block;
-  margin: 0 auto;
-}
-
 /* Closed state (not yet clicked): fully removed the circular frame/background/
-   border/shadow — shows just the mascot artwork (transparent background already
-   baked into the PNG), enlarged to catch the user's eye rather than the faint button it was before. */
+   border/shadow — shows just the avatar (AuremontAvatar.tsx, an SVG with a transparent
+   background), enlarged to catch the user's eye rather than the faint button it was before. */
 .chat-widget-fab {
   width: 72px;
   height: 72px;
@@ -4932,6 +4999,25 @@ code {
   border-color: var(--accent);
   color: var(--text-1);
   background: var(--bg-glass-h);
+}
+
+/* Shown in the widget once a Sale is involved — the live conversation itself only renders
+   in the full CustomerChatPage (which polls), so this just points there. */
+.chat-widget-handoff-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 20px 8px;
+  color: var(--text-2);
+}
+.chat-widget-handoff-hint svg {
+  color: var(--emerald);
+}
+.chat-widget-handoff-hint p {
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 
 .chat-widget-messages {

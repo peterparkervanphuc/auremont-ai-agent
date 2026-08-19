@@ -14,10 +14,10 @@ import {
 
 // Real floor-plan images for The Beverly's 4 towers — already on MinIO from when
 // the "the-beverly" project images were uploaded.
-const ZURICH_IMG = "http://localhost:9000/project-images/the-zurich";
-const BEVERLY_IMG = "http://localhost:9000/project-images/the-beverly";
-const LONDON_IMG = "http://localhost:9000/project-images/the-london";
-const PARIS_IMG = "http://localhost:9000/project-images/the-paris";
+const ZURICH_IMG = "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-zurich";
+const BEVERLY_IMG = "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-beverly";
+const LONDON_IMG = "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-london";
+const PARIS_IMG = "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-paris";
 
 const ZURICH_FLOOR_PLANS: ImageTab[] = [
   { label: "Tổng mặt bằng", src: `${ZURICH_IMG}/tong-mat-bang-the-zurich-vinhomes-ocean-park.jpg` },
@@ -85,10 +85,10 @@ const PARIS_AMENITY_PHOTOS: ImageTab[] = [
 ];
 
 const BEVERLY_FLOOR_PLANS: ImageTab[] = [
-  { label: "Tòa BE1", src: "http://localhost:9000/project-images/the-beverly/mat-bang-toa-be1-vinhomes-ocean-park-2048x1447.jpg" },
-  { label: "Tòa BE2", src: "http://localhost:9000/project-images/the-beverly/mat-bang-tang-3-24-toa-be2-phan-khu-the-beverly-vinhomes-ocean-park-2048x1447.jpg" },
-  { label: "Tòa BE3", src: "http://localhost:9000/project-images/the-beverly/mat-bang-tang-3-24-toa-be3-the-beverly-vinhomes-ocean-park-2048x1447.jpg" },
-  { label: "Tòa BE4", src: "http://localhost:9000/project-images/the-beverly/mat-bang-toa-be4-the-beverly-vinhomes-ocean-park-2048x1447.jpg" },
+  { label: "Tòa BE1", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-beverly/mat-bang-toa-be1-vinhomes-ocean-park-2048x1447.jpg" },
+  { label: "Tòa BE2", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-beverly/mat-bang-tang-3-24-toa-be2-phan-khu-the-beverly-vinhomes-ocean-park-2048x1447.jpg" },
+  { label: "Tòa BE3", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-beverly/mat-bang-tang-3-24-toa-be3-the-beverly-vinhomes-ocean-park-2048x1447.jpg" },
+  { label: "Tòa BE4", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-beverly/mat-bang-toa-be4-the-beverly-vinhomes-ocean-park-2048x1447.jpg" },
 ];
 
 // Real floor-plan images for The London's 3 towers — already on MinIO from when
@@ -96,25 +96,25 @@ const BEVERLY_FLOOR_PLANS: ImageTab[] = [
 const LONDON_FLOOR_PLANS: ImageTab[] = [
   {
     label: "Tòa LD1",
-    src: "http://localhost:9000/project-images/the-london/mat-bang-tang-10-29-toa-ld1-the-london-vinhomes-ocean-park-2048x1448.jpg",
+    src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-london/mat-bang-tang-10-29-toa-ld1-the-london-vinhomes-ocean-park-2048x1448.jpg",
   },
   {
     label: "Tòa LD2",
-    src: "http://localhost:9000/project-images/the-london/mat-bang-tang-5-26-toa-ld2-the-london-vinhomes-ocean-park-2048x1448.jpg",
+    src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-london/mat-bang-tang-5-26-toa-ld2-the-london-vinhomes-ocean-park-2048x1448.jpg",
   },
   {
     label: "Tòa LD3",
-    src: "http://localhost:9000/project-images/the-london/mat-bang-toa-ld3-vinhomes-ocean-park-2048x1439.jpg",
+    src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-london/mat-bang-toa-ld3-vinhomes-ocean-park-2048x1439.jpg",
   },
 ];
 
 // Real floor-plan images for 4 of The Paris's 5 towers, available on MinIO (no
 // dedicated floor-plan image for PR6 in the provided image list).
 const PARIS_FLOOR_PLANS: ImageTab[] = [
-  { label: "Tòa PR1", src: "http://localhost:9000/project-images/the-paris/mat-bang-toa-pr1-the-paris-vinhomes-ocean-park-2048x1170.jpg" },
-  { label: "Tòa PR2", src: "http://localhost:9000/project-images/the-paris/mat-bang-toa-pr2-the-paris-vinhomes-ocean-park-2048x1449.jpg" },
-  { label: "Tòa PR3", src: "http://localhost:9000/project-images/the-paris/mat-bang-toa-pr3-phan-khu-the-paris-vinhomes-ocean-park-2048x1448.jpg" },
-  { label: "Tòa PR5", src: "http://localhost:9000/project-images/the-paris/mat-bang-toa-pr5-the-paris-vinhomes-ocean-park-2048x1170.jpg" },
+  { label: "Tòa PR1", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-paris/mat-bang-toa-pr1-the-paris-vinhomes-ocean-park-2048x1170.jpg" },
+  { label: "Tòa PR2", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-paris/mat-bang-toa-pr2-the-paris-vinhomes-ocean-park-2048x1449.jpg" },
+  { label: "Tòa PR3", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-paris/mat-bang-toa-pr3-phan-khu-the-paris-vinhomes-ocean-park-2048x1448.jpg" },
+  { label: "Tòa PR5", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-paris/mat-bang-toa-pr5-the-paris-vinhomes-ocean-park-2048x1170.jpg" },
 ];
 
 // Position of the 5 towers on vi-tri-the-paris-ocean-park-2048x1170.jpg —
@@ -134,7 +134,7 @@ function ParisLocationMap() {
     <section className="section-block location-map-section--dark">
       <div className="location-map-wrap">
         <img
-          src="http://localhost:9000/project-images/the-paris/vi-tri-the-paris-ocean-park-2048x1170.jpg"
+          src="https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-paris/vi-tri-the-paris-ocean-park-2048x1170.jpg"
           alt="Vị trí các tòa The Paris"
           className="location-map-img"
         />
@@ -239,15 +239,15 @@ function MetropolitanLocationMap({ locations = METROPOLITAN_LOCATIONS }: { locat
 // in once cross-checked against the real reference mockup; 2 files with no
 // confirmed size (studio-zr2, 3-bed-zr1) are left blank per spec, not invented.
 const ZURICH_LAYOUTS = [
-  { label: "Căn Studio", size: "36m²", src: "http://localhost:9000/project-images/the-zurich/can-ho-studio-zr1-vinhomes-ocean-park.jpg" },
-  { label: "Căn Studio", size: "", src: "http://localhost:9000/project-images/the-zurich/can-ho-studio-zr2-vinhomes-ocean-park.jpg" },
-  { label: "Căn 1 ngủ", size: "47m²", src: "http://localhost:9000/project-images/the-zurich/can-ho-1-ngu-zr1-vinhomes-ocean-park.jpg" },
-  { label: "Căn 1 ngủ", size: "47m²", src: "http://localhost:9000/project-images/the-zurich/can-ho-1-ngu-zr1-vinhomes-ocean-park-2.jpg" },
-  { label: "Căn 1 ngủ", size: "47m²", src: "http://localhost:9000/project-images/the-zurich/can-ho-1-ngu-zr1-vinhomes-ocean-park-3.jpg" },
-  { label: "Căn 2 ngủ", size: "54m²", src: "http://localhost:9000/project-images/the-zurich/can-ho-2-ngu-zr1-vinhomes-ocean-park.jpg" },
-  { label: "Căn 2 ngủ", size: "74,3m²", src: "http://localhost:9000/project-images/the-zurich/can-ho-2-ngu-zr2-vinhomes-ocean-park.jpg" },
-  { label: "Căn 3 ngủ", size: "", src: "http://localhost:9000/project-images/the-zurich/can-ho-3-ngu-zr1-vinhomes-ocean-park.jpg" },
-  { label: "Căn 3 ngủ", size: "105m²", src: "http://localhost:9000/project-images/the-zurich/can-ho-3-ngu-zr2-vinhomes-ocean-park.jpg" },
+  { label: "Căn Studio", size: "36m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-zurich/can-ho-studio-zr1-vinhomes-ocean-park.jpg" },
+  { label: "Căn Studio", size: "", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-zurich/can-ho-studio-zr2-vinhomes-ocean-park.jpg" },
+  { label: "Căn 1 ngủ", size: "47m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-zurich/can-ho-1-ngu-zr1-vinhomes-ocean-park.jpg" },
+  { label: "Căn 1 ngủ", size: "47m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-zurich/can-ho-1-ngu-zr1-vinhomes-ocean-park-2.jpg" },
+  { label: "Căn 1 ngủ", size: "47m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-zurich/can-ho-1-ngu-zr1-vinhomes-ocean-park-3.jpg" },
+  { label: "Căn 2 ngủ", size: "54m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-zurich/can-ho-2-ngu-zr1-vinhomes-ocean-park.jpg" },
+  { label: "Căn 2 ngủ", size: "74,3m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-zurich/can-ho-2-ngu-zr2-vinhomes-ocean-park.jpg" },
+  { label: "Căn 3 ngủ", size: "", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-zurich/can-ho-3-ngu-zr1-vinhomes-ocean-park.jpg" },
+  { label: "Căn 3 ngủ", size: "105m²", src: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-zurich/can-ho-3-ngu-zr2-vinhomes-ocean-park.jpg" },
 ];
 
 // Kept local (not the shared LayoutGallery) because Zurich's labels carry a
@@ -288,7 +288,7 @@ export function TheMetropolitanZone() {
         <MetropolitanLocationMap locations={BEVERLY_LOCATION} />
         <TowerSpotlight
           projectId="the-beverly"
-          image="http://localhost:9000/project-images/the-beverly/quang-truong-the-beverly.jpg"
+          image="https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-beverly/quang-truong-the-beverly.jpg"
         />
         <PriceTable projectId="the-beverly" />
         <FloorPlanTabs title="Mặt bằng The Beverly" tabs={BEVERLY_FLOOR_PLANS} />
@@ -303,7 +303,7 @@ export function TheMetropolitanZone() {
         <section className="section-block">
           <div className="location-map-wrap">
             <img
-              src="http://localhost:9000/project-images/the-london/phan-khu-the-london-rumor.jpg"
+              src="https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-london/phan-khu-the-london-rumor.jpg"
               alt="Phân khu The London"
               className="location-map-img"
             />
@@ -311,7 +311,7 @@ export function TheMetropolitanZone() {
         </section>
         <TowerSpotlight
           projectId="the-london"
-          image="http://localhost:9000/project-images/the-london/sanh-le-tan-phan-khu-london-vinhomes-ocean-park-710x375.jpg"
+          image="https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-london/sanh-le-tan-phan-khu-london-vinhomes-ocean-park-710x375.jpg"
         />
         <PriceTable projectId="the-london" />
         <FloorPlanTabs title="Mặt bằng The London" tabs={LONDON_FLOOR_PLANS} />
@@ -329,7 +329,7 @@ export function TheMetropolitanZone() {
         <ParisLocationMap />
         <TowerSpotlight
           projectId="the-paris"
-          image="http://localhost:9000/project-images/the-paris/phoi-canh-phan-khu-the-paris-ocean-park.jpg"
+          image="https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-paris/phoi-canh-phan-khu-the-paris-ocean-park.jpg"
         />
         <PriceTable projectId="the-paris" />
         <FloorPlanTabs title="Mặt bằng The Paris" tabs={PARIS_FLOOR_PLANS} />

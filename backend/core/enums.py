@@ -19,13 +19,39 @@ class DocumentVisibility(StrEnum):
 class UserRole(StrEnum):
     SALE = "sale"
     ADMIN = "admin"
+    # A public visitor who registered/logged in through the customer chat gate. Always
+    # retrieves at DocumentVisibility.PUBLIC clearance — see agent_pipeline.run_pipeline.
+    CUSTOMER = "customer"
 
 
 class MessageSender(StrEnum):
-    """Only Sale and Agent exchange messages in a session — customers never access the system."""
+    """Sale, Agent, or a Customer chatting directly through the public/customer flow."""
 
     SALE = "sale"
     AGENT = "agent"
+    CUSTOMER = "customer"
+
+
+class MessageEmotion(StrEnum):
+    """Drives AuremontAvatar.tsx's animation for one AGENT-authored message — computed
+    deterministically from the pipeline/gate outcome already available, never a separate
+    LLM call (matches this codebase's classifier style — see backend/ai/intent.py). Unset
+    on a message defaults to a neutral "idle" pose on the frontend.
+    """
+
+    HAPPY = "happy"
+    REGRETFUL = "regretful"
+    RESPECTFUL = "respectful"
+
+
+class SessionStatus(StrEnum):
+    """Who is currently answering a customer-chat session — see ChatSession's docstring
+    for how this interacts with the sale_id/customer_id/visitor_token ownership columns.
+    """
+
+    BOT_HANDLING = "bot_handling"
+    WAITING_SALE = "waiting_sale"
+    SALE_HANDLING = "sale_handling"
 
 
 class HitlStatus(StrEnum):

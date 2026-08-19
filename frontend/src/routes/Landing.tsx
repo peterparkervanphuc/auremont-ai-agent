@@ -1,33 +1,28 @@
-import { Link, Navigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { AuremontLogoIcon, LogInIcon } from "../components/Icons";
+import { TopNavbar } from "../components/TopNavbar";
+import { Footer } from "../components/Footer";
+import { ChatWidget } from "../components/ChatWidget";
+import { Home } from "./Home";
 
-const HERO_IMAGE_URL =
-  "http://localhost:9000/project-images/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
-
-// First public screen before login — branding and an entry button only,
-// so internal lookup/chat content is never exposed to unauthenticated visitors.
+/** Public homepage — reachable with no account. Deliberately the exact same page (and the
+ * exact same TopNavbar — catalogue dropdown, Chat link, everything) as what a logged-in
+ * Sale/Customer sees at `/home`: a visitor browses identically to Sale. Data stays split
+ * at the API layer, not the page layer — the catalogue/project pages this links to are
+ * already public-safe, and chat answers are capped at PUBLIC clearance server-side (see
+ * backend/services/agent_pipeline.py). */
 export function Landing() {
   const { isAuthenticated } = useAuth();
   if (isAuthenticated) return <Navigate to="/home" replace />;
 
   return (
-    <div className="landing-page" style={{ "--hero-image-url": `url(${HERO_IMAGE_URL})` } as React.CSSProperties}>
-      <div className="landing-scrim" />
-      <div className="landing-content">
-        <div className="landing-logo">
-          <AuremontLogoIcon size={40} />
-          <span className="logo-text">Auremont</span>
-        </div>
-        <h1 className="landing-title">Trợ lý AI nội bộ cho đội ngũ Sale Vinhomes Ocean Park</h1>
-        <p className="landing-subtitle">
-          Tra cứu bảng giá, tồn kho và tư vấn khách hàng nhanh hơn với AI có trích dẫn nguồn tài liệu.
-        </p>
-        <Link to="/login" className="btn btn-primary landing-cta">
-          Đăng nhập
-          <LogInIcon size={16} />
-        </Link>
+    <div className="app-shell">
+      <TopNavbar />
+      <div className="app-content">
+        <Home />
       </div>
+      <Footer />
+      <ChatWidget />
     </div>
   );
 }

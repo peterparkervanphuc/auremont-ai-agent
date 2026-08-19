@@ -70,9 +70,15 @@ def _owned_session(db: Session, session_id: int, user: User):
     holds per-customer consultation history, so one user must never read or delete
     another's. Returns 404 rather than 403 so the response does not reveal which
     session ids exist.
+
+    `customer_id is not None` rejects a customer session this Sale has claimed via the
+    live-inbox flow (routers/sale_live.py) — that row also carries this Sale's `sale_id`,
+    but must only be reachable through the live-inbox endpoints. Routing it through here
+    would call the AI pipeline (`ask_in_session` below) on a session a Sale is chatting
+    through live, injecting an AI-authored message into the middle of that conversation.
     """
     session = get_session(db, session_id)
-    if session is None or session.sale_id != user.id:
+    if session is None or session.sale_id != user.id or session.customer_id is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return session
 
@@ -178,6 +184,7 @@ async def ask_in_session(
         requires_hitl=result.requires_hitl,
         faithfulness=result.faithfulness,
         answer_relevancy=result.answer_relevancy,
+        emotion=result.emotion,
     )
 
 

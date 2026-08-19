@@ -3,9 +3,10 @@ import { Link, useMatch, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import type { ChatSessionResponse } from "../../types";
 import { ArrowLeftIcon, ChatIcon, PlusIcon, SearchIcon, TrashIcon } from "../../components/Icons";
+import { parseServerDate } from "../../utils/datetime";
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
+  const d = parseServerDate(iso);
   return Number.isNaN(d.getTime())
     ? ""
     : d.toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" });

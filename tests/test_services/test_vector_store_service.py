@@ -31,6 +31,7 @@ class FakeQdrantClient:
         self.upsert_calls = []
         self.delete_calls = []
         self.set_payload_calls = []
+        self.payload_index_calls = []
 
     def collection_exists(self, collection_name: str) -> bool:
         return self.exists
@@ -38,6 +39,11 @@ class FakeQdrantClient:
     def create_collection(self, **kwargs):
         self.create_calls.append(kwargs)
         self.exists = True
+
+    def create_payload_index(self, **kwargs):
+        # `ensure_collection` indexes every field `rag_service` filters on, because
+        # Qdrant Cloud's strict mode rejects a filter on an unindexed field outright.
+        self.payload_index_calls.append(kwargs)
 
     def get_collection(self, collection_name: str):
         if self.legacy_unnamed:

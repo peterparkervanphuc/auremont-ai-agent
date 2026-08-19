@@ -5,11 +5,15 @@ import type {
   DocumentVisibility,
   ProjectResponse,
 } from "../../types";
+import { parseServerDate } from "../../utils/datetime";
 import {
+  AlertIcon,
+  CheckIcon,
   InboxIcon,
   LoaderIcon,
   TrashIcon,
   UploadIcon,
+  XIcon,
 } from "../../components/Icons";
 
 const STATUS_LABEL: Record<
@@ -47,16 +51,24 @@ function isSupportedFile(file: File): boolean {
   );
 }
 
+interface UploadQueueItem {
+  id: string;
+  file: File;
+  status: "pending" | "uploading" | "done" | "error";
+  message?: string;
+}
+
 export function DocumentsTab() {
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [queue, setQueue] = useState<UploadQueueItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   // Which project the uploaded document belongs to. Retrieval filters on this, and
   // conflict detection only compares documents within the same project.
   const [projectId, setProjectId] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploading = queue.some((item) => item.status === "pending" || item.status === "uploading");
 
   const loadDocuments = useCallback(() => {
     api
@@ -80,52 +92,78 @@ export function DocumentsTab() {
       .catch(() => setProjects([]));
   }, []);
 
-  const uploadFile = async (file: File) => {
-    if (!isSupportedFile(file)) {
-      setError(
-        `Không hỗ trợ "${file.name}". Chỉ nhận file PDF hoặc DOCX.`,
-      );
-      return;
-    }
+  // Uploaded one at a time, in order — the backend does synchronous work per file (parse,
+  // prompt-injection scan, classify, embed), so firing them all in parallel would pile
+  // several of those onto the server/LLM API at once for no real benefit; sequential keeps
+  // each file's progress legible in the queue below and is no slower in practice for the
+  // handful of files an Admin drags in at once.
+  const processQueue = useCallback(
+    async (items: UploadQueueItem[]) => {
+      for (const item of items) {
+        if (!isSupportedFile(item.file)) {
+          setQueue((prev) =>
+            prev.map((q) =>
+              q.id === item.id
+                ? { ...q, status: "error", message: `Không hỗ trợ "${item.file.name}". Chỉ nhận PDF hoặc DOCX.` }
+                : q,
+            ),
+          );
+          continue;
+        }
 
-    setUploading(true);
-    setError(null);
+        setQueue((prev) => prev.map((q) => (q.id === item.id ? { ...q, status: "uploading" } : q)));
 
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("visibility", "internal");
-      // Without a project the document cannot be filtered per project at retrieval
-      // time, and conflict detection has nothing to compare it against.
-      if (projectId) formData.append("project_id", projectId);
+        try {
+          const formData = new FormData();
+          formData.append("file", item.file);
+          formData.append("visibility", "internal");
+          // Without a project the document cannot be filtered per project at retrieval
+          // time, and conflict detection has nothing to compare it against.
+          if (projectId) formData.append("project_id", projectId);
 
-      const result = await api.postForm<UploadResponse>(
-        "/documents/upload",
-        formData,
-      );
+          const result = await api.postForm<UploadResponse>("/documents/upload", formData);
 
-      loadDocuments();
+          setQueue((prev) =>
+            prev.map((q) =>
+              q.id === item.id
+                ? result.status === "completed"
+                  ? { ...q, status: "done" }
+                  : { ...q, status: "error", message: result.message }
+                : q,
+            ),
+          );
+        } catch (err) {
+          setQueue((prev) =>
+            prev.map((q) =>
+              q.id === item.id
+                ? { ...q, status: "error", message: err instanceof Error ? err.message : "Upload tài liệu thất bại." }
+                : q,
+            ),
+          );
+        }
 
-      if (result.status !== "completed") {
-        setError(result.message);
+        loadDocuments();
       }
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Upload tài liệu thất bại.",
-      );
-    } finally {
-      setUploading(false);
-    }
-  };
+    },
+    [projectId, loadDocuments],
+  );
 
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) {
       return;
     }
 
-    void uploadFile(files[0]);
+    const items: UploadQueueItem[] = Array.from(files).map((file, index) => ({
+      id: `${Date.now()}-${index}-${file.name}`,
+      file,
+      status: "pending",
+    }));
+    setQueue((prev) => [...prev, ...items]);
+    void processQueue(items);
+  };
+
+  const clearFinishedQueue = () => {
+    setQueue((prev) => prev.filter((item) => item.status === "pending" || item.status === "uploading"));
   };
 
   const setVisibility = async (
@@ -207,8 +245,15 @@ export function DocumentsTab() {
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          onChange={(event) => handleFiles(event.target.files)}
+          onChange={(event) => {
+            handleFiles(event.target.files);
+            // Without this, picking the same file(s) again right after (e.g. to retry
+            // one that failed) fires no "change" event — the browser dedupes an
+            // unchanged file list against its own last value.
+            event.target.value = "";
+          }}
           style={{ display: "none" }}
         />
 
@@ -227,13 +272,33 @@ export function DocumentsTab() {
         </p>
 
         <p className="upload-zone-hint">
-          hoặc bấm để chọn từ máy tính · hỗ trợ PDF và DOCX
+          hoặc bấm để chọn từ máy tính · hỗ trợ PDF và DOCX · chọn/thả được nhiều file cùng lúc
         </p>
       </div>
 
-      {error && (
-        <div className="alert alert-danger" style={{ marginTop: 16 }}>
-          {error}
+      {queue.length > 0 && (
+        <div className="upload-queue">
+          {queue.map((item) => (
+            <div key={item.id} className={`upload-queue-item upload-queue-item--${item.status}`}>
+              <span className="upload-queue-item-icon">
+                {item.status === "pending" || item.status === "uploading" ? (
+                  <LoaderIcon size={14} className="icon-spin" />
+                ) : item.status === "done" ? (
+                  <CheckIcon size={14} />
+                ) : (
+                  <AlertIcon size={14} />
+                )}
+              </span>
+              <span className="upload-queue-item-name">{item.file.name}</span>
+              {item.message && <span className="upload-queue-item-msg">{item.message}</span>}
+            </div>
+          ))}
+          {!uploading && (
+            <button type="button" className="btn btn-sm btn-ghost upload-queue-clear" onClick={clearFinishedQueue}>
+              <XIcon size={13} />
+              Xóa danh sách
+            </button>
+          )}
         </div>
       )}
 
@@ -271,9 +336,7 @@ export function DocumentsTab() {
                       <div className="data-row-title">{document.title}</div>
                     )}
                     <div className="data-row-meta">
-                      {new Date(
-                        document.created_at,
-                      ).toLocaleString("vi-VN")}
+                      {parseServerDate(document.created_at).toLocaleString("vi-VN")}
                     </div>
                   </div>
 

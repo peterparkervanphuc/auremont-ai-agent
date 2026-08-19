@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../hooks/useAuth";
+import { saleLiveApi } from "../api/saleLive";
 import { CATALOG } from "../types/catalog";
 import { ZONES } from "../routes/sale/inventory/registry";
 import type { UserRole } from "../types";
@@ -13,14 +14,21 @@ import {
   ChevronRightIcon,
   DocumentIcon,
   HomeIcon,
+  LogInIcon,
   LogOutIcon,
   MenuIcon,
   MoonIcon,
   SettingsIcon,
   ShieldCheckIcon,
   SunIcon,
+  UsersIcon,
   XIcon,
 } from "./Icons";
+
+// How often Sale/Admin poll for the "Khách đang chờ" badge count — same interval as
+// LiveInboxPage.tsx's own poll, kept independent since the badge must update even when
+// that page isn't open.
+const LIVE_INBOX_POLL_MS = 10000;
 
 interface AdminNavEntry {
   to: string;
@@ -49,21 +57,31 @@ const OTHER_OCEAN_PARKS = CATALOG.slice(1);
 // source of truth, so a zone added there shows up here without touching this file.
 const ZONE_BY_SLUG = new Map(ZONES.map((z) => [z.slug, z]));
 
+// Used both by an anonymous visitor's homepage ("/") and a logged-in Sale/Customer's ("/home") —
+// same nav either way, so the two paths need to be treated as the same "home" location below.
+const HOME_PATHS = new Set(["/", "/home"]);
+
 export function TopNavbar() {
   const { theme, toggleTheme } = useTheme();
-  const { role, username, logout } = useAuth();
+  const { isAuthenticated, role, username, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+
+  // Everyone except Admin gets the catalogue dropdown + Chat link: Sale, a logged-in
+  // Customer, and an anonymous visitor all browse the same public catalogue — only the
+  // chat *answers* are restricted server-side (see backend/services/agent_pipeline.py).
+  const showCatalogNav = role !== "admin";
+  const homeHref = isAuthenticated ? "/home" : "/";
 
   // On the home page and pages with a hero banner (category/project detail), the
   // menu floats transparently over the image instead of sitting as a solid bar.
   // Excludes /inventory/group/* specifically, since that page has no banner and a
   // transparent menu there would sit on a plain background and become unreadable.
   const isOverlay =
-    role === "sale" &&
-    (location.pathname === "/home" ||
+    showCatalogNav &&
+    (HOME_PATHS.has(location.pathname) ||
       (location.pathname.startsWith("/inventory/") && !location.pathname.startsWith("/inventory/group/")));
 
   // Dropdown visibility is driven by mouse enter/leave state, not plain CSS :hover —
@@ -74,6 +92,17 @@ export function TopNavbar() {
     setOpenDropdown(null);
   }, [location.pathname]);
 
+  const showLiveInboxNav = role === "sale" || role === "admin";
+  const [waitingCount, setWaitingCount] = useState(0);
+
+  useEffect(() => {
+    if (!showLiveInboxNav) return;
+    const poll = () => saleLiveApi.listWaiting().then((rows) => setWaitingCount(rows.length)).catch(() => {});
+    poll();
+    const interval = setInterval(poll, LIVE_INBOX_POLL_MS);
+    return () => clearInterval(interval);
+  }, [showLiveInboxNav]);
+
   const handleLogout = () => {
     logout();
     setMobileOpen(false);
@@ -82,18 +111,18 @@ export function TopNavbar() {
 
   return (
     <header className={`topnav ${isOverlay ? "topnav--overlay" : ""}`}>
-      <NavLink to="/home" className="topnav-brand" onClick={() => setMobileOpen(false)}>
+      <NavLink to={homeHref} className="topnav-brand" onClick={() => setMobileOpen(false)}>
         <AuremontLogoIcon size={28} />
         <span>Auremont</span>
       </NavLink>
 
       <nav className="topnav-links">
-        <NavLink to="/home" end className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
+        <NavLink to={homeHref} end className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
           <HomeIcon size={16} />
           Trang chủ
         </NavLink>
 
-        {role === "sale" && (
+        {showCatalogNav && (
           <>
             {OCEAN_PARK_1.categories.map((c) => (
               <div
@@ -245,11 +274,57 @@ export function TopNavbar() {
               </span>
             ))}
 
-            <NavLink to="/chat" className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
-              <ChatIcon size={16} />
-              Chat
-            </NavLink>
+            {role === "sale" ? (
+              // Sale's own chat is a straight consult flow — there's no "talk to a
+              // specialist" concept when Sale IS the specialist, so no dropdown here.
+              <NavLink to="/chat" className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
+                <ChatIcon size={16} />
+                Chat
+              </NavLink>
+            ) : (
+              <div
+                className="topnav-item"
+                onMouseEnter={() => setOpenDropdown("chat")}
+                onMouseLeave={() => setOpenDropdown(null)}
+              >
+                <NavLink
+                  to="/chat"
+                  onClick={() => setOpenDropdown(null)}
+                  className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}
+                >
+                  <ChatIcon size={16} />
+                  Chat
+                  <ChevronRightIcon size={12} className="topnav-caret" />
+                </NavLink>
+                <div className={`topnav-dropdown ${openDropdown === "chat" ? "topnav-dropdown--open" : ""}`}>
+                  <NavLink to="/chat" onClick={() => setOpenDropdown(null)} className="topnav-dropdown-item">
+                    Chat với Auremont AI
+                  </NavLink>
+                  {/* Prefills the question instead of auto-sending: works the same for an
+                      anonymous visitor (routes into the register gate, same as typing it
+                      themselves) and a logged-in customer (triggers the real handoff via
+                      `wants_human_agent` matching "gặp chuyên viên") without a separate
+                      unauthenticated-safe endpoint to wire up here. */}
+                  <NavLink
+                    to="/chat"
+                    state={{ prefill: "Tôi muốn gặp chuyên viên tư vấn" }}
+                    onClick={() => setOpenDropdown(null)}
+                    className="topnav-dropdown-item"
+                  >
+                    Chat với chuyên viên tư vấn
+                  </NavLink>
+                </div>
+              </div>
+            )}
           </>
+        )}
+
+        {showLiveInboxNav && (
+          <NavLink to="/live-inbox" className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
+            <UsersIcon size={16} />
+            Khách đang chờ
+            {waitingCount > 0 && <span className="topnav-badge">{waitingCount}</span>}
+          </NavLink>
         )}
 
         {role === "admin" &&
@@ -274,18 +349,27 @@ export function TopNavbar() {
         >
           {theme === "dark" ? <SunIcon size={15} /> : <MoonIcon size={15} />}
         </button>
-        <div className="topnav-user">
-          <div className="topnav-avatar" title={username ?? ""}>
-            {username ? username.charAt(0).toUpperCase() : role === "admin" ? <ShieldCheckIcon size={14} /> : <ChatIcon size={14} />}
+        {isAuthenticated ? (
+          <div className="topnav-user">
+            <div className="topnav-avatar" title={username ?? ""}>
+              {username ? username.charAt(0).toUpperCase() : role === "admin" ? <ShieldCheckIcon size={14} /> : <ChatIcon size={14} />}
+            </div>
+            <div className="topnav-user-info">
+              <span className="topnav-user-name">{username ?? "—"}</span>
+              <span className="topnav-user-role">
+                {role === "admin" ? "Admin" : role === "customer" ? "Khách hàng" : "Sale"}
+              </span>
+            </div>
+            <button className="topnav-logout" type="button" onClick={handleLogout} title="Đăng xuất">
+              <LogOutIcon size={14} />
+            </button>
           </div>
-          <div className="topnav-user-info">
-            <span className="topnav-user-name">{username ?? "—"}</span>
-            <span className="topnav-user-role">{role === "admin" ? "Admin" : "Sale"}</span>
-          </div>
-          <button className="topnav-logout" type="button" onClick={handleLogout} title="Đăng xuất">
-            <LogOutIcon size={14} />
-          </button>
-        </div>
+        ) : (
+          <NavLink to="/login" className="btn btn-primary" onClick={() => setMobileOpen(false)}>
+            Đăng nhập
+            <LogInIcon size={15} />
+          </NavLink>
+        )}
 
         <button
           className="topnav-mobile-toggle"
@@ -300,7 +384,7 @@ export function TopNavbar() {
       {mobileOpen && (
         <div className="topnav-mobile-menu">
           <NavLink
-            to="/home"
+            to={homeHref}
             end
             onClick={() => setMobileOpen(false)}
             className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}
@@ -309,7 +393,7 @@ export function TopNavbar() {
             Trang chủ
           </NavLink>
 
-          {role === "sale" && (
+          {showCatalogNav && (
             <>
               {OCEAN_PARK_1.categories.map((c) => (
                 <div key={c.slug} className="topnav-mobile-group">
@@ -345,15 +429,55 @@ export function TopNavbar() {
                   {p.name} · sắp có
                 </span>
               ))}
-              <NavLink
-                to="/chat"
-                onClick={() => setMobileOpen(false)}
-                className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}
-              >
-                <ChatIcon size={16} />
-                Chat
-              </NavLink>
+              {role === "sale" ? (
+                <NavLink
+                  to="/chat"
+                  onClick={() => setMobileOpen(false)}
+                  className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}
+                >
+                  <ChatIcon size={16} />
+                  Chat
+                </NavLink>
+              ) : (
+                <div className="topnav-mobile-group">
+                  <span className="topnav-link">
+                    <ChatIcon size={16} />
+                    Chat
+                  </span>
+                  <NavLink
+                    to="/chat"
+                    onClick={() => setMobileOpen(false)}
+                    className={({ isActive }) =>
+                      `topnav-link topnav-mobile-sublink ${isActive ? "topnav-link--active" : ""}`
+                    }
+                  >
+                    Chat với Auremont AI
+                  </NavLink>
+                  <NavLink
+                    to="/chat"
+                    state={{ prefill: "Tôi muốn gặp chuyên viên tư vấn" }}
+                    onClick={() => setMobileOpen(false)}
+                    className={({ isActive }) =>
+                      `topnav-link topnav-mobile-sublink ${isActive ? "topnav-link--active" : ""}`
+                    }
+                  >
+                    Chat với chuyên viên tư vấn
+                  </NavLink>
+                </div>
+              )}
             </>
+          )}
+
+          {showLiveInboxNav && (
+            <NavLink
+              to="/live-inbox"
+              onClick={() => setMobileOpen(false)}
+              className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}
+            >
+              <UsersIcon size={16} />
+              Khách đang chờ
+              {waitingCount > 0 && <span className="topnav-badge">{waitingCount}</span>}
+            </NavLink>
           )}
 
           {role === "admin" &&
@@ -374,10 +498,17 @@ export function TopNavbar() {
             {theme === "dark" ? <SunIcon size={16} /> : <MoonIcon size={16} />}
             {theme === "dark" ? "Giao diện sáng" : "Giao diện tối"}
           </button>
-          <button className="topnav-link" type="button" onClick={handleLogout}>
-            <LogOutIcon size={16} />
-            Đăng xuất
-          </button>
+          {isAuthenticated ? (
+            <button className="topnav-link" type="button" onClick={handleLogout}>
+              <LogOutIcon size={16} />
+              Đăng xuất
+            </button>
+          ) : (
+            <NavLink to="/login" className="topnav-link" onClick={() => setMobileOpen(false)}>
+              <LogInIcon size={16} />
+              Đăng nhập
+            </NavLink>
+          )}
         </div>
       )}
     </header>

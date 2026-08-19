@@ -2,7 +2,7 @@
 // single-scroll CategoryDetailPage so each zone owns its own route.
 import { AmenityPhotoBanner, FloorPlanTabs, PriceTable, type ImageTab } from "../shared";
 
-const PALMA_IMG = "http://localhost:9000/project-images/the-palma";
+const PALMA_IMG = "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-palma";
 
 // Floor plans are grouped per tower because the two Palma towers do not share
 // the same floor bands (Palma 1 has 6-17 / 18-21, Palma 2 has 6-18 / 19-21).

@@ -129,7 +129,7 @@ def test_edge_case_notices_are_not_replayed_as_context(client, captured, monkeyp
         agent_pipeline,
         "run_pipeline",
         lambda query, project_id=None, db=None, conversation_history=None, **_kwargs: PipelineResult(
-            agent_pipeline.LOW_CONFIDENCE_MESSAGE, [], 0.0, False
+            agent_pipeline.LOW_CONFIDENCE_MESSAGE_INTERNAL, [], 0.0, False
         ),
     )
     _ask(client, session_id, "Gia can 2PN?")
@@ -143,7 +143,7 @@ def test_edge_case_notices_are_not_replayed_as_context(client, captured, monkeyp
 
     contents = [turn.content for turn in captured[-1]]
     assert contents == ["Gia can 2PN?"]
-    assert agent_pipeline.LOW_CONFIDENCE_MESSAGE not in contents
+    assert agent_pipeline.LOW_CONFIDENCE_MESSAGE_INTERNAL not in contents
 
 
 def test_sessions_do_not_share_memory(client, captured):

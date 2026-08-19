@@ -61,7 +61,7 @@ export const ZONES: ZoneMeta[] = [
     name: "The Ocean View",
     tagline: "Thiên đường nghỉ dưỡng sinh thái — 3 tiểu khu, 12 tòa căn hộ",
     categorySlug: "chung-cu",
-    cover: "http://localhost:9000/project-images/the-ocean-view/the-ocean-view.jpg",
+    cover: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-ocean-view/the-ocean-view.jpg",
     render: () => <TheOceanViewZone />,
     subAnchors: [
       { label: "The Zenpark", anchorId: "the-zenpark" },
@@ -73,7 +73,7 @@ export const ZONES: ZoneMeta[] = [
     name: "The Sapphire",
     tagline: "Tâm điểm của thành phố biển hồ — 27 tòa căn hộ",
     categorySlug: "chung-cu",
-    cover: "http://localhost:9000/project-images/the-sapphire/phan-khu-sapphire-vinhomes-ocean-park.jpg",
+    cover: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-sapphire/phan-khu-sapphire-vinhomes-ocean-park.jpg",
     render: () => <TheSapphireZone />,
   },
   {
@@ -81,7 +81,7 @@ export const ZONES: ZoneMeta[] = [
     name: "The Senique Hanoi",
     tagline: "Compound khép kín đầu tiên tại Ocean Park — 3 tòa, 2.152 căn",
     categorySlug: "chung-cu",
-    cover: "http://localhost:9000/project-images/the-senique-hanoi/the-senique-hanoi-phoi-canh.jpg",
+    cover: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-senique-hanoi/the-senique-hanoi-phoi-canh.jpg",
     render: () => <TheSeniqueHanoiZone />,
     subAnchors: [
       { label: "Tòa The Senique 1", anchorId: "the-senique-1" },
@@ -93,7 +93,7 @@ export const ZONES: ZoneMeta[] = [
     name: "Tiểu khu Ngọc Trai",
     tagline: "Vị trí trung tâm - 'trái tim' của Vinhomes Ocean Park",
     categorySlug: "biet-thu",
-    cover: "http://localhost:9000/project-images/ngoc-trai/vinhomes-ocean-park-ngoc-trai.jpg",
+    cover: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/ngoc-trai/vinhomes-ocean-park-ngoc-trai.jpg",
     render: () => <NgocTraiZone />,
   },
   {
@@ -101,7 +101,7 @@ export const ZONES: ZoneMeta[] = [
     name: "Tiểu khu Hải Âu",
     tagline: "Thiết kế theo hình cánh chim Hải Âu",
     categorySlug: "biet-thu",
-    cover: "http://localhost:9000/project-images/hai-au/vinhomes-ocean-park-hai-au.jpg",
+    cover: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/hai-au/vinhomes-ocean-park-hai-au.jpg",
     render: () => <HaiAuZone />,
   },
   {
@@ -109,7 +109,7 @@ export const ZONES: ZoneMeta[] = [
     name: "Tiểu khu Sao Biển",
     tagline: "Ôm trọn hồ điều hòa trung tâm 25ha",
     categorySlug: "biet-thu",
-    cover: "http://localhost:9000/project-images/sao-bien/phoi-canh-sao-bien-vinhomes-ocean-park.jpg",
+    cover: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/sao-bien/phoi-canh-sao-bien-vinhomes-ocean-park.jpg",
     render: () => <SaoBienZone />,
   },
   {
@@ -117,7 +117,7 @@ export const ZONES: ZoneMeta[] = [
     name: "Shop thương mại SH09",
     tagline: "Dãy shop thương mại dịch vụ San Hô 09",
     categorySlug: "shophouse",
-    cover: "http://localhost:9000/project-images/shop-thuong-mai-sh09/shop-tmdv-sh09.jpg",
+    cover: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/shop-thuong-mai-sh09/shop-tmdv-sh09.jpg",
     render: () => <ShopTmdvZone shopCode="SH09" />,
   },
   {
@@ -125,7 +125,7 @@ export const ZONES: ZoneMeta[] = [
     name: "Shop thương mại SB11A",
     tagline: "Dãy shop thương mại dịch vụ Sao Biển 11A",
     categorySlug: "shophouse",
-    cover: "http://localhost:9000/project-images/shop-thuong-mai-sb11a/shop-tmdv-sb11a-vinhomes-ocean-park.jpg",
+    cover: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/shop-thuong-mai-sb11a/shop-tmdv-sb11a-vinhomes-ocean-park.jpg",
     render: () => <ShopTmdvZone shopCode="SB11A" />,
   },
   {
@@ -133,7 +133,7 @@ export const ZONES: ZoneMeta[] = [
     name: "Shop thương mại HA08",
     tagline: "Dãy shop thương mại dịch vụ Hải Âu 08",
     categorySlug: "shophouse",
-    cover: "http://localhost:9000/project-images/shop-thuong-mai-ha08/shop-thuong-mai-dich-vu-ha08-vinhomes-ocean-park.jpg",
+    cover: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/shop-thuong-mai-ha08/shop-thuong-mai-dich-vu-ha08-vinhomes-ocean-park.jpg",
     render: () => <ShopTmdvZone shopCode="HA08" />,
   },
   {
@@ -142,7 +142,7 @@ export const ZONES: ZoneMeta[] = [
     tagline: "Dãy shop thương mại dịch vụ Biển Hồ 9B",
     categorySlug: "shophouse",
     cover:
-      "http://localhost:9000/project-images/shop-thuong-mai-bh9b/shop-thuong-mai-dich-vu-bien-ho-9b-vinhomes-ocean-park.jpg",
+      "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/shop-thuong-mai-bh9b/shop-thuong-mai-dich-vu-bien-ho-9b-vinhomes-ocean-park.jpg",
     render: () => <ShopTmdvZone shopCode="BH9B" />,
   },
 ];

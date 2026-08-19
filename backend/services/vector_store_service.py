@@ -20,6 +20,31 @@ class VectorStoreError(RuntimeError):
     """Failure while initialising the collection or writing vectors to Qdrant."""
 
 
+_KEYWORD_INDEX_FIELDS = ("project_id", "visibility", "review_status")
+
+
+def _ensure_payload_indexes(client, collection_name: str) -> None:
+    """Create indexes for every payload field `rag_service` filters on.
+
+    Qdrant Cloud clusters run with strict mode on by default: a filter on a field
+    with no index is rejected outright (400 Bad Request) rather than falling back
+    to an unindexed scan the way self-hosted Qdrant does. `create_payload_index`
+    is a no-op when the index already exists, so this is safe to call every time
+    `ensure_collection` runs, not just on first creation.
+    """
+    for field in _KEYWORD_INDEX_FIELDS:
+        client.create_payload_index(
+            collection_name=collection_name,
+            field_name=field,
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
+    client.create_payload_index(
+        collection_name=collection_name,
+        field_name="is_current",
+        field_schema=models.PayloadSchemaType.BOOL,
+    )
+
+
 def ensure_collection() -> None:
     """Create the dense+sparse collection if absent; reject a mismatched schema.
 
@@ -43,6 +68,7 @@ def ensure_collection() -> None:
             },
             sparse_vectors_config={SPARSE_VECTOR: models.SparseVectorParams()},
         )
+        _ensure_payload_indexes(client, collection_name)
         return
 
     collection = client.get_collection(collection_name)
@@ -68,6 +94,8 @@ def ensure_collection() -> None:
             f"Collection '{collection_name}' has no '{SPARSE_VECTOR}' sparse vector configured. "
             "Delete the collection and re-index every document."
         )
+
+    _ensure_payload_indexes(client, collection_name)
 
 
 def index_document_chunks(

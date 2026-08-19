@@ -246,3 +246,10 @@ export async function fetchProjectDetail(projectId: string): Promise<ProjectFull
     contact: row.contact,
   };
 }
+
+// ---- Citation click-through: temporary signed link to the original file ----
+
+export async function fetchDocumentViewUrl(documentId: number): Promise<string> {
+  const { url } = await api.get<{ url: string }>(`/projects/documents/${documentId}/view-url`);
+  return url;
+}

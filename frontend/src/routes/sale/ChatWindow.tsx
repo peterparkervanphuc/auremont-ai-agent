@@ -6,12 +6,13 @@ import { HitlCard } from "./HitlCard";
 import { BotIcon, LoaderIcon, SendIcon, TrashIcon, UserIcon } from "../../components/Icons";
 import { FeedbackButtons } from "../../components/FeedbackButtons";
 import { CitationList } from "../../components/CitationList";
-import { AuremontMascot } from "../../components/AuremontMascot";
+import { AuremontAvatar } from "../../components/AuremontAvatar";
 import { AnswerImageStrip } from "./AnswerImageStrip";
 import { ChatSuggestions } from "./ChatSuggestions";
+import { parseServerDate } from "../../utils/datetime";
 
 function formatTime(iso: string): string {
-  const d = new Date(iso);
+  const d = parseServerDate(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
 }
 
@@ -78,6 +79,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
       verifier_score: null,
       requires_hitl: false,
       hitl_confirmed: false,
+      emotion: null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
@@ -155,7 +157,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
         <div className="chat-messages-inner">
           {messages.length === 0 && !loading && (
             <div className="chat-landing">
-              <AuremontMascot size={64} className="chat-landing-mascot" />
+              <AuremontAvatar size={64} emotion="greeting" className="chat-landing-mascot" />
               <h2 className="chat-empty-title">Hỏi Auremont bằng câu nói của bạn</h2>
               <p className="chat-empty-text">
                 Ví dụ "bảng giá căn 2 ngủ The Zurich" hoặc "mặt bằng tòa BE1 The Beverly". Auremont tra tài liệu đang
@@ -183,7 +185,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
             return (
               <div key={m.id} className={`chat-message ${isUser ? "chat-message--user" : "chat-message--bot"}`}>
                 <div className={`chat-avatar ${isUser ? "chat-avatar--user" : "chat-avatar--bot"}`}>
-                  {isUser ? <UserIcon size={16} /> : <BotIcon size={18} />}
+                  {isUser ? <UserIcon size={16} /> : <AuremontAvatar size={22} emotion={m.emotion ?? "idle"} variant="face" />}
                 </div>
 
                 <div className="chat-bubble-wrap">
@@ -206,7 +208,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
           {loading && (
             <div className="chat-thinking">
               <div className="chat-avatar chat-avatar--bot">
-                <BotIcon size={18} />
+                <AuremontAvatar size={22} emotion="thinking" variant="face" />
               </div>
               <div className="thinking-bubble">
                 <div className="thinking-dots">

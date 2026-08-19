@@ -33,6 +33,7 @@ from backend.routers import (
     admin_settings,
     admin_stats,
     auth,
+    customer_chat,
     dev_seed,
     document_relations,
     documents,
@@ -40,6 +41,7 @@ from backend.routers import (
     hitl,
     projects,
     sale_chat,
+    sale_live,
     users,
 )
 
@@ -102,12 +104,16 @@ app.include_router(projects.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(document_relations.router, prefix="/api/v1")
 app.include_router(sale_chat.router, prefix="/api/v1")
+app.include_router(sale_live.router, prefix="/api/v1")
 app.include_router(hitl.router, prefix="/api/v1")
 app.include_router(feedback.router, prefix="/api/v1")
 app.include_router(admin_eval.router, prefix="/api/v1")
 app.include_router(admin_conflicts.router, prefix="/api/v1")
 app.include_router(admin_stats.router, prefix="/api/v1")
 app.include_router(admin_settings.router, prefix="/api/v1")
+
+# Public (anonymous visitors + logged-in CUSTOMER accounts) — see backend/routers/customer_chat.py
+app.include_router(customer_chat.router, prefix="/api/v1")
 
 # Seeding endpoint for E2E — registered ONLY in development. See backend/routers/dev_seed.py.
 if settings.app_env == "development":

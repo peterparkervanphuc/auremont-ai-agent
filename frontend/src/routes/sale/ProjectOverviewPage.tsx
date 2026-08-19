@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import { fetchProjectDetail, type ProjectFullDetail } from "../../api/projects";
+import { useAuth } from "../../hooks/useAuth";
 import type { ChatSessionResponse } from "../../types";
 import {
   ArrowLeftIcon,
@@ -36,6 +37,7 @@ function ProjectBanner({ project }: { project: ProjectFullDetail }) {
 export function ProjectOverviewPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuth();
   const [project, setProject] = useState<ProjectFullDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [booking, setBooking] = useState(false);
@@ -51,12 +53,21 @@ export function ProjectOverviewPage() {
 
   const bookViewing = async () => {
     if (!project || booking) return;
+    const prefill = `Tôi muốn đặt lịch xem nhà cho ${project.name}.`;
+
+    // Anonymous visitors and Customer accounts have no /sale/sessions access (that
+    // endpoint is SALE/ADMIN-only) — they go through the public chat page instead,
+    // which lazily creates its own session on the first message. A Sale keeps the
+    // existing behaviour of jumping straight into a fresh consultation session.
+    if (role !== "sale") {
+      navigate("/chat", { state: { prefill } });
+      return;
+    }
+
     setBooking(true);
     try {
       const session = await api.post<ChatSessionResponse>("/sale/sessions", {});
-      navigate(`/chat/sessions/${session.id}`, {
-        state: { prefill: `Tôi muốn đặt lịch xem nhà cho ${project.name}.` },
-      });
+      navigate(`/chat/sessions/${session.id}`, { state: { prefill } });
     } finally {
       setBooking(false);
     }

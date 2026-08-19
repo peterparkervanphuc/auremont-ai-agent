@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { CategoryCard } from "../components/CategoryCard";
 import { FloorPlanTabs } from "./sale/inventory/shared";
@@ -17,12 +17,12 @@ import {
 } from "../components/Icons";
 
 const HERO_IMAGE_URL =
-  "http://localhost:9000/project-images/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
+  "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
 
 const OVERVIEW_IMAGE_URL =
-  "http://localhost:9000/project-images/vinhomes-ocean-park/masterise-vinhomes-ocean-park-night.jpg";
+  "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/vinhomes-ocean-park/masterise-vinhomes-ocean-park-night.jpg";
 
-const PROJECT_IMG = "http://localhost:9000/project-images/vinhomes-ocean-park";
+const PROJECT_IMG = "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/vinhomes-ocean-park";
 
 const MASTER_PLAN_TABS = [
   { label: "Mặt bằng phân khu", src: `${PROJECT_IMG}/mat-bang-phan-khu-vinhomes-ocean-park.jpg` },
@@ -72,6 +72,7 @@ const FEATURES = [
 // Home page for SALE only — ADMIN uses AdminHome (the admin dashboard) instead.
 export function Home() {
   const { username } = useAuth();
+  const location = useLocation();
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [overview, setOverview] = useState<ProjectOverview | null>(null);
 
@@ -79,6 +80,16 @@ export function Home() {
     fetchCategories().then(setCategories).catch(() => setCategories([]));
     fetchProjectOverview().then(setOverview).catch(() => setOverview(null));
   }, []);
+
+  // Arriving here fresh with a hash (e.g. from Footer's "Tra cứu dự án" link on another
+  // page) is a full client-side navigation, not a same-page click — the browser's native
+  // "jump to #id" behavior only fires on a real page load, so React Router landing here
+  // needs its own scroll-into-view once the section exists in the DOM.
+  useEffect(() => {
+    if (!location.hash) return;
+    const id = location.hash.slice(1);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [location.hash]);
 
   const actions = [
     {

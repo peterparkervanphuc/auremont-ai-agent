@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
+import { parseServerDate } from "../../utils/datetime";
 import { AlertIcon, CheckIcon } from "../../components/Icons";
 
 interface ConflictFlagResponse {
@@ -45,7 +46,7 @@ export function ConflictsTab() {
                 <AlertIcon size={16} />
                 <span>Mâu thuẫn dữ liệu</span>
                 <span className="conflict-doc-meta" style={{ marginLeft: "auto", textTransform: "none" }}>
-                  {new Date(c.created_at).toLocaleString("vi-VN")}
+                  {parseServerDate(c.created_at).toLocaleString("vi-VN")}
                 </span>
               </div>
 
