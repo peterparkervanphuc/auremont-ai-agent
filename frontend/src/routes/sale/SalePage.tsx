@@ -5,7 +5,7 @@ import type { ChatSessionResponse } from "../../types";
 import { ChatWindow } from "./ChatWindow";
 import { SessionList } from "./SessionList";
 import { ChatSuggestions } from "./ChatSuggestions";
-import { AuremontMascot } from "../../components/AuremontMascot";
+import { AuremontAvatar } from "../../components/AuremontAvatar";
 import { useAuth } from "../../hooks/useAuth";
 
 // ChatGPT-style shell: Session sidebar on the left, main chat panel, and a
@@ -49,7 +49,7 @@ export function SalePage() {
               <div className="chat-messages">
                 <div className="chat-messages-inner">
                   <div className="chat-landing">
-                    <AuremontMascot size={64} className="chat-landing-mascot" />
+                    <AuremontAvatar size={64} emotion="greeting" className="chat-landing-mascot" />
                     <h2 className="chat-empty-title">Hỏi Auremont bằng câu nói của bạn</h2>
                     <p className="chat-empty-text">
                       Chào {username ?? "bạn"}, mô tả điều cần tra cứu — bảng giá, mặt bằng, chính sách bán hàng —

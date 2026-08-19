@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from backend.core.enums import MessageSender
+from backend.core.enums import MessageEmotion, MessageSender
 from backend.models.message import Message
 
 
@@ -15,6 +15,7 @@ def create_message(
     requires_hitl: bool = False,
     faithfulness: float | None = None,
     answer_relevancy: float | None = None,
+    emotion: MessageEmotion | None = None,
 ) -> Message:
     message = Message(
         session_id=session_id,
@@ -26,6 +27,7 @@ def create_message(
         requires_hitl=requires_hitl,
         faithfulness=faithfulness,
         answer_relevancy=answer_relevancy,
+        emotion=emotion,
     )
     db.add(message)
     db.commit()

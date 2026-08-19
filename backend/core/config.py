@@ -113,6 +113,15 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 768
     upload_max_bytes: int = 20 * 1024 * 1024
 
+    # Customer chat (public/anonymous flow)
+    # How many questions an anonymous visitor gets before the register/login gate blocks
+    # the next one outright (no LLM call spent on the blocked turn).
+    customer_anonymous_turn_limit: int = 4
+    # Per-IP throttle on the unauthenticated customer-chat endpoints (anonymous session
+    # creation, anonymous ask) — see backend/core/rate_limit.py.
+    anonymous_rate_limit_per_window: int = 20
+    anonymous_rate_limit_window_seconds: int = 300
+
     @property
     def is_production(self) -> bool:
         """True outside the known development/test environments.

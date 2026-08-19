@@ -8,8 +8,11 @@ resolves inventory through the INVENTORY_PROJECT_MAP catch-all.
 Note these ids are *catalogue slugs* (`the-palma`, `vinhomes-ocean-park`), a different
 namespace from the project codes the inventory API uses; `inventory_service` bridges them.
 
-Reading is open to SALE as well as ADMIN — a Sale must see the list to choose a
-project — while creating a project stays ADMIN-only.
+Reading (catalogue listing, category/zone detail, pricing tiers) is public — this is the
+same marketing-grade project/pricing information a real showroom displays openly, and the
+public homepage (frontend/src/routes/Landing.tsx, reached with no account) links straight
+into these pages. Creating a project stays ADMIN-only; the document view-url endpoint stays
+SALE/ADMIN-only since it is not visibility-filtered (see its own docstring below).
 """
 
 import re
@@ -18,10 +21,13 @@ import unicodedata
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import UserRole
+from backend.core.minio_client import presigned_get_url
 from backend.core.mysql_client import get_db
 from backend.models.project import Project
+from backend.repositories.document import get_document
 from backend.repositories.project import create_project, get_project, list_projects
 from backend.schemas.project import (
     CategoryDetail,
@@ -33,11 +39,7 @@ from backend.schemas.project import (
     ProjectSummary,
 )
 
-router = APIRouter(
-    prefix="/projects",
-    tags=["Projects"],
-    dependencies=[Depends(require_role(UserRole.SALE, UserRole.ADMIN))],
-)
+router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
 def _primary_type(details: dict | None) -> str:
@@ -233,3 +235,29 @@ def get_category_detail(project_id: str, category_slug: str, db: Session = Depen
         highlights=project_info.get("highlights", []),
         gallery=gallery,
     )
+
+
+@router.get(
+    "/documents/{document_id}/view-url",
+    dependencies=[Depends(require_role(UserRole.SALE, UserRole.ADMIN))],
+)
+def get_document_view_url(document_id: int, db: Session = Depends(get_db)) -> dict:
+    """Temporary signed link so a Sale can open a cited document from the chat, not just
+    Admin — the citation chip needs somewhere to point. Bucket stays private; the link
+    itself expires after a few minutes.
+
+    SALE/ADMIN only, explicitly (this used to ride on a router-level dependency that also
+    covered the now-public catalogue endpoints above): it returns a signed link for ANY
+    document id with no visibility filtering, so opening it to CUSTOMER/anonymous would let
+    someone enumerate document ids and download INTERNAL-tier files directly, bypassing the
+    PUBLIC-only clearance the customer chat flow otherwise enforces.
+    """
+    document = get_document(db, document_id)
+    if document is None or not document.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document has no stored file yet.",
+        )
+
+    url = presigned_get_url(settings.minio_bucket_documents, document.file_path)
+    return {"url": url}

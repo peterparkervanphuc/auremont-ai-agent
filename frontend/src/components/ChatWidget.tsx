@@ -1,23 +1,48 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { api } from "../api/client";
-import type { ChatSessionResponse, MessageResponse } from "../types";
-import { ArrowRightIcon, LoaderIcon, SendIcon, XIcon } from "./Icons";
-import { AuremontMascot } from "./AuremontMascot";
+import { customerApi } from "../api/customerChat";
+import { getVisitorSession, setVisitorSession } from "../hooks/useVisitorToken";
+import { useAuth } from "../hooks/useAuth";
+import type {
+  AnonymousSessionResponse,
+  ChatSessionResponse,
+  CustomerAskResponse,
+  CustomerChatSessionResponse,
+  CustomerGate,
+  MessageResponse,
+  SessionStatus,
+} from "../types";
+import { ArrowRightIcon, LoaderIcon, SendIcon, UsersIcon, XIcon } from "./Icons";
+import { AuremontAvatar } from "./AuremontAvatar";
+import { RegisterGateModal } from "./RegisterGateModal";
 
 const SUGGESTIONS = ["Còn căn 2PN dưới 3 tỷ không?", "Biệt thự song lập giá bao nhiêu?"];
+const PUBLIC_SUGGESTIONS = ["Dự án ở vị trí nào?", "Có những tiện ích gì?"];
 
+// Floating chat launcher shown app-wide (Sale, Customer, and anonymous visitors alike —
+// only Admin has no use for it). Branches its API calls by role: Sale keeps the existing
+// /sale/sessions flow (with the "ask for the customer's name" step, since a Sale's session
+// list is organised by which customer it's for); Customer/anonymous go through
+// /customer/sessions instead and can hit the soft-paywall gate mid-conversation.
 export function ChatWidget() {
+  const { isAuthenticated, role } = useAuth();
+  const isSale = role === "sale";
+
   const [open, setOpen] = useState(false);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [messages, setMessages] = useState<MessageResponse[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  // Ask for the customer's name at the moment they send their first message (not
-  // right when the panel opens), so the Sale-side session list shows the customer's
-  // name instead of defaulting to the first question's text as the title.
-  // pendingMessage holds the in-flight question and is actually sent once this
-  // step is resolved (name entered or skipped).
+  const [gate, setGate] = useState<CustomerGate | null>(null);
+  // Customer/anonymous only — once a Sale is involved, the widget stops trying to keep up
+  // live (that experience lives in the full CustomerChatPage, which polls) and just points
+  // there instead. Sale's own /sale/sessions flow never sets this.
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus>("bot_handling");
+  // Sale-only: ask for the customer's name at the moment they send their first message
+  // (not right when the panel opens), so the Sale-side session list shows the customer's
+  // name instead of defaulting to the first question's text as the title. pendingMessage
+  // holds the in-flight question and is actually sent once this step is resolved.
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [askedName, setAskedName] = useState(false);
   const [customerName, setCustomerName] = useState("");
@@ -50,11 +75,25 @@ export function ChatWidget() {
 
   const ensureSession = async (): Promise<number> => {
     if (sessionId) return sessionId;
-    const session = await api.post<ChatSessionResponse>("/sale/sessions", {
-      customer_name: customerName.trim() || undefined,
-    });
-    setSessionId(session.id);
-    return session.id;
+
+    if (isSale) {
+      const session = await api.post<ChatSessionResponse>("/sale/sessions", {
+        customer_name: customerName.trim() || undefined,
+      });
+      setSessionId(session.id);
+      return session.id;
+    }
+
+    if (isAuthenticated) {
+      const session = await customerApi.post<CustomerChatSessionResponse>("/customer/sessions", {});
+      setSessionId(session.id);
+      return session.id;
+    }
+
+    const anon = await customerApi.post<AnonymousSessionResponse>("/customer/sessions/anonymous");
+    setVisitorSession(anon.session_id, anon.visitor_token);
+    setSessionId(anon.session_id);
+    return anon.session_id;
   };
 
   const sendMessage = async (content: string, skipNameGate = false) => {
@@ -62,10 +101,9 @@ export function ChatWidget() {
     if (!trimmed || loading) return;
 
     // First send (no session yet, name gate not passed): hold the question and
-    // show the name form instead of sending immediately. skipNameGate=true when
-    // called back from confirmName (the name step was just completed within the
-    // same click, and the askedName state hasn't updated in this closure yet).
-    if (!sessionId && !askedName && !skipNameGate) {
+    // show the name form instead of sending immediately. Sale only — the
+    // customer/anonymous flow has no equivalent step.
+    if (isSale && !sessionId && !askedName && !skipNameGate) {
       setPendingMessage(trimmed);
       setInput("");
       return;
@@ -77,21 +115,35 @@ export function ChatWidget() {
     const optimisticUser: MessageResponse = {
       id: -Date.now(),
       session_id: sessionId,
-      sender: "sale",
+      sender: isSale ? "sale" : "customer",
       content: trimmed,
       citations: null,
       images: null,
       verifier_score: null,
       requires_hitl: false,
       hitl_confirmed: false,
+      emotion: null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
 
     try {
       const id = await ensureSession();
-      const reply = await api.post<MessageResponse>(`/sale/sessions/${id}/messages`, { content: trimmed });
-      setMessages((prev) => [...prev, reply]);
+      if (isSale) {
+        const reply = await api.post<MessageResponse>(`/sale/sessions/${id}/messages`, { content: trimmed });
+        setMessages((prev) => [...prev, reply]);
+      } else {
+        // `null` once a Sale has taken over — the AI stays silent; the widget doesn't
+        // poll for the Sale's reply itself, it just points to the full chat page below.
+        const reply = await customerApi.post<CustomerAskResponse | null>(`/customer/sessions/${id}/messages`, {
+          content: trimmed,
+        });
+        if (reply) {
+          setMessages((prev) => [...prev, reply]);
+          setSessionStatus(reply.status);
+          if (reply.gate) setGate(reply.gate);
+        }
+      }
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -99,12 +151,13 @@ export function ChatWidget() {
           id: -Date.now() - 1,
           session_id: sessionId,
           sender: "agent",
-          content: "Tạm thời không tra được tồn kho — vui lòng thử lại.",
+          content: "Tạm thời không gửi được câu hỏi — vui lòng thử lại.",
           citations: null,
           images: null,
           verifier_score: null,
           requires_hitl: false,
           hitl_confirmed: false,
+          emotion: null,
           created_at: new Date().toISOString(),
         },
       ]);
@@ -133,14 +186,16 @@ export function ChatWidget() {
     }
   };
 
-  const fullChatHref = sessionId ? `/chat/sessions/${sessionId}` : "/chat";
+  const fullChatHref = isSale && sessionId ? `/chat/sessions/${sessionId}` : "/chat";
+  const suggestions = isSale ? SUGGESTIONS : PUBLIC_SUGGESTIONS;
+  const visitor = getVisitorSession();
 
   return (
     <div className="chat-widget" ref={rootRef}>
       {open && (
         <div className="chat-widget-panel">
           <div className="chat-widget-head">
-            <AuremontMascot size={34} />
+            <AuremontAvatar size={34} emotion={loading ? "thinking" : "idle"} variant="face" />
             <div>
               <p className="chat-widget-title">Trợ lý AI</p>
               <p className="chat-widget-sub">Hỏi nhanh về giá, pháp lý hoặc tồn kho</p>
@@ -169,11 +224,23 @@ export function ChatWidget() {
                 </button>
               </div>
             </form>
+          ) : !isSale && sessionStatus !== "bot_handling" ? (
+            <div className="chat-widget-handoff-hint">
+              <UsersIcon size={22} />
+              <p>
+                {sessionStatus === "waiting_sale"
+                  ? "Đang kết nối chuyên viên tư vấn cho bạn."
+                  : "Bạn đang chat trực tiếp với chuyên viên tư vấn."}
+              </p>
+              <Link to={fullChatHref} className="btn btn-primary chat-widget-name-submit">
+                Mở trợ lý đầy đủ để tiếp tục
+              </Link>
+            </div>
           ) : (
             <>
               {messages.length === 0 ? (
                 <div className="chat-widget-suggestions">
-                  {SUGGESTIONS.map((s) => (
+                  {suggestions.map((s) => (
                     <button key={s} type="button" className="chat-widget-suggestion" onClick={() => sendMessage(s)}>
                       &ldquo;{s}&rdquo;
                     </button>
@@ -182,7 +249,10 @@ export function ChatWidget() {
               ) : (
                 <div className="chat-widget-messages" ref={scrollRef}>
                   {messages.map((m) => (
-                    <div key={m.id} className={`chat-widget-msg ${m.sender === "sale" ? "chat-widget-msg--user" : ""}`}>
+                    <div
+                      key={m.id}
+                      className={`chat-widget-msg ${m.sender === "sale" || m.sender === "customer" ? "chat-widget-msg--user" : ""}`}
+                    >
                       {m.content}
                     </div>
                   ))}
@@ -223,8 +293,18 @@ export function ChatWidget() {
         onClick={() => setOpen((v) => !v)}
         aria-label={open ? "Đóng trợ lý AI" : "Mở trợ lý AI"}
       >
-        {open ? <XIcon size={22} /> : <AuremontMascot size={68} />}
+        {open ? <XIcon size={22} /> : <AuremontAvatar size={68} emotion="greeting" variant="face" />}
       </button>
+
+      {gate && (
+        <RegisterGateModal
+          gate={gate}
+          sessionId={sessionId}
+          visitorToken={visitor?.visitorToken ?? null}
+          onClose={() => setGate(null)}
+          onAuthenticated={() => setGate(null)}
+        />
+      )}
     </div>
   );
 }

@@ -9,6 +9,10 @@ from backend.models.user import User
 from backend.repositories.user import get_user_by_username
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+# auto_error=False: the customer chat flow accepts both anonymous visitors and logged-in
+# customers on the same endpoints, so a missing/bad token must fall through to `None`
+# instead of raising — see get_optional_current_user.
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
@@ -28,6 +32,31 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = get_user_by_username(db, username)
     if user is None or not user.is_active:
         raise credentials_error
+
+    return user
+
+
+def get_optional_current_user(
+    token: str | None = Depends(oauth2_scheme_optional), db: Session = Depends(get_db)
+) -> User | None:
+    """Same validation as `get_current_user`, but `None` instead of a 401 when there is no
+    (or an invalid/expired) token — for endpoints the customer chat flow must serve to both
+    anonymous visitors and logged-in customers alike.
+    """
+    if token is None:
+        return None
+
+    payload = decode_token(token)
+    if payload is None or payload.get("type") != "access":
+        return None
+
+    username = payload.get("sub")
+    if username is None:
+        return None
+
+    user = get_user_by_username(db, username)
+    if user is None or not user.is_active:
+        return None
 
     return user
 

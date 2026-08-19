@@ -37,7 +37,7 @@ from backend.ai.answer_cleanup import drop_image_denials
 from backend.ai.citations import build_citations
 from backend.ai.intent import needs_document_retrieval as query_needs_documents
 from backend.ai.intent import needs_inventory as query_needs_inventory
-from backend.core.enums import DocumentVisibility
+from backend.core.enums import DocumentVisibility, MessageEmotion
 from backend.core.gemini_client import generate_text
 from backend.services import answer_images_service, cache_service, risk_service, verifier_service
 from backend.services.inventory_service import InventoryApiError, InventoryUnit, lookup_inventory
@@ -52,12 +52,31 @@ RETRIEVAL_TOP_K = 5
 # calls (generate + verify); more than that blows the sub-3-second field response budget.
 MAX_GENERATE_RETRIES = 1
 
-# Standard messages from the edge-case table in README §5.4.
-EMPTY_STATE_MESSAGE = "Chưa có dữ liệu dự án, vui lòng báo Admin cập nhật."
+# Standard messages from the edge-case table in README §5.4. These are shown verbatim in
+# the chat, so wording differs by audience: Sale/Admin (INTERNAL clearance) get an
+# actionable internal instruction ("báo Admin cập nhật"), while a customer/anonymous asker
+# (PUBLIC clearance) has no Admin to report to — telling them to would just read as broken.
+EMPTY_STATE_MESSAGE_INTERNAL = "Chưa có dữ liệu dự án, vui lòng báo Admin cập nhật."
+EMPTY_STATE_MESSAGE_PUBLIC = (
+    "Auremont chưa có đủ thông tin để trả lời câu hỏi này. Bạn thử hỏi cách khác, hoặc để "
+    "lại thông tin liên hệ để được chuyên viên hỗ trợ nhé."
+)
 INVENTORY_UNAVAILABLE_MESSAGE = "Tạm thời không tra được tồn kho."
-LOW_CONFIDENCE_MESSAGE = "Không đủ thông tin, liên hệ Admin."
+LOW_CONFIDENCE_MESSAGE_INTERNAL = "Không đủ thông tin, liên hệ Admin."
+LOW_CONFIDENCE_MESSAGE_PUBLIC = (
+    "Auremont chưa đủ thông tin để trả lời chính xác câu này. Bạn có thể hỏi cụ thể hơn, "
+    "hoặc để lại thông tin liên hệ để được hỗ trợ nhanh nhất nhé."
+)
 RETRIEVAL_ERROR_MESSAGE = "Tạm thời không tra cứu được tài liệu, vui lòng thử lại sau."
 GENERATION_ERROR_MESSAGE = "Tạm thời không tạo được câu trả lời, vui lòng thử lại sau."
+
+
+def _empty_state_message(clearance: DocumentVisibility) -> str:
+    return EMPTY_STATE_MESSAGE_PUBLIC if clearance == DocumentVisibility.PUBLIC else EMPTY_STATE_MESSAGE_INTERNAL
+
+
+def _low_confidence_message(clearance: DocumentVisibility) -> str:
+    return LOW_CONFIDENCE_MESSAGE_PUBLIC if clearance == DocumentVisibility.PUBLIC else LOW_CONFIDENCE_MESSAGE_INTERNAL
 
 
 @dataclass
@@ -77,6 +96,10 @@ class PipelineResult:
     answer_relevancy: float | None = None
     # Project photos the question asked to see; empty whenever it asked for none.
     images: list[dict] = field(default_factory=list)
+    # Drives AuremontAvatar.tsx — see MessageEmotion. `None` here means the caller (a
+    # router) decides the emotion itself (customer_chat.py's gate/handoff branches, which
+    # never reach the pipeline at all, set it directly rather than through this field).
+    emotion: str | None = None
 
 
 class PipelineState(TypedDict, total=False):
@@ -84,6 +107,10 @@ class PipelineState(TypedDict, total=False):
 
     query: str
     project_id: str | None
+    # The asker's clearance for `rag_service.retrieve`/`cache_service`: INTERNAL for Sale/
+    # Admin (full access), PUBLIC for the customer chat flow (anonymous or logged-in
+    # customer). See backend/routers/customer_chat.py.
+    clearance: DocumentVisibility
     retrieved_docs: list[dict]
     needs_inventory: bool
     needs_document_retrieval: bool
@@ -111,7 +138,8 @@ class PipelineState(TypedDict, total=False):
 
 def _cache_check(state: PipelineState) -> dict[str, Any]:
     """Check the Semantic Cache before spending any tokens."""
-    cached = cache_service.lookup_cache(state["query"], state.get("project_id"))
+    clearance = state.get("clearance", DocumentVisibility.INTERNAL)
+    cached = cache_service.lookup_cache(state["query"], state.get("project_id"), clearance)
     if cached is None:
         return {"used_cache": False}
 
@@ -129,11 +157,12 @@ def _cache_check(state: PipelineState) -> dict[str, Any]:
 def _retrieve(state: PipelineState) -> dict[str, Any]:
     """Pull context from Qdrant and decide whether the inventory API is needed.
 
-    Always queries with INTERNAL permission: only Sale and Admin can use this chat flow,
-    and `rag_service` treats that argument as *the asker's clearance level* — INTERNAL
-    can read both internal and public documents.
+    Queries at `state["clearance"]`: INTERNAL (Sale/Admin) can read both internal and
+    public documents, PUBLIC (customer chat) reads only public ones — `rag_service`
+    treats this argument as *the asker's clearance level*, not a label to match exactly.
     """
     query = state["query"]
+    clearance = state.get("clearance", DocumentVisibility.INTERNAL)
 
     needs_inventory = query_needs_inventory(query)
     needs_document_retrieval = query_needs_documents(query)
@@ -143,7 +172,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
         try:
             hits = retrieve(
                 query,
-                DocumentVisibility.INTERNAL,
+                clearance,
                 state.get("project_id"),
                 RETRIEVAL_TOP_K,
             )
@@ -164,7 +193,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     if not hits and not needs_inventory:
         # No documents ingested yet and the question is not an inventory lookup ->
         # Empty State, not a system error.
-        return {"notice": EMPTY_STATE_MESSAGE}
+        return {"notice": _empty_state_message(clearance)}
 
     return {
         "retrieved_docs": hits,
@@ -207,6 +236,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     """Generate an answer with citations from the collected context."""
     docs = state.get("retrieved_docs") or []
     units = state.get("inventory_units") or []
+    is_public = state.get("clearance", DocumentVisibility.INTERNAL) == DocumentVisibility.PUBLIC
 
     prompt = prompts.build_prompt(
         state["query"],
@@ -215,10 +245,12 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         state.get("needs_inventory", False),
         state.get("inventory_failed", False),
         state.get("images") or [],
+        is_public=is_public,
     )
+    system_instruction = prompts.SYSTEM_INSTRUCTION_PUBLIC if is_public else prompts.SYSTEM_INSTRUCTION
 
     try:
-        answer = generate_text(prompt, system_instruction=prompts.SYSTEM_INSTRUCTION)
+        answer = generate_text(prompt, system_instruction=system_instruction)
     except Exception:
         logger.exception(
             "Answer generation failed.",
@@ -341,7 +373,7 @@ def _bump_retry(state: PipelineState) -> dict[str, Any]:
 
 
 def _low_confidence(state: PipelineState) -> dict[str, Any]:
-    return {"notice": LOW_CONFIDENCE_MESSAGE}
+    return {"notice": _low_confidence_message(state.get("clearance", DocumentVisibility.INTERNAL))}
 
 
 # --------------------------------------------------------------------------- graph
@@ -396,8 +428,17 @@ def _get_graph():
 # --------------------------------------------------------------------------- entry point
 
 
-def run_pipeline(query: str, project_id: str | None = None, db: Session | None = None) -> PipelineResult:
-    """Entry point for the Sale chat flow.
+def run_pipeline(
+    query: str,
+    project_id: str | None = None,
+    db: Session | None = None,
+    clearance: DocumentVisibility = DocumentVisibility.INTERNAL,
+) -> PipelineResult:
+    """Entry point for the Sale and customer chat flows.
+
+    `clearance` is the asker's RBAC tier for retrieval and the semantic cache — INTERNAL
+    (default, used by `sale_chat.py`) can read internal+public documents; the customer
+    chat flow (`customer_chat.py`) always passes PUBLIC, anonymous or logged-in alike.
 
     `db` is only used by the image tool, to read the project catalogue. It is optional so
     callers with no session (unit tests driving the pipeline directly) keep working; those
@@ -407,11 +448,12 @@ def run_pipeline(query: str, project_id: str | None = None, db: Session | None =
     response message, so every failure must collapse into a readable `PipelineResult`.
     """
     if not query or not query.strip():
-        return PipelineResult(EMPTY_STATE_MESSAGE, [], 0.0, False)
+        return PipelineResult(_empty_state_message(clearance), [], 0.0, False, emotion=MessageEmotion.REGRETFUL)
 
     initial: PipelineState = {
         "query": query.strip(),
         "project_id": project_id,
+        "clearance": clearance,
         "retrieved_docs": [],
         "citations": [],
         "verifier_score": 0.0,
@@ -436,7 +478,7 @@ def run_pipeline(query: str, project_id: str | None = None, db: Session | None =
                 "query_len": len(query),
             },
         )
-        return PipelineResult(GENERATION_ERROR_MESSAGE, [], 0.0, False)
+        return PipelineResult(GENERATION_ERROR_MESSAGE, [], 0.0, False, emotion=MessageEmotion.REGRETFUL)
 
     notice = state.get("notice")
     if notice:
@@ -445,7 +487,9 @@ def run_pipeline(query: str, project_id: str | None = None, db: Session | None =
         #
         # Photos still ride along. They were requested explicitly and assert nothing, so
         # withholding them because the *text* could not be verified helps nobody.
-        return PipelineResult(notice, [], 0.0, False, images=state.get("images") or [])
+        return PipelineResult(
+            notice, [], 0.0, False, images=state.get("images") or [], emotion=MessageEmotion.REGRETFUL
+        )
 
     result = PipelineResult(
         draft_answer=state.get("draft_answer", ""),
@@ -456,15 +500,22 @@ def run_pipeline(query: str, project_id: str | None = None, db: Session | None =
         faithfulness=state.get("faithfulness"),
         answer_relevancy=state.get("answer_relevancy"),
         images=state.get("images") or [],
+        # Every path that gets here made it past Generate/Verify with a real answer — a
+        # cache hit is exactly the same in spirit (an answer that already cleared this bar
+        # once). requires_hitl doesn't downgrade this: Sale/Admin still gets the HITL card
+        # regardless of avatar mood, and the customer flow never reaches this line for a
+        # requires_hitl PUBLIC-tier answer (see the belt-and-suspenders check in
+        # customer_chat.py, which intercepts it before persisting).
+        emotion=MessageEmotion.HAPPY,
     )
 
     if not result.used_cache:
-        _store_cache(query, result, project_id)
+        _store_cache(query, result, project_id, clearance)
 
     return result
 
 
-def _store_cache(query: str, result: PipelineResult, project_id: str | None) -> None:
+def _store_cache(query: str, result: PipelineResult, project_id: str | None, clearance: DocumentVisibility) -> None:
     """Cache only clean answers: above the Verifier threshold and free of price/commitment.
 
     Price-touching answers must re-run RiskCheck every time so the Sale always gets the
@@ -488,6 +539,7 @@ def _store_cache(query: str, result: PipelineResult, project_id: str | None) -> 
         verifier_score=result.verifier_score,
         project_id=project_id,
         images=result.images,
+        clearance=clearance,
     )
 
 

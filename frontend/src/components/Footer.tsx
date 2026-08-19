@@ -1,7 +1,14 @@
 import { Link } from "react-router-dom";
+import { useAuth } from "../hooks/useAuth";
 import { AuremontLogoIcon } from "./Icons";
 
 export function Footer() {
+  // Shared between the public homepage (Landing.tsx, no account) and the authenticated
+  // shell (AppShell) — "/home" 404s into a login redirect for an anonymous visitor, same
+  // reasoning as TopNavbar's homeHref.
+  const { isAuthenticated } = useAuth();
+  const homeHref = isAuthenticated ? "/home" : "/";
+
   return (
     <footer className="site-footer">
       <div className="container site-footer-grid">
@@ -17,13 +24,18 @@ export function Footer() {
 
         <div className="site-footer-col">
           <h4>Công cụ</h4>
-          <Link to="/inventory/chung-cu">Tra cứu dự án</Link>
+          {/* Same section Home.tsx's own "Tra cứu dự án" hero button scrolls to — the hash
+              makes it land there directly instead of just the top of the homepage, handled
+              by the scroll-to-hash effect in Home.tsx (needed because this is a full
+              cross-page navigation, not a same-page click). */}
+          <Link to={`${homeHref}#tra-cuu-du-an`}>Tra cứu dự án</Link>
           <Link to="/chat">Chat với Auremont AI</Link>
+          <Link to="/chat">Nhắn tin với chuyên viên tư vấn</Link>
         </div>
 
         <div className="site-footer-col">
           <h4>Tài nguyên</h4>
-          <Link to="/home">Về Auremont</Link>
+          <Link to={homeHref}>Về Auremont</Link>
           <Link to="/inventory/chung-cu">Danh sách dự án</Link>
         </div>
 
@@ -47,7 +59,7 @@ export function Footer() {
 
       <div className="site-footer-bottom">
         <div className="container site-footer-bottom-inner">
-          <span>© 2026 Auremont. Nội bộ đội Sale — không dùng cho khách hàng cuối.</span>
+          <span>© 2026 Auremont.</span>
         </div>
       </div>
     </footer>

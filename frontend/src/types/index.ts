@@ -1,8 +1,11 @@
 // Mirrors backend/schemas/*.py — keep field names in sync with the Pydantic response models.
 
-export type UserRole = "sale" | "admin";
+export type UserRole = "sale" | "admin" | "customer";
 export type DocumentVisibility = "internal" | "public";
-export type MessageSender = "sale" | "agent";
+export type MessageSender = "sale" | "agent" | "customer";
+/** Drives AuremontAvatar.tsx — mirrors backend/core/enums.py::MessageEmotion. `null` on a
+ * Sale/Customer's own message, or an older AGENT message from before this field existed. */
+export type MessageEmotion = "happy" | "regretful" | "respectful";
 export type DocumentReviewStatus = "pending" | "approved" | "rejected";
 export type LegalStatus =
   | "unknown"
@@ -57,6 +60,7 @@ export interface MessageResponse {
   requires_hitl: boolean;
   /** Derived server-side from the audit trail; never sent by this client. */
   hitl_confirmed: boolean;
+  emotion: MessageEmotion | null;
   created_at: string;
 }
 
@@ -77,6 +81,60 @@ export interface ChatSessionResponse {
   // inventory, so a session without one cannot answer stock questions.
   project_id: string | null;
   created_at: string;
+}
+
+// ── Customer chat (public/anonymous flow) — mirrors backend/schemas/customer.py ──
+
+export interface AnonymousSessionResponse {
+  session_id: number;
+  visitor_token: string;
+}
+
+/** Who is currently answering a customer-chat session — see backend/core/enums.py::SessionStatus. */
+export type SessionStatus = "bot_handling" | "waiting_sale" | "sale_handling";
+
+export interface CustomerChatSessionResponse {
+  id: number;
+  customer_id: number | null;
+  title: string | null;
+  project_id: string | null;
+  status: SessionStatus;
+  created_at: string;
+}
+
+export interface CustomerRegisterRequest {
+  email: string;
+  password: string;
+  full_name?: string | null;
+  session_id?: number | null;
+  visitor_token?: string | null;
+}
+
+/** Which soft-paywall trigger intercepted this turn — null on a normally-answered turn.
+ * "human_request" is an anonymous visitor asking for a live Sale — routed into the same
+ * register/login gate as every other lead-qualification trigger, not a direct handoff. */
+export type CustomerGate = "turn_limit" | "closing_intent" | "human_request";
+
+export interface CustomerAskResponse extends MessageResponse {
+  gate: CustomerGate | null;
+  status: SessionStatus;
+}
+
+// ── Sale live inbox (AI -> Sale handoff) — mirrors backend/schemas/sale_live.py ──
+
+export interface LiveInboxEntry {
+  session_id: number;
+  customer_label: string;
+  last_message_preview: string;
+  // When this session entered the waiting queue — not when the session itself was created.
+  waiting_since: string | null;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  user: UserResponse;
 }
 
 export interface DocumentResponse {

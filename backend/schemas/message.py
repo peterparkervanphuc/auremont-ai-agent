@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from backend.core.enums import MessageSender
+from backend.core.enums import MessageEmotion, MessageSender
 
 
 class Citation(BaseModel):
@@ -37,6 +37,9 @@ class MessageResponse(BaseModel):
     # never sent by the client: a client-supplied flag could present an unread commitment
     # as approved.
     hitl_confirmed: bool = False
+    # Drives AuremontAvatar.tsx — see MessageEmotion. `None` on a Sale/Customer's own
+    # message, or an AGENT message from before this field existed.
+    emotion: MessageEmotion | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

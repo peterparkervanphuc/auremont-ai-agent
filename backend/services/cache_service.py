@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from qdrant_client import models
 
 from backend.core.config import settings
+from backend.core.enums import DocumentVisibility
 from backend.core.gemini_client import embed_query
 from backend.core.qdrant_client import get_qdrant_client
 
@@ -44,8 +45,16 @@ class CachedAnswer:
     images: list[dict] = field(default_factory=list)
 
 
-def lookup_cache(query: str, project_id: str | None = None) -> CachedAnswer | None:
-    """Find a cached answer for an equivalent question. `None` means a cache miss."""
+def lookup_cache(
+    query: str, project_id: str | None = None, clearance: DocumentVisibility = DocumentVisibility.INTERNAL
+) -> CachedAnswer | None:
+    """Find a cached answer for an equivalent question. `None` means a cache miss.
+
+    `clearance` scopes the lookup to the asker's own RBAC tier: a PUBLIC-clearance asker
+    (customer chat) must never receive an answer that was generated and cached for an
+    INTERNAL-clearance asker (Sale/Admin), since that answer may have drawn on internal
+    documents. See `store_cache` for the write-side half of this.
+    """
     if not query.strip():
         return None
 
@@ -57,7 +66,7 @@ def lookup_cache(query: str, project_id: str | None = None) -> CachedAnswer | No
         response = client.query_points(
             collection_name=CACHE_COLLECTION,
             query=embed_query(query),
-            query_filter=_project_filter(project_id),
+            query_filter=_cache_filter(project_id, clearance),
             limit=1,
             with_payload=True,
         )
@@ -103,6 +112,7 @@ def store_cache(
     verifier_score: float,
     project_id: str | None = None,
     images: list[dict] | None = None,
+    clearance: DocumentVisibility = DocumentVisibility.INTERNAL,
 ) -> None:
     """Store a (question, answer) pair that has met the quality bar.
 
@@ -110,6 +120,10 @@ def store_cache(
     below the verifier threshold — see `agent_pipeline`. Rationale: price/commitment
     answers must go through Verify + RiskCheck every time so the Sale always sees the
     HITL card, and caching a low-scoring answer merely replicates a bad answer.
+
+    `clearance` is written into the point id and payload so an INTERNAL-tier answer can
+    never be overwritten by, or served back as, a PUBLIC-tier one for the same question —
+    see `lookup_cache`.
     """
     if not query.strip() or not answer.strip():
         return
@@ -121,9 +135,16 @@ def store_cache(
             collection_name=CACHE_COLLECTION,
             points=[
                 models.PointStruct(
-                    # ID derived from question + project: re-asking the exact same question
-                    # overwrites the old row instead of bloating the cache with near-duplicates.
-                    id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"salesmate:qa:{project_id or ''}:{query.strip()}")),
+                    # ID derived from clearance + question + project: re-asking the exact
+                    # same question at the same clearance overwrites the old row instead of
+                    # bloating the cache with near-duplicates; different clearance tiers for
+                    # the same text/project stay physically separate points.
+                    id=str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"salesmate:qa:{clearance.value}:{project_id or ''}:{query.strip()}",
+                        )
+                    ),
                     vector=embed_query(query),
                     payload={
                         "query": query,
@@ -132,6 +153,7 @@ def store_cache(
                         "images": images or [],
                         "verifier_score": verifier_score,
                         "project_id": project_id,
+                        "visibility": clearance.value,
                     },
                 )
             ],
@@ -160,13 +182,25 @@ def _ensure_cache_collection() -> None:
     )
 
 
-def _project_filter(project_id: str | None) -> models.Filter | None:
-    """Stop one project's cache from answering for another — prices and policies differ entirely.
+def _cache_filter(project_id: str | None, clearance: DocumentVisibility) -> models.Filter:
+    """Scope a cache lookup to the same project AND the same asker clearance.
 
-    A session with no project may only reuse cache entries that also have no project,
-    since an answer specific to one project does not generalise to a generic question.
+    Project: stops one project's cache from answering for another — prices and policies
+    differ entirely. A session with no project may only reuse cache entries that also have
+    no project, since an answer specific to one project does not generalise to a generic
+    question.
+
+    Clearance: a point cached before this field existed has no `visibility` payload key at
+    all, so it matches neither tier here and is simply never hit again — a cache miss, not
+    a leak, which is the safe direction to fail in.
     """
-    if project_id is None:
-        return models.Filter(must=[models.IsNullCondition(is_null=models.PayloadField(key="project_id"))])
+    conditions: list[models.Condition] = [
+        models.FieldCondition(key="visibility", match=models.MatchValue(value=clearance.value))
+    ]
 
-    return models.Filter(must=[models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id))])
+    if project_id is None:
+        conditions.append(models.IsNullCondition(is_null=models.PayloadField(key="project_id")))
+    else:
+        conditions.append(models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id)))
+
+    return models.Filter(must=conditions)

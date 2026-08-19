@@ -24,6 +24,13 @@ class Message(Base):
     # shows what the Sale actually saw, even after the catalogue changes.
     images = Column(JSON, nullable=True)
 
+    # Drives AuremontAvatar.tsx's animation for an AGENT-authored message — one of
+    # MessageEmotion (happy/regretful/respectful), computed deterministically from the
+    # pipeline/gate outcome that produced this message (see agent_pipeline.py and
+    # customer_chat.py), never a separate LLM call. NULL (a Sale/customer's own message,
+    # or an older row from before this column existed) reads as a neutral idle pose.
+    emotion = Column(String(20), nullable=True)
+
     verifier_score = Column(Float, nullable=True)  # Overall Verifier score: min(faithfulness, relevancy)
     # The two component scores behind verifier_score, kept apart for the Admin dashboard:
     # low faithfulness means invented figures, low relevancy means retrieval fetched the wrong
