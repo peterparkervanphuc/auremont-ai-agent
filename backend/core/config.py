@@ -96,6 +96,14 @@ class Settings(BaseSettings):
     # gay hieu nham nhieu hon la giup.
     memory_ttl_seconds: int = 60 * 60 * 24 * 90
 
+    # Reflection memory: bai hoc agent rut ra tu chinh loi cua no (backend/services/
+    # reflection_memory.py). Bat de agent thoi lap lai cung mot loi o cac phien khac
+    # nhau; tat de quay ve hanh vi khong hoc gi giua cac cau hoi.
+    reflection_memory_enabled: bool = True
+    # Ngan hon memory_ttl_seconds (30 ngay): mot bai hoc rut ra tu bo tai lieu cu se sai
+    # sau khi Admin thay tai lieu, nen no phai tu het han thay vi bam mai vao prompt.
+    reflection_ttl_seconds: int = 60 * 60 * 24 * 30
+
     # Minimum Verifier confidence (0-1). Below this the Sale sees the
     # "Không đủ thông tin, liên hệ Admin" notice instead of the answer.
     verifier_threshold_sale: float = 0.7

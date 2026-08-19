@@ -241,12 +241,18 @@ def build_prompt(
     profile: str = "",
     is_public: bool = False,
     correction: str = "",
+    lessons: str = "",
 ) -> str:
     """Build the Generate prompt.
 
     `correction` carries the Verifier's one-sentence rejection note on a regeneration.
     Empty on the first attempt; when set, it is appended last so the model reads what to
     fix immediately before writing.
+
+    `lessons` carries reflection memory — mistakes made on *earlier questions* that this
+    one resembles. It is the same kind of instruction as `correction`, one loop wider:
+    correction fixes the draft just rejected, lessons prevent a defect the agent has
+    already been caught making before.
     """
     sections = []
 
@@ -348,6 +354,17 @@ def build_prompt(
         sections.append(
             "LIVE INVENTORY STATUS: unavailable. Do not infer stock from project documents; "
             "state that live inventory could not be checked."
+        )
+
+    if lessons.strip():
+        # Placed before `correction` because it is the weaker instruction of the two: a
+        # lesson generalises from earlier questions, while a correction names a defect in
+        # the draft just rejected. When both are present the specific one must be read last.
+        sections.append(
+            "BÀI HỌC TỪ CÁC LỖI TRƯỚC ĐÂY (áp dụng khi viết câu trả lời):\n"
+            f"{lessons.strip()}\n"
+            "Đây là những lỗi hệ thống từng mắc ở các câu hỏi tương tự. Tránh lặp lại. "
+            "Chúng KHÔNG phải dữ liệu dự án và không được dùng làm số liệu trả lời."
         )
 
     if correction.strip():

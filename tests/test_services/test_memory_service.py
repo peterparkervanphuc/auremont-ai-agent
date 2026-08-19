@@ -57,10 +57,42 @@ def broken_redis(monkeypatch):
 
 
 def test_unit_type_and_budget_are_extracted():
-    profile = memory_service.extract_facts("Gia can 2PN khoang 3,6 ty co khong?")
+    profile = memory_service.extract_facts("Ngan sach 3,6 ty thi nen xem can 2PN nao?")
 
     assert profile.unit_types == ["2PN"]
     assert profile.budgets == ["3,6 ty"]
+
+
+def test_price_question_is_not_stored_as_a_budget():
+    """'Gia can 2PN 3,6 ty co dat khong?' hoi GIA CAN, khong phai tien cua khach."""
+    profile = memory_service.extract_facts("Gia can 2PN 3,6 ty co dat khong?")
+
+    assert profile.budgets == []
+    assert profile.unit_types == ["2PN"]
+
+
+def test_comparison_of_two_prices_stores_neither():
+    """Cau so sanh hai can — chon nham con so nao cung sai hon la khong chon."""
+    profile = memory_service.extract_facts("Tai sao can 5 ty lai dat hon can 3 ty?")
+
+    assert profile.budgets == []
+
+
+def test_budget_and_price_in_one_sentence_stores_neither():
+    """Vua co ngan sach vua co gia can: mo ho, khong doan bua."""
+    profile = memory_service.extract_facts("Ngan sach 3 ty thi can 5 ty co hop khong?")
+
+    assert profile.budgets == []
+
+
+def test_budget_phrasings_are_recognised():
+    for question, expected in [
+        ("Toi co ngan sach 3 ty", "3 ty"),
+        ("Tam gia 4 ty co can nao khong?", "4 ty"),
+        ("Toi muon mua can tam 2 ty", "2 ty"),
+        ("Tai chinh cua toi khoang 800 trieu", "800 trieu"),
+    ]:
+        assert memory_service.extract_facts(question).budgets == [expected], question
 
 
 def test_spacing_variants_normalise_to_one_token():
@@ -87,7 +119,7 @@ def test_a_question_with_nothing_durable_yields_an_empty_profile():
 
 def test_remember_then_load(fake_redis):
     key = memory_service.customer_key(7)
-    memory_service.remember(key, "Gia can 2PN khoang 3,6 ty?", project_id="ocean-park-3")
+    memory_service.remember(key, "Ngan sach 3,6 ty muon xem can 2PN", project_id="ocean-park-3")
 
     profile = memory_service.load_profile(key)
     assert profile.unit_types == ["2PN"]

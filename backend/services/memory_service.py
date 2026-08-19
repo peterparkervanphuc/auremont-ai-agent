@@ -48,6 +48,28 @@ UNIT_TYPE_PATTERN = re.compile(r"\b(\d\s?PN|studio|shophouse|penthouse|duplex)\b
 # "3,6 ty", "3.6 tỷ", "5 ty dong", "800 trieu" — the number plus its unit.
 BUDGET_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu)\b", re.IGNORECASE)
 
+# A money figure only counts as *this person's budget* when the sentence says so. Without
+# this gate every price the person merely asked about was stored as their budget: "căn 2PN
+# giá 3.6 tỷ có đắt không?" recorded 3.6 tỷ as what they can afford, which is the opposite
+# of what the question means. A missed budget costs a little personalisation; an invented
+# one quietly reshapes how every later answer is framed.
+BUDGET_CONTEXT_PATTERN = re.compile(
+    r"(ngân\s*sách|ngan\s*sach|tài\s*chính|tai\s*chinh|budget"
+    r"|tầm\s*giá|tam\s*gia|khoảng\s*giá|khoang\s*gia|trong\s*tầm|trong\s*tam"
+    r"|có\s*sẵn|co\s*san|dư\s*(?:khoảng|chừng)?|du\s*(?:khoang|chung)?"
+    r"|chỉ\s*có|chi\s*co|tối\s*đa|toi\s*da|dưới|duoi|trên\s*dưới|tren\s*duoi"
+    r"|muốn\s*mua|muon\s*mua|định\s*mua|dinh\s*mua|tìm\s*căn|tim\s*can)",
+    re.IGNORECASE,
+)
+
+# Words that mark a figure as belonging to a *unit* rather than to the person, even when a
+# budget word appears elsewhere in the same sentence.
+PRICE_QUESTION_PATTERN = re.compile(
+    r"(giá\s*(?:căn|bán|gốc|niêm)|gia\s*(?:can|ban|goc|niem)"
+    r"|bao\s*nhiêu|bao\s*nhieu|có\s*đắt|co\s*dat|đắt\s*hơn|dat\s*hon|rẻ\s*hơn|re\s*hon)",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class UserProfile:
@@ -199,7 +221,8 @@ def extract_facts(question: str, project_id: str | None = None) -> UserProfile:
     Deliberately conservative regex rather than an LLM call: this runs on every message,
     so an extra model round-trip here would spend tokens and latency on every single
     turn to learn something as small as "this person asks about 2PN". Missing a
-    preference is cheap; inventing one is not.
+    preference is cheap; inventing one is not — which is why `_extract_budgets` requires
+    the sentence to actually be about affordability before recording a figure.
     """
     if not question or not question.strip():
         return UserProfile()
@@ -211,15 +234,36 @@ def extract_facts(question: str, project_id: str | None = None) -> UserProfile:
         if token not in unit_types:
             unit_types.append(token)
 
-    budgets: list[str] = []
-    for number, unit in BUDGET_PATTERN.findall(question):
-        token = f"{number} {unit.lower()}"
-        if token not in budgets:
-            budgets.append(token)
+    budgets = _extract_budgets(question)
 
     projects = [project_id] if project_id else []
 
     return UserProfile(unit_types=unit_types, budgets=budgets, projects=projects)
+
+
+def _extract_budgets(question: str) -> list[str]:
+    """Money figures that are this person's budget, not a price they asked about.
+
+    Three gates, each earning its place:
+
+    1. The sentence must actually talk about affordability ("ngân sách", "tầm giá",
+       "muốn mua"). A bare figure is far more often a price being asked about.
+    2. A price question wins outright. "Ngân sách 3 tỷ thì căn 5 tỷ có hợp không?" is
+       about a 5 tỷ unit *and* a 3 tỷ budget, and picking the wrong one is worse than
+       picking neither — so an explicit price question means nothing is stored.
+    3. At most one figure. A sentence carrying several money figures is comparing units,
+       not stating one budget.
+    """
+    if not BUDGET_CONTEXT_PATTERN.search(question) or PRICE_QUESTION_PATTERN.search(question):
+        return []
+
+    found: list[str] = []
+    for number, unit in BUDGET_PATTERN.findall(question):
+        token = f"{number} {unit.lower()}"
+        if token not in found:
+            found.append(token)
+
+    return found if len(found) == 1 else []
 
 
 def format_profile(profile: UserProfile) -> str:

@@ -41,7 +41,13 @@ from backend.ai.intent import needs_inventory as query_needs_inventory
 from backend.core import tracing
 from backend.core.enums import DocumentVisibility, MessageEmotion
 from backend.core.gemini_client import generate_text
-from backend.services import answer_images_service, cache_service, risk_service, verifier_service
+from backend.services import (
+    answer_images_service,
+    cache_service,
+    reflection_memory,
+    risk_service,
+    verifier_service,
+)
 from backend.services.inventory_service import InventoryApiError, InventoryUnit, lookup_inventory
 from backend.services.rag_service import RetrievalError, retrieve
 from backend.utils.text import strip_markdown
@@ -137,6 +143,10 @@ class PipelineState(TypedDict, total=False):
     conversation_history: list[prompts.ConversationTurn]
     # Long-term memory, already rendered by memory_service.format_profile.
     memory_profile: str
+    # Lessons the agent learned from its own earlier mistakes, already rendered by
+    # reflection_memory.format_lessons. Unlike memory_profile this is about the agent,
+    # not the asker — see backend/services/reflection_memory.py.
+    reflection_lessons: str
     # The asker's clearance for `rag_service.retrieve`/`cache_service`: INTERNAL for Sale/
     # Admin (full access), PUBLIC for the customer chat flow (anonymous or logged-in
     # customer). See backend/routers/customer_chat.py.
@@ -351,6 +361,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         state.get("memory_profile") or "",
         is_public=is_public,
         correction=state.get("verifier_feedback") or "",
+        lessons=state.get("reflection_lessons") or "",
     )
     system_instruction = prompts.SYSTEM_INSTRUCTION_PUBLIC if is_public else prompts.SYSTEM_INSTRUCTION
     attempt = state.get("retry_count", 0) + 1
@@ -392,6 +403,9 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         doc_count=len(docs),
         unit_count=len(units),
         corrected=bool(state.get("verifier_feedback")),
+        # Whether reflection memory contributed to this attempt, so the eval set can ask
+        # whether lessons actually reduce repeat failures rather than just costing tokens.
+        with_lessons=bool(state.get("reflection_lessons")),
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
     )
     return {"draft_answer": answer, "citations": build_citations(docs)}
@@ -423,6 +437,15 @@ def _verify(state: PipelineState) -> dict[str, Any]:
         next_action=result.next_action.value,
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
     )
+
+    if _reflection_enabled() and result.failure_mode is not verifier_service.FailureMode.NONE:
+        # Learn from the rejection so a later question of the same shape gets the lesson
+        # before generating, rather than re-earning it. Fails open inside.
+        reflection_memory.record_lesson(
+            query=state["query"],
+            failure_mode=result.failure_mode.value,
+            feedback=result.feedback,
+        )
 
     return {
         "verifier_score": round(result.score, 4),
@@ -646,6 +669,7 @@ def _run_traced(
         "project_id": project_id,
         "conversation_history": conversation_history or [],
         "memory_profile": memory_profile,
+        "reflection_lessons": _lessons_for(query),
         "clearance": clearance,
         "retrieved_docs": [],
         "citations": [],
@@ -778,3 +802,30 @@ def _threshold() -> float:
     from backend.core.config import get_settings
 
     return get_settings().verifier_threshold_sale
+
+
+def _reflection_enabled() -> bool:
+    """Read at call time, for the same reason as `_threshold`."""
+    from backend.core.config import get_settings
+
+    return get_settings().reflection_memory_enabled
+
+
+def _lessons_for(query: str) -> str:
+    """Lessons from earlier mistakes that apply to this question, rendered for the prompt.
+
+    Never raises: reflection memory is an improvement layer, and a Redis problem here must
+    cost the lesson, not the answer.
+    """
+    if not _reflection_enabled():
+        return ""
+
+    try:
+        return reflection_memory.format_lessons(reflection_memory.relevant_lessons(query))
+    except Exception:  # pragma: no cover - defensive; the service already fails open
+        logger.warning(
+            "Doc reflection memory that bai; tra loi khong kem bai hoc nao.",
+            exc_info=True,
+            extra={"event": "pipeline.reflection.failed"},
+        )
+        return ""
