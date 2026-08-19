@@ -137,8 +137,9 @@ def test_overfetches_before_reranking(qdrant):
     assert call["query"] == [0.1, 0.2, 0.3]
 
 
-def test_returns_expected_shape_and_normalized_score(qdrant):
+def test_returns_expected_shape_and_normalized_score(qdrant, monkeypatch):
     """Cosine [-1, 1] của Qdrant được đưa về [0, 1]."""
+    monkeypatch.setattr(settings, "rerank_enabled", False)
     qdrant.points = [_point("Giá căn hộ tham khảo.", score=1.0, document_id=7, title="bang-gia.pdf", page=3)]
 
     result = rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
@@ -393,8 +394,13 @@ def test_hybrid_overfetches_on_both_branches(hybrid_qdrant):
     assert call["limit"] == expected
 
 
-def test_hybrid_keeps_fusion_order_instead_of_reranking(hybrid_qdrant):
-    """Điểm RRF ~1/60 nên công thức boost cũ sẽ nhấn chìm nó — phải giữ nguyên thứ tự."""
+def test_hybrid_keeps_fusion_order_instead_of_reranking(hybrid_qdrant, monkeypatch):
+    """Điểm RRF ~1/60 nên công thức boost cũ sẽ nhấn chìm nó — phải giữ nguyên thứ tự.
+
+    RRF thắng luôn, không dùng heuristic khi hybrid bật. Cross-encoder sẽ thắng nếu
+    bật, nên test này tắt rerank để kiểm tra RRF path.
+    """
+    monkeypatch.setattr(settings, "rerank_enabled", False)
     hybrid_qdrant.points = [
         _point("Chính sách chung, không có mã căn.", score=0.032, document_id=1),
         _point("Căn 2PN mã OP3-CT1-0504.", score=0.016, document_id=2),
@@ -552,8 +558,13 @@ def live_hybrid_qdrant(monkeypatch):
 
 
 def test_live_dense_only_misses_the_exact_code(live_hybrid_qdrant, monkeypatch):
-    """Điểm đối chứng: chỉ dùng vector thì tài liệu chứa đúng mã căn xếp sau."""
+    """Điểm đối chứng: chỉ dùng vector thì tài liệu chứa đúng mã căn xếp sau.
+
+    Rerank tắt ở đây có chủ đích: bài test này đối chứng baseline dense-only trước
+    khi có BM25/RRF, không phải hành vi sau khi thêm cross-encoder.
+    """
     monkeypatch.setattr(settings, "hybrid_search_enabled", False)
+    monkeypatch.setattr(settings, "rerank_enabled", False)
 
     result = rag_service.retrieve("Căn OP3-CT1-0504 còn không?", DocumentVisibility.INTERNAL)
 
@@ -561,8 +572,12 @@ def test_live_dense_only_misses_the_exact_code(live_hybrid_qdrant, monkeypatch):
 
 
 def test_live_rrf_promotes_exact_keyword_match(live_hybrid_qdrant, monkeypatch):
-    """Cùng câu hỏi, bật hybrid: kênh BM25 kéo tài liệu chứa đúng mã căn lên đầu."""
+    """Cùng câu hỏi, bật hybrid: kênh BM25 kéo tài liệu chứa đúng mã căn lên đầu.
+
+    Rerank tắt để bài test này chỉ đo hiệu ứng của RRF, tách biệt khỏi cross-encoder.
+    """
     monkeypatch.setattr(settings, "hybrid_search_enabled", True)
+    monkeypatch.setattr(settings, "rerank_enabled", False)
 
     result = rag_service.retrieve("Căn OP3-CT1-0504 còn không?", DocumentVisibility.INTERNAL)
 
@@ -572,5 +587,6 @@ def test_live_rrf_promotes_exact_keyword_match(live_hybrid_qdrant, monkeypatch):
 def test_live_hybrid_still_enforces_rbac(live_hybrid_qdrant, monkeypatch):
     """Thêm một kênh truy vấn không được phép mở thêm đường vòng qua RBAC."""
     monkeypatch.setattr(settings, "hybrid_search_enabled", True)
+    monkeypatch.setattr(settings, "rerank_enabled", False)
 
     assert rag_service.retrieve("Căn OP3-CT1-0504 còn không?", DocumentVisibility.PUBLIC) == []
