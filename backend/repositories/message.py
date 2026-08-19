@@ -15,6 +15,8 @@ def create_message(
     requires_hitl: bool = False,
     faithfulness: float | None = None,
     answer_relevancy: float | None = None,
+    completeness: float | None = None,
+    failure_mode: str | None = None,
     emotion: MessageEmotion | None = None,
 ) -> Message:
     message = Message(
@@ -27,6 +29,8 @@ def create_message(
         requires_hitl=requires_hitl,
         faithfulness=faithfulness,
         answer_relevancy=answer_relevancy,
+        completeness=completeness,
+        failure_mode=failure_mode,
         emotion=emotion,
     )
     db.add(message)

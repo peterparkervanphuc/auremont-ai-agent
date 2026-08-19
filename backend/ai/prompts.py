@@ -64,6 +64,7 @@ def build_retrieval_query(query: str, turns: list[ConversationTurn]) -> str:
         return query
     return f"{previous[-1].strip()}\n{query}"
 
+
 # Block order is deliberate and should not be reshuffled: role -> length -> layout ->
 # required content -> format -> grounding constraints. A model reading "senior
 # real-estate consultant" slides easily into a sales pitch and fills in market figures
@@ -239,7 +240,14 @@ def build_prompt(
     history: list[ConversationTurn] | None = None,
     profile: str = "",
     is_public: bool = False,
+    correction: str = "",
 ) -> str:
+    """Build the Generate prompt.
+
+    `correction` carries the Verifier's one-sentence rejection note on a regeneration.
+    Empty on the first attempt; when set, it is appended last so the model reads what to
+    fix immediately before writing.
+    """
     sections = []
 
     if profile.strip():
@@ -340,6 +348,19 @@ def build_prompt(
         sections.append(
             "LIVE INVENTORY STATUS: unavailable. Do not infer stock from project documents; "
             "state that live inventory could not be checked."
+        )
+
+    if correction.strip():
+        # Last block in the prompt, so it is the final instruction the model reads before
+        # generating. This is the Reflexion step: the previous attempt was rejected by the
+        # Verifier and this says exactly why, which is the difference between a retry that
+        # fixes the defect and one that reproduces it.
+        sections.append(
+            "SỬA LỖI CỦA LẦN TRẢ LỜI TRƯỚC (bắt buộc):\n"
+            f"Bản nháp trước đã bị bộ chấm điểm từ chối vì: {correction.strip()}\n"
+            "Viết lại câu trả lời khắc phục đúng vấn đề đó. Vẫn chỉ dùng số liệu có trong "
+            "NGỮ CẢNH ở trên — nếu ngữ cảnh không có dữ liệu cho phần còn thiếu, nói thẳng "
+            "là chưa có dữ liệu thay vì bịa ra để lấp chỗ trống."
         )
 
     return "\n\n".join(sections)

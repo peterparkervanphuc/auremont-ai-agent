@@ -31,13 +31,20 @@ class Message(Base):
     # or an older row from before this column existed) reads as a neutral idle pose.
     emotion = Column(String(20), nullable=True)
 
-    verifier_score = Column(Float, nullable=True)  # Overall Verifier score: min(faithfulness, relevancy)
-    # The two component scores behind verifier_score, kept apart for the Admin dashboard:
+    verifier_score = Column(Float, nullable=True)  # Overall Verifier score: min of the three below
+    # The component scores behind verifier_score, kept apart for the Admin dashboard:
     # low faithfulness means invented figures, low relevancy means retrieval fetched the wrong
-    # documents. Nullable: messages written before this column existed, cache hits, and every
+    # documents, low completeness means a multi-part question was only half answered.
+    # Nullable: messages written before this column existed, cache hits, and every
     # edge-case notice (empty state, inventory down) have no Verifier run behind them.
     faithfulness = Column(Float, nullable=True)
     answer_relevancy = Column(Float, nullable=True)
+    completeness = Column(Float, nullable=True)
+    # The Verifier's classification of the defect (verifier_service.FailureMode), so Admin
+    # Tab 2 can group failures by cause — "the model invents figures" and "the corpus is
+    # missing this document" need completely different fixes, and an undifferentiated list
+    # of low scores cannot tell them apart. NULL wherever no Verifier ran.
+    failure_mode = Column(String(32), nullable=True)
     requires_hitl = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime, default=utcnow, nullable=False)

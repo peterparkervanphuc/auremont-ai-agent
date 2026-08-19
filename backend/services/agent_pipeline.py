@@ -109,6 +109,14 @@ class PipelineResult:
     # the wrong documents. Collapsing both into one number loses that diagnosis.
     faithfulness: float | None = None
     answer_relevancy: float | None = None
+    # The third criterion, alongside the two above: a multi-part question answered only in
+    # part scores low here while both of the others stay high.
+    completeness: float | None = None
+    # The Verifier's classification of the defect (verifier_service.FailureMode) and its
+    # one-sentence explanation. Carried out of the pipeline so the Admin dashboard can
+    # group failures by cause instead of listing undifferentiated low scores.
+    failure_mode: str | None = None
+    verifier_feedback: str | None = None
     # Project photos the question asked to see; empty whenever it asked for none.
     images: list[dict] = field(default_factory=list)
     # Drives AuremontAvatar.tsx — see MessageEmotion. `None` here means the caller (a
@@ -141,6 +149,17 @@ class PipelineState(TypedDict, total=False):
     verifier_score: float
     faithfulness: float
     answer_relevancy: float
+    completeness: float
+    # The Verifier's classification of what went wrong, kept on the state so the router
+    # and the audit log can both read it. See verifier_service.FailureMode.
+    failure_mode: str
+    # The Verifier's one-sentence correction note. This is what turns the retry into a
+    # Reflexion loop: `_generate` reads it back and tells the model what to fix, instead
+    # of re-running an identical prompt and usually getting an identical answer.
+    verifier_feedback: str
+    # The Verifier's proposal ("accept"/"regenerate"/"decline"). The router decides what
+    # to actually do with it — see `_route_after_verify`.
+    next_action: str
     requires_hitl: bool
     images: list[dict]
     # Only the image tool reads this; it is threaded through rather than imported so the
@@ -288,6 +307,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         state.get("conversation_history") or [],
         state.get("memory_profile") or "",
         is_public=is_public,
+        correction=state.get("verifier_feedback") or "",
     )
     system_instruction = prompts.SYSTEM_INSTRUCTION_PUBLIC if is_public else prompts.SYSTEM_INSTRUCTION
 
@@ -319,7 +339,12 @@ def _generate(state: PipelineState) -> dict[str, Any]:
 
 
 def _verify(state: PipelineState) -> dict[str, Any]:
-    """The Verifier Agent scores Faithfulness/Relevancy, independently of Generate."""
+    """The Verifier Agent scores the draft independently of Generate.
+
+    Returns the three numeric criteria plus the structured verdict (`failure_mode`,
+    `verifier_feedback`, `next_action`). The feedback is what `_generate` reads on a
+    retry, so a regeneration is aimed at the specific defect rather than blind.
+    """
     context = [doc["content"] for doc in state.get("retrieved_docs") or []]
     context.extend(prompts.format_unit_for_verifier(unit) for unit in state.get("inventory_units") or [])
     result = verifier_service.score_answer(state["query"], state.get("draft_answer", ""), context)
@@ -328,6 +353,10 @@ def _verify(state: PipelineState) -> dict[str, Any]:
         "verifier_score": round(result.score, 4),
         "faithfulness": round(result.faithfulness, 4),
         "answer_relevancy": round(result.relevancy, 4),
+        "completeness": round(result.completeness, 4),
+        "failure_mode": result.failure_mode.value,
+        "verifier_feedback": result.feedback,
+        "next_action": result.next_action.value,
     }
 
 
@@ -399,10 +428,20 @@ def _route_after_generate(state: PipelineState) -> str:
 
 
 def _route_after_verify(state: PipelineState) -> str:
-    """Low score gets one regeneration; still low means declining beats answering wrongly."""
+    """Low score gets one regeneration; still low means declining beats answering wrongly.
+
+    The Verifier's `next_action` is a proposal, and the routing rules here override it in
+    both directions. A "decline" short-circuits the retry — when the judgement is that the
+    context simply has no answer, regenerating burns a Gemini call to produce the same gap
+    — but a passing score still wins, since a judge that scores well and then asks to
+    decline is contradicting itself and the score is the number the threshold is tuned on.
+    """
     score = state.get("verifier_score", 0.0)
     if score >= _threshold():
         return "risk_check"
+
+    if state.get("next_action") == verifier_service.NextAction.DECLINE.value:
+        return "low_confidence"
 
     if state.get("retry_count", 0) < MAX_GENERATE_RETRIES:
         return "retry"
@@ -539,7 +578,16 @@ def run_pipeline(
         # Photos still ride along. They were requested explicitly and assert nothing, so
         # withholding them because the *text* could not be verified helps nobody.
         return PipelineResult(
-            notice, [], 0.0, False, images=state.get("images") or [], emotion=MessageEmotion.REGRETFUL
+            notice,
+            [],
+            0.0,
+            False,
+            images=state.get("images") or [],
+            # Carried even here — especially here. A declined answer is the case Admin most
+            # needs to diagnose, and "which failure mode" is the whole diagnosis.
+            failure_mode=state.get("failure_mode"),
+            verifier_feedback=state.get("verifier_feedback"),
+            emotion=MessageEmotion.REGRETFUL,
         )
 
     result = PipelineResult(
@@ -550,6 +598,9 @@ def run_pipeline(
         used_cache=state.get("used_cache", False),
         faithfulness=state.get("faithfulness"),
         answer_relevancy=state.get("answer_relevancy"),
+        completeness=state.get("completeness"),
+        failure_mode=state.get("failure_mode"),
+        verifier_feedback=state.get("verifier_feedback"),
         images=state.get("images") or [],
         # Every path that gets here made it past Generate/Verify with a real answer — a
         # cache hit is exactly the same in spirit (an answer that already cleared this bar

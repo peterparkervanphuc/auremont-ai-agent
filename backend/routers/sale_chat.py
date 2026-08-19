@@ -162,6 +162,10 @@ async def ask_in_session(
         verifier_score=result.verifier_score,
         faithfulness=result.faithfulness,
         answer_relevancy=result.answer_relevancy,
+        completeness=result.completeness,
+        # The audit log's diagnosis field: filtering Tab 2 by failure_mode is what turns a
+        # list of low scores into "these 12 answers failed for the same fixable reason".
+        failure_mode=result.failure_mode,
         requires_hitl=result.requires_hitl,
         used_cache=result.used_cache,
         citation_count=len(result.citations),
@@ -184,6 +188,8 @@ async def ask_in_session(
         requires_hitl=result.requires_hitl,
         faithfulness=result.faithfulness,
         answer_relevancy=result.answer_relevancy,
+        completeness=result.completeness,
+        failure_mode=result.failure_mode,
         emotion=result.emotion,
     )
 
