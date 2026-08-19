@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 from qdrant_client import models
 
+from backend.core.cohere_client import CohereRerankError
 from backend.core.config import settings
 from backend.core.enums import DocumentVisibility
 from backend.core.gemini_client import GeminiEmbeddingError
@@ -194,6 +195,109 @@ def test_pure_vector_order_when_query_has_no_identifier(qdrant):
     ]
 
     result = rag_service.retrieve("tiện ích thế nào", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result] == [2, 1]
+
+
+# --- Rerank bằng Cohere (cross-encoder) ----------------------------------------------
+
+
+@pytest.fixture
+def cohere_rerank(qdrant, monkeypatch):
+    """Bật rerank và thay lời gọi API bằng hàm giả, ghi lại tham số để test soi."""
+    monkeypatch.setattr(settings, "rerank_enabled", True)
+    calls = []
+
+    def _fake_rerank(query, documents, *, top_n=None):
+        calls.append({"query": query, "documents": documents, "top_n": top_n})
+        # Đảo ngược thứ tự Qdrant trả về: cross-encoder xếp lại hoàn toàn theo
+        # relevance của cặp query+passage, không dựa vào điểm vector ban đầu.
+        return [(index, 1.0 - index * 0.1) for index in reversed(range(len(documents)))]
+
+    monkeypatch.setattr(rag_service, "cohere_rerank", _fake_rerank)
+    return calls
+
+
+def test_cohere_rerank_reorders_over_vector_score(cohere_rerank, qdrant):
+    """Cross-encoder thắng điểm vector: đó là lý do tồn tại của bước rerank."""
+    qdrant.points = [
+        _point("Tiện ích nội khu.", score=0.95, document_id=1),
+        _point("Giá căn 2PN là 3.6 tỷ.", score=0.60, document_id=2),
+    ]
+
+    result = rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result] == [2, 1]
+
+
+def test_cohere_rerank_receives_query_and_contents(cohere_rerank, qdrant):
+    qdrant.points = [_point("Giá căn 2PN là 3.6 tỷ.", score=0.60, document_id=2)]
+
+    rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL)
+
+    assert cohere_rerank[0]["query"] == "Giá căn 2PN?"
+    assert cohere_rerank[0]["documents"] == ["Giá căn 2PN là 3.6 tỷ."]
+
+
+def test_cohere_rerank_score_replaces_vector_score(cohere_rerank, qdrant):
+    """Điểm trả về là relevance của cross-encoder, không phải cosine đã rescale."""
+    qdrant.points = [_point("Giá căn 2PN là 3.6 tỷ.", score=0.60, document_id=2)]
+
+    result = rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL)
+
+    assert result[0]["score"] == 1.0
+
+
+def test_cohere_failure_falls_back_to_heuristic(qdrant, monkeypatch):
+    """Cohere sập thì chất lượng giảm, nhưng Sale vẫn phải nhận được câu trả lời."""
+    monkeypatch.setattr(settings, "rerank_enabled", True)
+
+    def _boom(query, documents, *, top_n=None):
+        raise CohereRerankError("Cohere down")
+
+    monkeypatch.setattr(rag_service, "cohere_rerank", _boom)
+    qdrant.points = [
+        _point("Căn 3PN diện tích lớn, giá 5.2 tỷ.", score=0.90, document_id=1),
+        _point("Căn 2PN giá 3.6 tỷ.", score=0.86, document_id=2),
+    ]
+
+    result = rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL)
+
+    # Rơi về heuristic identifier-overlap: '2PN' vẫn phải thắng điểm vector cao hơn.
+    assert result[0]["document_id"] == 2
+
+
+def test_rerank_disabled_never_calls_cohere(qdrant, monkeypatch):
+    monkeypatch.setattr(settings, "rerank_enabled", False)
+    called = []
+    monkeypatch.setattr(
+        rag_service,
+        "cohere_rerank",
+        lambda query, documents, *, top_n=None: called.append(query) or [],
+    )
+    qdrant.points = [_point("Giá căn 2PN là 3.6 tỷ.", score=0.60, document_id=2)]
+
+    rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL)
+
+    assert called == []
+
+
+def test_cohere_rerank_applies_to_hybrid_results(hybrid_qdrant, monkeypatch):
+    """Hybrid bỏ qua heuristic vì RRF đã xếp hạng, nhưng cross-encoder thì vẫn chạy."""
+    monkeypatch.setattr(settings, "rerank_enabled", True)
+    monkeypatch.setattr(
+        rag_service,
+        "cohere_rerank",
+        lambda query, documents, *, top_n=None: [
+            (index, 1.0 - index * 0.1) for index in reversed(range(len(documents)))
+        ],
+    )
+    hybrid_qdrant.points = [
+        _point("Tiện ích nội khu.", score=0.9, document_id=1),
+        _point("Giá căn 2PN là 3.6 tỷ.", score=0.5, document_id=2),
+    ]
+
+    result = rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL)
 
     assert [hit["document_id"] for hit in result] == [2, 1]
 

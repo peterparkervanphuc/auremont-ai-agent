@@ -32,6 +32,9 @@ fastembed>=0.4.2,<0.5
 # LLM - Gemini
 google-genai>=1.0.0
 
+# Reranking - Cohere Rerank v3.5 (hosted cross-encoder)
+cohere>=5.13.0,<8
+
 # Dev tools
 ruff>=0.8.0
 pytest>=8.0.0

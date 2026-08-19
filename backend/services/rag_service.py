@@ -10,6 +10,13 @@ point — dense understands a paraphrase but blurs "2PN" into "3PN", BM25 cannot
 meaning but matches a unit code exactly. RRF ranks by position rather than score, so
 neither channel's scale has to be reconciled with the other's.
 
+An optional third stage narrows the over-fetched candidates further when `rerank_enabled`
+is on: Cohere Rerank v3.5, a cross-encoder that scores query and passage together rather
+than comparing independent embeddings. It catches relevance that neither retrieval channel
+can — a passage can rank high on cosine or token overlap and still not answer the question.
+Falls back to the cheaper identifier-overlap heuristic whenever reranking is disabled or
+the API call fails, so a Cohere outage degrades quality rather than availability.
+
 Serves **static** ingested data only (price lists, policies, amenities). Unit inventory
 changes constantly and is therefore never ingested into Qdrant — questions needing the
 real-time inventory table must go through `inventory_service.lookup_inventory()`. Routing
@@ -21,6 +28,8 @@ import re
 
 from qdrant_client import models
 
+from backend.core.cohere_client import CohereRerankError
+from backend.core.cohere_client import rerank as cohere_rerank
 from backend.core.config import settings
 from backend.core.enums import DocumentVisibility
 from backend.core.gemini_client import GeminiEmbeddingError, embed_query
@@ -213,6 +222,46 @@ def _identifiers(text: str) -> set[str]:
 
 
 def _rerank(query: str, hits: list[dict], fused: bool = False) -> list[dict]:
+    """Re-order candidates, preferring the Cohere cross-encoder when it is enabled.
+
+    The cross-encoder scores query+passage jointly, so it replaces both the RRF pass-
+    through and the identifier heuristic below when available — it is strictly more
+    accurate than either. `_rerank_cohere` returns None on any failure (missing key,
+    network error, empty response), and this function falls back to the previous
+    behaviour rather than letting a Cohere outage take retrieval down with it.
+    """
+    if settings.rerank_enabled:
+        reranked = _rerank_cohere(query, hits)
+        if reranked is not None:
+            return reranked
+
+    return _rerank_heuristic(query, hits, fused=fused)
+
+
+def _rerank_cohere(query: str, hits: list[dict]) -> list[dict] | None:
+    """Score every candidate with Cohere Rerank v3.5; None means "fall back"."""
+    if not hits:
+        return hits
+
+    try:
+        scored = cohere_rerank(query, [hit["content"] for hit in hits])
+    except CohereRerankError:
+        logger.warning(
+            "Cohere rerank failed; falling back to the identifier heuristic.",
+            exc_info=True,
+            extra={"event": "retrieval.rerank.failed", "candidate_count": len(hits)},
+        )
+        return None
+
+    reordered = []
+    for index, relevance_score in scored:
+        hit = hits[index]
+        hit["score"] = round(relevance_score, 6)
+        reordered.append(hit)
+    return reordered
+
+
+def _rerank_heuristic(query: str, hits: list[dict], fused: bool = False) -> list[dict]:
     """Re-order by vector score, boosting passages that match codes from the question.
 
     Skipped entirely once results are fused, for two reasons. BM25 already matched those
@@ -222,8 +271,8 @@ def _rerank(query: str, hits: list[dict], fused: bool = False) -> list[dict]:
     around 1/60 per channel, so the overlap term would swamp them and re-sort the results
     by "mentions a number" alone, discarding the fusion ranking.
 
-    Deliberately lightweight and dependency-free. For higher quality, swap this function
-    for a cross-encoder (sentence-transformers) or Cohere Rerank — the signature stays.
+    Deliberately lightweight and dependency-free — the fallback for when Cohere Rerank
+    (`_rerank_cohere` above) is disabled or unavailable.
     """
     if fused:
         return hits

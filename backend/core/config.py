@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     hybrid_search_enabled: bool = False
     sparse_model_name: str = "Qdrant/bm25"
 
+    # Reranking (Cohere Rerank v3.5, hosted). A cross-encoder scores query+passage
+    # together and is far more accurate than the identifier-overlap heuristic it
+    # replaces, at the cost of one network call per question. Hosted rather than a
+    # self-hosted cross-encoder (e.g. BGE-reranker-v2-m3) because the backend runs on
+    # Render's free tier — loading a few-hundred-MB model at cold start risks OOM
+    # there. Off by default so a missing API key never breaks retrieval; `rag_service`
+    # falls back to the identifier heuristic whenever this is disabled or fails.
+    rerank_enabled: bool = False
+    cohere_api_key: str = ""
+    cohere_rerank_model: str = "rerank-v3.5"
+
     # Long-term memory (Redis). Ho so ghi nho theo tung nguoi dung — KHONG phai
     # nguon su that: Redis chet thi pipeline van tra loi day du, chi mat ca nhan hoa.
     # De trong de tat han tinh nang (vi du khi chay test hoac deploy khong co Redis).
