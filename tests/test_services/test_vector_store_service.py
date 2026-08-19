@@ -8,15 +8,24 @@ from backend.services import vector_store_service
 from backend.services.chunking_service import DocumentChunk
 
 
+def _sparse(indices=(1, 2), values=(0.5, 0.5)) -> models.SparseVector:
+    return models.SparseVector(indices=list(indices), values=list(values))
+
+
 class FakeQdrantClient:
     def __init__(
         self,
         *,
         collection_exists: bool = False,
         collection_dimension: int = 3,
+        legacy_unnamed: bool = False,
+        has_sparse: bool = True,
     ):
         self.exists = collection_exists
         self.collection_dimension = collection_dimension
+        # Shape of the pre-hybrid collection: one unnamed vector, no sparse config.
+        self.legacy_unnamed = legacy_unnamed
+        self.has_sparse = has_sparse
 
         self.create_calls = []
         self.upsert_calls = []
@@ -31,12 +40,18 @@ class FakeQdrantClient:
         self.exists = True
 
     def get_collection(self, collection_name: str):
+        if self.legacy_unnamed:
+            vectors = SimpleNamespace(size=self.collection_dimension)
+            sparse = None
+        else:
+            vectors = {"dense": SimpleNamespace(size=self.collection_dimension)}
+            sparse = {"sparse": SimpleNamespace()} if self.has_sparse else None
+
         return SimpleNamespace(
             config=SimpleNamespace(
                 params=SimpleNamespace(
-                    vectors=SimpleNamespace(
-                        size=self.collection_dimension,
-                    )
+                    vectors=vectors,
+                    sparse_vectors=sparse,
                 )
             )
         )
@@ -66,17 +81,19 @@ def qdrant(monkeypatch):
     return fake_client
 
 
-def test_ensure_collection_creates_cosine_collection(qdrant):
+def test_ensure_collection_creates_named_dense_and_sparse_vectors(qdrant):
+    """Hybrid retrieval needs both vectors on the same point, so both must be declared."""
     vector_store_service.ensure_collection()
 
     assert len(qdrant.create_calls) == 1
 
     call = qdrant.create_calls[0]
-    vector_config = call["vectors_config"]
+    dense_config = call["vectors_config"]["dense"]
 
     assert call["collection_name"] == "test_documents"
-    assert vector_config.size == 3
-    assert vector_config.distance == models.Distance.COSINE
+    assert dense_config.size == 3
+    assert dense_config.distance == models.Distance.COSINE
+    assert isinstance(call["sparse_vectors_config"]["sparse"], models.SparseVectorParams)
 
 
 def test_ensure_collection_rejects_wrong_dimension(monkeypatch):
@@ -93,6 +110,28 @@ def test_ensure_collection_rejects_wrong_dimension(monkeypatch):
     monkeypatch.setattr(settings, "embedding_dimensions", 3)
 
     with pytest.raises(vector_store_service.VectorStoreError):
+        vector_store_service.ensure_collection()
+
+
+def test_ensure_collection_rejects_legacy_unnamed_schema(monkeypatch):
+    """A collection from before hybrid retrieval cannot be upserted into — it must be
+    rebuilt, and saying so beats writing points that only half work."""
+    fake_client = FakeQdrantClient(collection_exists=True, legacy_unnamed=True)
+
+    monkeypatch.setattr(vector_store_service, "get_qdrant_client", lambda: fake_client)
+    monkeypatch.setattr(settings, "embedding_dimensions", 3)
+
+    with pytest.raises(vector_store_service.VectorStoreError, match="predates hybrid"):
+        vector_store_service.ensure_collection()
+
+
+def test_ensure_collection_rejects_missing_sparse_config(monkeypatch):
+    fake_client = FakeQdrantClient(collection_exists=True, has_sparse=False)
+
+    monkeypatch.setattr(vector_store_service, "get_qdrant_client", lambda: fake_client)
+    monkeypatch.setattr(settings, "embedding_dimensions", 3)
+
+    with pytest.raises(vector_store_service.VectorStoreError, match="sparse"):
         vector_store_service.ensure_collection()
 
 
@@ -113,6 +152,7 @@ def test_index_document_chunks_upserts_expected_payload(qdrant):
         visibility="internal",
         chunks=chunks,
         vectors=vectors,
+        sparse_vectors=[_sparse(), _sparse(indices=(3, 4))],
     )
 
     assert indexed_count == 2
@@ -126,7 +166,7 @@ def test_index_document_chunks_upserts_expected_payload(qdrant):
     assert len(points) == 2
 
     first_point = points[0]
-    assert first_point.vector == [0.1, 0.2, 0.3]
+    assert first_point.vector == {"dense": [0.1, 0.2, 0.3], "sparse": _sparse()}
     assert first_point.payload == {
         "document_id": 12,
         "project_id": "project-a",
@@ -157,6 +197,7 @@ def test_index_document_chunks_uses_stable_point_ids(qdrant):
         "visibility": "internal",
         "chunks": chunks,
         "vectors": vectors,
+        "sparse_vectors": [_sparse()],
     }
 
     vector_store_service.index_document_chunks(**arguments)
@@ -185,6 +226,23 @@ def test_index_document_chunks_rejects_different_counts(qdrant):
             visibility="internal",
             chunks=chunks,
             vectors=vectors,
+            sparse_vectors=[_sparse()],
+        )
+
+    assert qdrant.upsert_calls == []
+
+
+def test_index_document_chunks_rejects_sparse_count_mismatch(qdrant):
+    """A chunk with no sparse vector would be invisible to the keyword channel."""
+    with pytest.raises(vector_store_service.VectorStoreError):
+        vector_store_service.index_document_chunks(
+            document_id=1,
+            title="test.pdf",
+            project_id=None,
+            visibility="internal",
+            chunks=[DocumentChunk(index=0, text="Chunk mot.", page=1)],
+            vectors=[[0.1, 0.2, 0.3]],
+            sparse_vectors=[],
         )
 
     assert qdrant.upsert_calls == []
@@ -206,12 +264,15 @@ def test_index_document_chunks_rejects_wrong_vector_dimension(qdrant):
             visibility="internal",
             chunks=chunks,
             vectors=vectors,
+            sparse_vectors=[_sparse()],
         )
 
     assert qdrant.upsert_calls == []
 
 
 def test_delete_document_vectors_filters_by_document_id(qdrant):
+    qdrant.exists = True
+
     vector_store_service.delete_document_vectors(document_id=42)
 
     assert len(qdrant.delete_calls) == 1
@@ -219,6 +280,16 @@ def test_delete_document_vectors_filters_by_document_id(qdrant):
     call = qdrant.delete_calls[0]
     assert call["collection_name"] == "test_documents"
     assert call["wait"] is True
+
+
+def test_delete_document_vectors_ignores_a_missing_collection(qdrant):
+    """Re-indexing starts by deleting old vectors; right after the collection was dropped
+    there are none, and Qdrant's 404 must not abort the re-index before it writes."""
+    qdrant.exists = False
+
+    vector_store_service.delete_document_vectors(document_id=42)
+
+    assert qdrant.delete_calls == []
 
 
 def test_update_document_vector_metadata_updates_only_one_document(qdrant):

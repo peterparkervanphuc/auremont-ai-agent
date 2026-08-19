@@ -25,6 +25,9 @@ python-jose[cryptography]>=3.3.0
 # Storage / Vector DB
 minio>=7.2.0
 qdrant-client>=1.12.0
+redis>=5.0.0
+# BM25 sparse vectors for hybrid retrieval, computed locally (no API calls).
+fastembed>=0.4.2,<0.5
 
 # LLM - Gemini
 google-genai>=1.0.0

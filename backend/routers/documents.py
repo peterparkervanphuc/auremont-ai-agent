@@ -38,6 +38,7 @@ from backend.services.ingestion_service import (
     DocumentIngestionError,
     PromptInjectionError,
     ingest_uploaded_document,
+    reindex_document,
     sanitize_and_scan,
 )
 from backend.services.vector_store_service import (
@@ -250,6 +251,46 @@ async def ingest_document(
         document_id=document.id,
         status=document.status,
         message=f"Document '{document.title}' created successfully.",
+    )
+
+
+@router.post("/{document_id}/reindex", response_model=IngestResponse)
+async def reindex_document_endpoint(
+    document_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
+) -> IngestResponse:
+    """Re-embed a stored document and rewrite its vectors, from the original file.
+
+    Needed after a change to how vectors are built — enabling hybrid retrieval added a
+    BM25 vector to every point, and documents ingested before that carry only a dense
+    one. Run this over each document, then switch HYBRID_SEARCH_ENABLED on.
+    """
+    started = time.perf_counter()
+    try:
+        document = reindex_document(db, document_id=document_id)
+    except DocumentIngestionError as exc:
+        log_event(
+            "document.reindex.failure",
+            document_id=document_id,
+            admin_id=admin.id,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not re-index document {document_id}. Check server logs.",
+        ) from exc
+
+    log_event(
+        "document.reindex.success",
+        document_id=document.id,
+        admin_id=admin.id,
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
+    return IngestResponse(
+        document_id=document.id,
+        status=document.status,
+        message="Document re-indexed successfully.",
     )
 
 

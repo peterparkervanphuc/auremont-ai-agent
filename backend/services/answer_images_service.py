@@ -134,6 +134,30 @@ def collect_images(db: Session, query: str, answer: str) -> list[dict]:
         return []
 
 
+def resolve_project_id(db: Session, text: str) -> str | None:
+    """The catalogue id of the project named in `text`, or None when none is.
+
+    Exposed for long-term memory, which has to recognise "dự án The Palma" inside a
+    question: sessions stopped carrying a `project_id` when the picker was dropped from
+    session creation, so the question itself is the only place the project appears.
+
+    Never raises — a caller that cannot identify the project simply remembers less.
+    """
+    try:
+        normalized = _normalize(text or "")
+        if not normalized.strip():
+            return None
+
+        project = _best_match(db, normalized)
+        return project.id if project is not None else None
+    except Exception:
+        logger.exception(
+            "Could not resolve a project from text.",
+            extra={"event": "answer_images.resolve_project.failed"},
+        )
+        return None
+
+
 def _filter_by_topic(gallery: list[str], normalized_query: str) -> list[str]:
     """Narrow the gallery to the topic the question named.
 

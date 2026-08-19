@@ -6,6 +6,7 @@ from qdrant_client import models
 from backend.core.config import settings
 from backend.core.enums import DocumentVisibility
 from backend.core.gemini_client import GeminiEmbeddingError
+from backend.core.sparse_embedding import embed_documents_sparse
 from backend.services import rag_service
 
 
@@ -40,11 +41,24 @@ def _point(content: str, *, score: float, document_id: int = 1, title: str = "ba
 
 @pytest.fixture
 def qdrant(monkeypatch):
+    """Dense-only retrieval: hybrid off, which is also the production default."""
     fake_client = FakeQdrantClient()
     monkeypatch.setattr(rag_service, "get_qdrant_client", lambda: fake_client)
     monkeypatch.setattr(rag_service, "embed_query", lambda query: [0.1, 0.2, 0.3])
     monkeypatch.setattr(settings, "qdrant_collection", "test_documents")
+    monkeypatch.setattr(settings, "hybrid_search_enabled", False)
     return fake_client
+
+
+@pytest.fixture
+def hybrid_qdrant(qdrant, monkeypatch):
+    monkeypatch.setattr(settings, "hybrid_search_enabled", True)
+    monkeypatch.setattr(
+        rag_service,
+        "embed_query_sparse",
+        lambda query: models.SparseVector(indices=[7, 9], values=[1.0, 1.0]),
+    )
+    return qdrant
 
 
 def _conditions(call) -> list:
@@ -232,6 +246,89 @@ def test_filter_is_a_qdrant_filter_object(qdrant):
     assert isinstance(qdrant.query_calls[0]["query_filter"], models.Filter)
 
 
+def test_dense_only_names_the_dense_vector(qdrant):
+    """Collection có nhiều vector có tên: thiếu `using` thì Qdrant không biết tìm ở đâu."""
+    rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
+
+    assert qdrant.query_calls[0]["using"] == "dense"
+    assert "prefetch" not in qdrant.query_calls[0]
+
+
+# --- Hybrid: hai kênh + RRF -----------------------------------------------------------
+
+
+def test_hybrid_query_builds_prefetch_and_rrf_fusion(hybrid_qdrant):
+    rag_service.retrieve("giá căn 2PN", DocumentVisibility.INTERNAL, top_k=5)
+
+    call = hybrid_qdrant.query_calls[0]
+    prefetch = call["prefetch"]
+
+    assert [branch.using for branch in prefetch] == ["dense", "sparse"]
+    assert prefetch[0].query == [0.1, 0.2, 0.3]
+    assert prefetch[1].query.indices == [7, 9]
+    assert isinstance(call["query"], models.FusionQuery)
+    assert call["query"].fusion == models.Fusion.RRF
+
+
+def test_hybrid_applies_rbac_filter_to_every_branch(hybrid_qdrant):
+    """Lọc sau khi hợp nhất là quá muộn — nhánh đã xếp hạng bằng tài liệu không được đọc."""
+    rag_service.retrieve("giá căn hộ", DocumentVisibility.PUBLIC, project_id="the-palma")
+
+    call = hybrid_qdrant.query_calls[0]
+    for branch in call["prefetch"]:
+        assert _visibility_values({"query_filter": branch.filter}) == ["public"]
+    assert _visibility_values(call) == ["public"]
+
+
+def test_hybrid_overfetches_on_both_branches(hybrid_qdrant):
+    rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL, top_k=5)
+
+    call = hybrid_qdrant.query_calls[0]
+    expected = 5 * rag_service.OVERFETCH_FACTOR
+    assert [branch.limit for branch in call["prefetch"]] == [expected, expected]
+    assert call["limit"] == expected
+
+
+def test_hybrid_keeps_fusion_order_instead_of_reranking(hybrid_qdrant):
+    """Điểm RRF ~1/60 nên công thức boost cũ sẽ nhấn chìm nó — phải giữ nguyên thứ tự."""
+    hybrid_qdrant.points = [
+        _point("Chính sách chung, không có mã căn.", score=0.032, document_id=1),
+        _point("Căn 2PN mã OP3-CT1-0504.", score=0.016, document_id=2),
+    ]
+
+    result = rag_service.retrieve("giá căn 2PN", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result] == [1, 2]
+    # Điểm RRF đi thẳng ra ngoài, không bị rescale kiểu cosine.
+    assert result[0]["score"] == 0.032
+
+
+def test_sparse_embedding_failure_falls_back_to_dense_only(hybrid_qdrant, monkeypatch):
+    """Mất kênh từ khoá thì câu trả lời kém sắc hơn, nhưng Sale vẫn phải có câu trả lời."""
+
+    def _boom(query):
+        raise rag_service.SparseEmbeddingError("model missing")
+
+    monkeypatch.setattr(rag_service, "embed_query_sparse", _boom)
+    hybrid_qdrant.points = [_point("Giá căn hộ.", score=1.0)]
+
+    result = rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
+
+    assert len(result) == 1
+    assert "prefetch" not in hybrid_qdrant.query_calls[0]
+    assert hybrid_qdrant.query_calls[0]["using"] == "dense"
+
+
+def test_disabled_flag_never_embeds_the_sparse_query(qdrant, monkeypatch):
+    calls = []
+    monkeypatch.setattr(rag_service, "embed_query_sparse", lambda query: calls.append(query))
+
+    rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
+
+    assert calls == []
+    assert "prefetch" not in qdrant.query_calls[0]
+
+
 # --- Integration: engine Qdrant thật, chạy in-memory ---------------------------------
 #
 # FakeQdrantClient ở trên chỉ chứng minh ta GỌI đúng tham số, không chứng minh Qdrant
@@ -261,6 +358,7 @@ def live_qdrant(monkeypatch):
         visibility="internal",
         chunks=[DocumentChunk(index=0, text="Căn 2PN giá 3.6 tỷ.", page=2)],
         vectors=[[1.0, 0.0, 0.0]],
+        sparse_vectors=embed_documents_sparse(["Căn 2PN giá 3.6 tỷ."]),
         review_status="approved",
     )
     vector_store_service.index_document_chunks(
@@ -270,6 +368,7 @@ def live_qdrant(monkeypatch):
         visibility="public",
         chunks=[DocumentChunk(index=0, text="Tiện ích nội khu.", page=1)],
         vectors=[[0.9, 0.1, 0.0]],
+        sparse_vectors=embed_documents_sparse(["Tiện ích nội khu."]),
         review_status="approved",
     )
     return client
@@ -298,3 +397,76 @@ def test_live_carries_page_for_citation(live_qdrant):
 
     assert result[0]["page"] == 2
     assert result[0]["title"] == "bang-gia.pdf"
+
+
+# --- Integration: hybrid + RRF chạy thật trên engine Qdrant ---------------------------
+
+
+@pytest.fixture
+def live_hybrid_qdrant(monkeypatch):
+    """Hai tài liệu dựng riêng cho phép so sánh trực tiếp hybrid với dense-only.
+
+    Tài liệu 1 nằm đúng hướng vector truy vấn nhưng KHÔNG chứa mã căn được hỏi.
+    Tài liệu 2 lệch hướng vector nhưng chứa đúng mã đó — chỉ BM25 mới thấy được.
+    """
+    from qdrant_client import QdrantClient
+
+    from backend.services import vector_store_service
+    from backend.services.chunking_service import DocumentChunk
+
+    client = QdrantClient(":memory:")
+    monkeypatch.setattr(rag_service, "get_qdrant_client", lambda: client)
+    monkeypatch.setattr(vector_store_service, "get_qdrant_client", lambda: client)
+    monkeypatch.setattr(settings, "qdrant_collection", "itest_hybrid")
+    monkeypatch.setattr(settings, "embedding_dimensions", 3)
+    monkeypatch.setattr(rag_service, "embed_query", lambda query: [1.0, 0.0, 0.0])
+
+    semantic_text = "Bảng giá các căn hộ hai phòng ngủ của dự án."
+    keyword_text = "Căn OP3-CT1-0504 đã có chủ."
+
+    vector_store_service.index_document_chunks(
+        document_id=1,
+        title="ngu-nghia.pdf",
+        project_id="ocean-park-3",
+        visibility="internal",
+        chunks=[DocumentChunk(index=0, text=semantic_text, page=1)],
+        vectors=[[1.0, 0.0, 0.0]],
+        sparse_vectors=embed_documents_sparse([semantic_text]),
+        review_status="approved",
+    )
+    vector_store_service.index_document_chunks(
+        document_id=2,
+        title="tu-khoa.pdf",
+        project_id="ocean-park-3",
+        visibility="internal",
+        chunks=[DocumentChunk(index=0, text=keyword_text, page=1)],
+        vectors=[[0.0, 1.0, 0.0]],
+        sparse_vectors=embed_documents_sparse([keyword_text]),
+        review_status="approved",
+    )
+    return client
+
+
+def test_live_dense_only_misses_the_exact_code(live_hybrid_qdrant, monkeypatch):
+    """Điểm đối chứng: chỉ dùng vector thì tài liệu chứa đúng mã căn xếp sau."""
+    monkeypatch.setattr(settings, "hybrid_search_enabled", False)
+
+    result = rag_service.retrieve("Căn OP3-CT1-0504 còn không?", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result][0] == 1
+
+
+def test_live_rrf_promotes_exact_keyword_match(live_hybrid_qdrant, monkeypatch):
+    """Cùng câu hỏi, bật hybrid: kênh BM25 kéo tài liệu chứa đúng mã căn lên đầu."""
+    monkeypatch.setattr(settings, "hybrid_search_enabled", True)
+
+    result = rag_service.retrieve("Căn OP3-CT1-0504 còn không?", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result][0] == 2
+
+
+def test_live_hybrid_still_enforces_rbac(live_hybrid_qdrant, monkeypatch):
+    """Thêm một kênh truy vấn không được phép mở thêm đường vòng qua RBAC."""
+    monkeypatch.setattr(settings, "hybrid_search_enabled", True)
+
+    assert rag_service.retrieve("Căn OP3-CT1-0504 còn không?", DocumentVisibility.PUBLIC) == []

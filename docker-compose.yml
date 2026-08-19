@@ -11,6 +11,7 @@ services:
     environment:
       DATABASE_URL: mysql+pymysql://salesmate:salesmate@mysql:3306/salesmate_db
       QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
       # Dia chi trinh duyet dung de tai anh cong khai. Phai la localhost, khong
       # phai `minio:9000` — the <img> chay tren may host, khong trong network Docker.
@@ -25,6 +26,8 @@ services:
         condition: service_healthy
       qdrant:
         condition: service_started
+      redis:
+        condition: service_healthy
       minio:
         condition: service_healthy
     restart: unless-stopped
@@ -76,6 +79,23 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  # Long-term memory (ho so ghi nho theo tung khach / tung sale). Khong phai nguon
+  # su that: mat Redis thi he thong van tra loi binh thuong, chi kem ca nhan hoa.
+  redis:
+    image: redis:7-alpine
+    container_name: ai20k_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    # AOF: ho so ghi nho song qua restart. Mat vai giay cuoi khong sao.
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   minio:
     image: minio/minio:latest
     container_name: ai20k_minio
@@ -98,3 +118,4 @@ volumes:
   mysql_data:
   qdrant_data:
   minio_data:
+  redis_data:

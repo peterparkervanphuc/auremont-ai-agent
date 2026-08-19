@@ -60,6 +60,23 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     qdrant_collection: str = "salesmate_documents"
 
+    # Hybrid retrieval: BM25 keyword search alongside the dense vector search, fused by
+    # Qdrant's own RRF. Off by default because it requires the named dense+sparse
+    # collection schema — turn it on only once every document has been re-indexed
+    # (POST /documents/{id}/reindex), and turn it back off to fall straight back to
+    # dense-only without a code change.
+    hybrid_search_enabled: bool = False
+    sparse_model_name: str = "Qdrant/bm25"
+
+    # Long-term memory (Redis). Ho so ghi nho theo tung nguoi dung — KHONG phai
+    # nguon su that: Redis chet thi pipeline van tra loi day du, chi mat ca nhan hoa.
+    # De trong de tat han tinh nang (vi du khi chay test hoac deploy khong co Redis).
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Ho so ngu quen sau 90 ngay khong tuong tac: so thich bat dong san cu qua thi
+    # gay hieu nham nhieu hon la giup.
+    memory_ttl_seconds: int = 60 * 60 * 24 * 90
+
     # Minimum Verifier confidence (0-1). Below this the Sale sees the
     # "Không đủ thông tin, liên hệ Admin" notice instead of the answer.
     verifier_threshold_sale: float = 0.7

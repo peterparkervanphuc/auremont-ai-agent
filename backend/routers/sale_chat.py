@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from backend.ai import prompts
 from backend.core.audit import log_event, truncate
 from backend.core.config import settings
 from backend.core.deps import require_role
@@ -23,10 +24,11 @@ from backend.repositories.message import (
     create_message,
     delete_messages_for_session,
     list_messages_for_session,
+    list_recent_messages,
 )
 from backend.schemas.chat_session import ChatSessionCreate, ChatSessionResponse
 from backend.schemas.message import MessageResponse
-from backend.services import agent_pipeline
+from backend.services import agent_pipeline, memory_service
 
 router = APIRouter(
     prefix="/sale/sessions",
@@ -37,6 +39,28 @@ router = APIRouter(
 
 class SaleAskRequest(BaseModel):
     content: str
+
+
+# Three question/answer pairs. Enough for a Sale to build on what was just said without
+# the prompt drifting back into a topic the conversation has already moved off.
+HISTORY_TURN_LIMIT = 6
+
+
+def _conversation_history(db: Session, session_id: int) -> list[prompts.ConversationTurn]:
+    """The session's short-term working memory, oldest first.
+
+    Edge-case notices are dropped rather than replayed. "Không đủ thông tin, liên hệ Admin"
+    and the inventory-down message are UI states, not things the assistant said about the
+    project; feeding them back as context invites the model to treat "there is no data" as
+    an established fact and repeat it after retrieval has since succeeded.
+    """
+    turns = []
+    for message in list_recent_messages(db, session_id, HISTORY_TURN_LIMIT):
+        is_sale = message.sender == MessageSender.SALE
+        if not is_sale and message.content in agent_pipeline.NOTICE_MESSAGES:
+            continue
+        turns.append(prompts.ConversationTurn(is_sale=is_sale, content=message.content))
+    return turns
 
 
 def _owned_session(db: Session, session_id: int, user: User):
@@ -99,10 +123,27 @@ async def ask_in_session(
     session = _owned_session(db, session_id, user)
     set_title_if_empty(db, session, payload.content)
 
+    # Read the short-term memory BEFORE persisting the new question, otherwise the question
+    # being answered comes back as the last "earlier turn" and the model is handed its own
+    # input twice.
+    history = _conversation_history(db, session_id)
+
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
 
+    # Long-term memory is this Sale's own recurring topics, never another Sale's and
+    # never the end customer's. Read before the write below so the profile reflects
+    # earlier sessions rather than the question currently being answered.
+    memory_key = memory_service.sale_key(user.id)
+    memory_profile = memory_service.format_profile(memory_service.load_profile(memory_key))
+
     started = time.perf_counter()
-    result = agent_pipeline.run_pipeline(payload.content, project_id=session.project_id, db=db)
+    result = agent_pipeline.run_pipeline(
+        payload.content,
+        project_id=session.project_id,
+        db=db,
+        conversation_history=history,
+        memory_profile=memory_profile,
+    )
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
 
     # The core business record for Admin Tab 2 (AI Evaluation): the Verifier score
@@ -122,6 +163,10 @@ async def ask_in_session(
         query_len=len(payload.content),
         query=truncate(payload.content) if settings.log_query_text else None,
     )
+    # Only the human's own question is remembered, never the generated answer. `db` lets
+    # the project be read out of the question when the session carries none.
+    memory_service.remember(memory_key, payload.content, session.project_id, db=db)
+
     return create_message(
         db,
         session_id,

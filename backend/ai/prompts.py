@@ -8,10 +8,61 @@ SYSTEM_INSTRUCTION_VERSION is bumped whenever the wording changes meaningfully, 
 answer in the logs can be tied back to the instructions that produced it.
 """
 
+from dataclasses import dataclass
+
 from backend.ai.answer_cleanup import wants_images_for_prompt
 from backend.services.inventory_service import InventoryUnit
 
 SYSTEM_INSTRUCTION_VERSION = "2026-08-15.1"
+
+# An agent answer is up to six bullet lines; pasted in full, six of those crowd out the
+# retrieved context they are supposed to sit beside. Only enough of each is kept to
+# establish what was being discussed — the Sale's own questions are never truncated,
+# being short already and carrying the thread of the conversation.
+HISTORY_ANSWER_MAX_CHARS = 300
+
+
+@dataclass(frozen=True)
+class ConversationTurn:
+    """One earlier turn of the current session, as short-term working memory.
+
+    Deliberately not the ORM `Message`: the prompt layer needs only who spoke and what
+    was said, and keeping it a plain value means prompt assembly can be tested without a
+    database.
+    """
+
+    is_sale: bool
+    content: str
+
+
+def format_history(turns: list[ConversationTurn]) -> str:
+    """Render earlier turns as labelled lines, oldest first."""
+    lines = []
+    for turn in turns:
+        text = " ".join((turn.content or "").split())
+        if not text:
+            continue
+        if not turn.is_sale and len(text) > HISTORY_ANSWER_MAX_CHARS:
+            text = text[:HISTORY_ANSWER_MAX_CHARS].rstrip() + "..."
+        lines.append(f"{'Sale' if turn.is_sale else 'Trợ lý'}: {text}")
+    return "\n".join(lines)
+
+
+def build_retrieval_query(query: str, turns: list[ConversationTurn]) -> str:
+    """Expand a context-dependent follow-up into something worth embedding.
+
+    "Còn 3PN thì sao?" carries no project, no subdivision and no topic, so on its own it
+    embeds to nothing useful and retrieval retrieves nothing useful. Prepending the Sale's
+    previous question puts those nouns back into the vector.
+
+    Only the Sale's own questions are used, never the agent's answers: an answer is long
+    enough to dominate the embedding and drag retrieval towards whatever it happened to
+    mention rather than towards what is being asked now.
+    """
+    previous = [turn.content for turn in turns if turn.is_sale and turn.content and turn.content.strip()]
+    if not previous:
+        return query
+    return f"{previous[-1].strip()}\n{query}"
 
 # Block order is deliberate and should not be reshuffled: role -> length -> layout ->
 # required content -> format -> grounding constraints. A model reading "senior
@@ -91,8 +142,40 @@ def build_prompt(
     needs_inventory: bool,
     inventory_failed: bool,
     images: list[dict] | None = None,
+    history: list[ConversationTurn] | None = None,
+    profile: str = "",
 ) -> str:
-    sections = [f"CÂU HỎI CỦA SALE:\n{query}"]
+    sections = []
+
+    if profile.strip():
+        # Long-term memory: who this person is, not what is true about the project.
+        # Framed even more strictly than the history block below, because a remembered
+        # budget looks deceptively like a fact — it is a hint for *framing* the answer,
+        # never a figure to quote, and must never narrow what gets answered.
+        sections.append(
+            f"GHI NHỚ VỀ NGƯỜI HỎI (từ các phiên trước, chỉ để tham khảo):\n{profile}\n"
+            "Đây là sở thích đã ghi nhận, KHÔNG phải dữ liệu dự án. Tuyệt đối không dùng "
+            "làm số liệu trả lời và không tự suy ra nhu cầu hiện tại từ nó. Luôn trả lời "
+            "đúng câu hỏi được hỏi; nếu câu hỏi mâu thuẫn với ghi nhớ, câu hỏi thắng."
+        )
+
+    if history:
+        rendered = format_history(history)
+        if rendered:
+            # Placed before the question so the model reads the thread first, and framed
+            # strictly as reference. Earlier turns are conversational context only — they
+            # are NOT grounding. The figures in them came from documents retrieved for a
+            # different question, and letting the model answer out of its own previous
+            # answer is exactly how a stale price survives into a new turn.
+            sections.append(
+                f"LỊCH SỬ HỘI THOẠI (cũ nhất trước, chỉ để hiểu ngữ cảnh):\n{rendered}\n"
+                "Lịch sử chỉ dùng để hiểu Sale đang nói về dự án / loại căn nào. TUYỆT ĐỐI "
+                "không lấy số liệu từ lịch sử để trả lời — mọi con số phải lấy từ NGỮ CẢNH "
+                "bên dưới. Nếu câu hỏi mới cần số liệu mà ngữ cảnh không có, nói thẳng là "
+                "chưa có dữ liệu."
+            )
+
+    sections.append(f"CÂU HỎI CỦA SALE:\n{query}")
 
     if docs:
         context = "\n\n".join(_format_doc(index, doc) for index, doc in enumerate(docs, start=1))

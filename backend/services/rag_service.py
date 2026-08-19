@@ -3,6 +3,13 @@
 This is the R in RAG: find the handful of document passages most relevant to the question
 to ground the Generate step, instead of stuffing the whole corpus into the prompt.
 
+Retrieval is hybrid when `hybrid_search_enabled` is on: a dense Gemini vector and a BM25
+sparse vector search the same points independently, and Qdrant fuses the two rankings
+with Reciprocal Rank Fusion. The channels fail in opposite directions, which is the whole
+point — dense understands a paraphrase but blurs "2PN" into "3PN", BM25 cannot read
+meaning but matches a unit code exactly. RRF ranks by position rather than score, so
+neither channel's scale has to be reconciled with the other's.
+
 Serves **static** ingested data only (price lists, policies, amenities). Unit inventory
 changes constantly and is therefore never ingested into Qdrant — questions needing the
 real-time inventory table must go through `inventory_service.lookup_inventory()`. Routing
@@ -18,6 +25,8 @@ from backend.core.config import settings
 from backend.core.enums import DocumentVisibility
 from backend.core.gemini_client import GeminiEmbeddingError, embed_query
 from backend.core.qdrant_client import get_qdrant_client
+from backend.core.sparse_embedding import SparseEmbeddingError, embed_query_sparse
+from backend.services.vector_store_service import DENSE_VECTOR, SPARSE_VECTOR
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +70,20 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
         )
         raise RetrievalError("Could not embed the query.") from exc
 
+    sparse_query_vector = None
+    if settings.hybrid_search_enabled:
+        try:
+            sparse_query_vector = embed_query_sparse(query)
+        except SparseEmbeddingError:
+            # Degrade rather than fail: the keyword channel sharpens retrieval, but the
+            # dense channel alone still answers the question. A Sale waiting in front of
+            # a customer must not lose their answer to a model-cache problem.
+            logger.warning(
+                "BM25 query embedding failed; retrieving with the dense channel only.",
+                exc_info=True,
+                extra={"event": "retrieval.sparse_embed.failed", "project_id": project_id},
+            )
+
     conditions: list[models.Condition] = [
         _visibility_condition(visibility),
         models.FieldCondition(
@@ -75,6 +98,9 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
     if project_id:
         conditions.append(models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id)))
 
+    query_filter = models.Filter(must=conditions)
+    candidate_limit = top_k * OVERFETCH_FACTOR
+
     client = get_qdrant_client()
     try:
         # If nobody has uploaded a document yet the collection does not exist. That is a
@@ -82,13 +108,43 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
         if not client.collection_exists(settings.qdrant_collection):
             return []
 
-        response = client.query_points(
-            collection_name=settings.qdrant_collection,
-            query=query_vector,
-            query_filter=models.Filter(must=conditions),
-            limit=top_k * OVERFETCH_FACTOR,
-            with_payload=True,
-        )
+        if sparse_query_vector is not None:
+            response = client.query_points(
+                collection_name=settings.qdrant_collection,
+                # The filter is repeated on each branch on purpose. RRF ranks whatever
+                # each branch returns, so a branch that fetched documents the asker may
+                # not read would spend its ranking slots on them and push readable ones
+                # out before the outer filter ever removes them.
+                prefetch=[
+                    models.Prefetch(
+                        query=query_vector,
+                        using=DENSE_VECTOR,
+                        filter=query_filter,
+                        limit=candidate_limit,
+                    ),
+                    models.Prefetch(
+                        query=sparse_query_vector,
+                        using=SPARSE_VECTOR,
+                        filter=query_filter,
+                        limit=candidate_limit,
+                    ),
+                ],
+                query=models.FusionQuery(fusion=models.Fusion.RRF),
+                query_filter=query_filter,
+                limit=candidate_limit,
+                with_payload=True,
+            )
+        else:
+            response = client.query_points(
+                collection_name=settings.qdrant_collection,
+                query=query_vector,
+                # Required now that the collection holds named vectors: without it
+                # Qdrant cannot tell which vector to search.
+                using=DENSE_VECTOR,
+                query_filter=query_filter,
+                limit=candidate_limit,
+                with_payload=True,
+            )
     except Exception as exc:
         # Most important handoff point: the RetrievalError raised here is caught and
         # entirely swallowed by agent_pipeline._retrieve. This log line is the ONLY
@@ -103,6 +159,12 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
         )
         raise RetrievalError("Could not query Qdrant.") from exc
 
+    # RRF scores are sums of 1/(k + rank) across the two channels, not similarities, so
+    # the cosine rescale below would be meaningless on them. Only the ordering matters
+    # downstream — nothing compares this number against a threshold — so fused scores are
+    # passed through untouched.
+    fused = sparse_query_vector is not None
+
     hits = []
     for point in response.points:
         payload = point.payload or {}
@@ -116,13 +178,13 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
                 "content": content,
                 # page travels along so the Generate step can cite down to a page number.
                 "page": payload.get("page"),
-                # Qdrant cosine lives in [-1, 1]; rescale to [0, 1] to compare easily
-                # against verifier_threshold_sale and to read well on the Admin dashboard.
-                "score": (point.score + 1.0) / 2.0,
+                # Qdrant cosine lives in [-1, 1]; rescale to [0, 1] so it reads well on
+                # the Admin dashboard.
+                "score": point.score if fused else (point.score + 1.0) / 2.0,
             }
         )
 
-    return _rerank(query, hits)[:top_k]
+    return _rerank(query, hits, fused=fused)[:top_k]
 
 
 def _visibility_condition(visibility: DocumentVisibility) -> models.Condition:
@@ -150,12 +212,22 @@ def _identifiers(text: str) -> set[str]:
     return {token.lower() for token in _TOKEN_PATTERN.findall(text) if any(c.isdigit() for c in token)}
 
 
-def _rerank(query: str, hits: list[dict]) -> list[dict]:
+def _rerank(query: str, hits: list[dict], fused: bool = False) -> list[dict]:
     """Re-order by vector score, boosting passages that match codes from the question.
+
+    Skipped entirely once results are fused, for two reasons. BM25 already matched those
+    codes properly — this identifier boost is a crude stand-in for the keyword channel
+    that now exists for real. And the arithmetic no longer holds: it mixes a score with a
+    0-1 overlap ratio, which assumes the score is itself roughly 0-1. RRF scores are
+    around 1/60 per channel, so the overlap term would swamp them and re-sort the results
+    by "mentions a number" alone, discarding the fusion ranking.
 
     Deliberately lightweight and dependency-free. For higher quality, swap this function
     for a cross-encoder (sentence-transformers) or Cohere Rerank — the signature stays.
     """
+    if fused:
+        return hits
+
     wanted = _identifiers(query)
     if not wanted:
         return sorted(hits, key=lambda hit: hit["score"], reverse=True)

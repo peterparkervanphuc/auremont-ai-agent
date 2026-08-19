@@ -59,6 +59,19 @@ LOW_CONFIDENCE_MESSAGE = "Không đủ thông tin, liên hệ Admin."
 RETRIEVAL_ERROR_MESSAGE = "Tạm thời không tra cứu được tài liệu, vui lòng thử lại sau."
 GENERATION_ERROR_MESSAGE = "Tạm thời không tạo được câu trả lời, vui lòng thử lại sau."
 
+# Every message above, as one set. These are UI states rather than things the assistant
+# said about a project, so the router filters them out when assembling conversation
+# history — see `_conversation_history` in routers/sale_chat.py.
+NOTICE_MESSAGES = frozenset(
+    {
+        EMPTY_STATE_MESSAGE,
+        INVENTORY_UNAVAILABLE_MESSAGE,
+        LOW_CONFIDENCE_MESSAGE,
+        RETRIEVAL_ERROR_MESSAGE,
+        GENERATION_ERROR_MESSAGE,
+    }
+)
+
 
 @dataclass
 class PipelineResult:
@@ -84,6 +97,11 @@ class PipelineState(TypedDict, total=False):
 
     query: str
     project_id: str | None
+    # Short-term working memory: earlier turns of this session, oldest first. Empty for the
+    # first question in a session and whenever the caller has no DB session.
+    conversation_history: list[prompts.ConversationTurn]
+    # Long-term memory, already rendered by memory_service.format_profile.
+    memory_profile: str
     retrieved_docs: list[dict]
     needs_inventory: bool
     needs_document_retrieval: bool
@@ -110,7 +128,23 @@ class PipelineState(TypedDict, total=False):
 
 
 def _cache_check(state: PipelineState) -> dict[str, Any]:
-    """Check the Semantic Cache before spending any tokens."""
+    """Check the Semantic Cache before spending any tokens.
+
+    Skipped entirely once the session has history. The cache matches on the question text
+    alone, so a follow-up like "còn 3PN thì sao?" would collide with the same words asked in
+    a completely different conversation and serve back an answer about another project.
+    Mid-conversation questions depend most on context and are exactly the ones the cache
+    cannot key correctly — so they take the full path.
+    """
+    if state.get("conversation_history"):
+        return {"used_cache": False}
+
+    # Same reasoning for long-term memory: the cache is shared across everyone, but a
+    # personalised answer was shaped by one person's profile. Serving it to the next
+    # person who happens to ask the same words would leak that shaping.
+    if state.get("memory_profile"):
+        return {"used_cache": False}
+
     cached = cache_service.lookup_cache(state["query"], state.get("project_id"))
     if cached is None:
         return {"used_cache": False}
@@ -141,8 +175,12 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
 
     if needs_document_retrieval:
         try:
+            # Retrieval embeds the question expanded with the previous one, so a bare
+            # follow-up ("còn 3PN thì sao?") still carries the project and topic into the
+            # vector. Intent detection above deliberately keeps reading the raw query: the
+            # question at hand decides whether inventory is needed, not the one before it.
             hits = retrieve(
-                query,
+                prompts.build_retrieval_query(query, state.get("conversation_history") or []),
                 DocumentVisibility.INTERNAL,
                 state.get("project_id"),
                 RETRIEVAL_TOP_K,
@@ -215,6 +253,8 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         state.get("needs_inventory", False),
         state.get("inventory_failed", False),
         state.get("images") or [],
+        state.get("conversation_history") or [],
+        state.get("memory_profile") or "",
     )
 
     try:
@@ -396,12 +436,23 @@ def _get_graph():
 # --------------------------------------------------------------------------- entry point
 
 
-def run_pipeline(query: str, project_id: str | None = None, db: Session | None = None) -> PipelineResult:
+def run_pipeline(
+    query: str,
+    project_id: str | None = None,
+    db: Session | None = None,
+    conversation_history: list[prompts.ConversationTurn] | None = None,
+    memory_profile: str = "",
+) -> PipelineResult:
     """Entry point for the Sale chat flow.
 
     `db` is only used by the image tool, to read the project catalogue. It is optional so
     callers with no session (unit tests driving the pipeline directly) keep working; those
     simply get an answer with no photos attached.
+
+    `conversation_history` is the session's short-term working memory — earlier turns,
+    oldest first — which lets the agent resolve a follow-up that names nothing ("còn 3PN
+    thì sao?"). Omitting it degrades to the previous stateless behaviour rather than
+    failing, so every existing caller keeps working unchanged.
 
     Never raises under any circumstance — the router calls this directly to build the
     response message, so every failure must collapse into a readable `PipelineResult`.
@@ -412,6 +463,8 @@ def run_pipeline(query: str, project_id: str | None = None, db: Session | None =
     initial: PipelineState = {
         "query": query.strip(),
         "project_id": project_id,
+        "conversation_history": conversation_history or [],
+        "memory_profile": memory_profile,
         "retrieved_docs": [],
         "citations": [],
         "verifier_score": 0.0,
@@ -458,7 +511,13 @@ def run_pipeline(query: str, project_id: str | None = None, db: Session | None =
         images=state.get("images") or [],
     )
 
-    if not result.used_cache:
+    # Mid-conversation answers are never written to the cache, for the mirror of the reason
+    # `_cache_check` skips reading it: the key would be the bare follow-up text, while the
+    # answer only makes sense given the turns before it. Storing "còn 3PN thì sao?" would
+    # poison the cache for every later session asking those same words.
+    # `memory_profile` is excluded for the same reason: the answer was shaped by one
+    # person's remembered preferences, so it is not a safe generic answer to replay.
+    if not result.used_cache and not initial["conversation_history"] and not memory_profile:
         _store_cache(query, result, project_id)
 
     return result

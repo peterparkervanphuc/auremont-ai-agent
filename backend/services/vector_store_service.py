@@ -9,38 +9,64 @@ from backend.services.chunking_service import DocumentChunk
 
 logger = logging.getLogger(__name__)
 
+# Vector names in the collection. Both channels of hybrid retrieval live on the same
+# point, so RRF fuses two rankings over one set of documents rather than joining across
+# collections.
+DENSE_VECTOR = "dense"
+SPARSE_VECTOR = "sparse"
+
 
 class VectorStoreError(RuntimeError):
     """Failure while initialising the collection or writing vectors to Qdrant."""
 
 
 def ensure_collection() -> None:
-    """Create the collection if absent; reject a dimension mismatch if it already exists."""
+    """Create the dense+sparse collection if absent; reject a mismatched schema.
+
+    Qdrant cannot add a named vector to points already written with a single unnamed one,
+    so a collection built before hybrid retrieval has to be dropped and re-indexed rather
+    than migrated in place. The checks below therefore fail loudly on the old shape: the
+    alternative is an upsert that half-succeeds and leaves the keyword channel silently
+    missing for those documents.
+    """
     client = get_qdrant_client()
     collection_name = settings.qdrant_collection
 
     if not client.collection_exists(collection_name):
         client.create_collection(
             collection_name=collection_name,
-            vectors_config=models.VectorParams(
-                size=settings.embedding_dimensions,
-                distance=models.Distance.COSINE,
-            ),
+            vectors_config={
+                DENSE_VECTOR: models.VectorParams(
+                    size=settings.embedding_dimensions,
+                    distance=models.Distance.COSINE,
+                ),
+            },
+            sparse_vectors_config={SPARSE_VECTOR: models.SparseVectorParams()},
         )
         return
 
     collection = client.get_collection(collection_name)
-    # Qdrant reports `vectors` as a single config, a mapping of named configs, or None.
-    # This collection is created with one unnamed vector; the other two shapes have no
-    # single size to compare and would otherwise fail with an AttributeError deep in the
-    # ingestion path.
-    vector_size = getattr(collection.config.params.vectors, "size", None)
-    if vector_size is None:
-        raise VectorStoreError(f"Collection '{collection_name}' does not use a single unnamed vector configuration.")
+    vectors = collection.config.params.vectors
+    sparse_vectors = collection.config.params.sparse_vectors
 
-    if vector_size != settings.embedding_dimensions:
+    # A pre-hybrid collection reports `vectors` as a single VectorParams rather than a
+    # mapping, which is exactly the state that needs re-indexing.
+    dense_params = vectors.get(DENSE_VECTOR) if isinstance(vectors, dict) else None
+    if dense_params is None:
         raise VectorStoreError(
-            f"Collection dimension is {vector_size}, but application expects {settings.embedding_dimensions}."
+            f"Collection '{collection_name}' has no '{DENSE_VECTOR}' named vector. It predates hybrid "
+            "retrieval — delete the collection and re-index every document."
+        )
+
+    if dense_params.size != settings.embedding_dimensions:
+        raise VectorStoreError(
+            f"Collection dimension is {dense_params.size}, but application expects {settings.embedding_dimensions}."
+        )
+
+    if not sparse_vectors or SPARSE_VECTOR not in sparse_vectors:
+        raise VectorStoreError(
+            f"Collection '{collection_name}' has no '{SPARSE_VECTOR}' sparse vector configured. "
+            "Delete the collection and re-index every document."
         )
 
 
@@ -52,14 +78,20 @@ def index_document_chunks(
     visibility: str,
     chunks: list[DocumentChunk],
     vectors: list[list[float]],
+    sparse_vectors: list[models.SparseVector],
     review_status: str = "pending",
     legal_status: str = "unknown",
     category: str = "other",
     is_current: bool = True,
 ) -> int:
-    """Write chunks and their corresponding vectors into Qdrant."""
-    if len(chunks) != len(vectors):
-        raise VectorStoreError("Number of chunks must match number of embeddings.")
+    """Write chunks with both their dense and sparse vectors into Qdrant.
+
+    Both vectors are required. A point carrying only one of them is invisible to that
+    half of hybrid retrieval, and the gap shows up as a document that simply never
+    surfaces for keyword questions — far harder to notice than an outright failure here.
+    """
+    if len(chunks) != len(vectors) or len(chunks) != len(sparse_vectors):
+        raise VectorStoreError("Number of chunks must match number of dense and sparse embeddings.")
 
     if not chunks:
         return 0
@@ -78,7 +110,7 @@ def index_document_chunks(
                     f"salesmate:document:{document_id}:chunk:{chunk.index}",
                 )
             ),
-            vector=vector,
+            vector={DENSE_VECTOR: vector, SPARSE_VECTOR: sparse_vector},
             payload={
                 "document_id": document_id,
                 "project_id": project_id,
@@ -93,7 +125,7 @@ def index_document_chunks(
                 "is_current": is_current,
             },
         )
-        for chunk, vector in zip(chunks, vectors, strict=True)
+        for chunk, vector, sparse_vector in zip(chunks, vectors, sparse_vectors, strict=True)
     ]
 
     try:
@@ -113,9 +145,18 @@ def index_document_chunks(
 
 
 def delete_document_vectors(document_id: int) -> None:
-    """Delete every vector belonging to a document; used when deleting or re-indexing it."""
+    """Delete every vector belonging to a document; used when deleting or re-indexing it.
+
+    A missing collection means there is nothing to delete, which is the normal state when
+    re-indexing after the collection was dropped — the same reasoning already applied in
+    `update_document_vector_metadata`.
+    """
+    client = get_qdrant_client()
+    if not client.collection_exists(settings.qdrant_collection):
+        return
+
     try:
-        get_qdrant_client().delete(
+        client.delete(
             collection_name=settings.qdrant_collection,
             points_selector=models.FilterSelector(
                 filter=models.Filter(

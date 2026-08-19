@@ -10,9 +10,11 @@ from backend.core.config import settings
 from backend.core.enums import DocumentStatus
 from backend.core.gemini_client import embed_documents
 from backend.core.minio_client import ensure_bucket, get_minio_client
+from backend.core.sparse_embedding import SparseEmbeddingError, embed_documents_sparse
 from backend.models.document import Document
 from backend.repositories.conflict_flag import create_conflict
 from backend.repositories.document import (
+    get_document,
     list_completed_siblings,
     update_document_classification_suggestion,
     update_document_status,
@@ -21,7 +23,7 @@ from backend.repositories.document import (
 from backend.services.chunking_service import chunk_sections
 from backend.services.document_classification_service import classify_document
 from backend.services.parser_service import parse_document
-from backend.services.vector_store_service import index_document_chunks
+from backend.services.vector_store_service import delete_document_vectors, index_document_chunks
 from backend.utils.text import strip_diacritics
 
 logger = logging.getLogger(__name__)
@@ -101,31 +103,7 @@ def ingest_uploaded_document(
         if not chunks:
             raise DocumentIngestionError("No chunks were produced.")
 
-        # Batch the chunks so a single Gemini request does not carry too many at once.
-        vectors: list[list[float]] = []
-        batch_size = 32
-
-        for start in range(0, len(chunks), batch_size):
-            batch = chunks[start : start + batch_size]
-            vectors.extend(
-                embed_documents(
-                    [chunk.text for chunk in batch],
-                    title=document.title,
-                )
-            )
-
-        index_document_chunks(
-            document_id=document.id,
-            title=document.title,
-            project_id=document.project_id,
-            visibility=document.visibility,
-            chunks=chunks,
-            vectors=vectors,
-            category=document.category,
-            review_status=document.review_status,
-            legal_status=document.legal_status,
-            is_current=document.is_current,
-        )
+        _embed_and_index(document, chunks)
 
         completed = update_document_status(
             db,
@@ -159,6 +137,106 @@ def ingest_uploaded_document(
             raise
 
         raise DocumentIngestionError(f"Could not ingest document {document.id}.") from exc
+
+
+def _embed_and_index(document: Document, chunks: list) -> None:
+    """Embed chunks on both channels and write them to Qdrant.
+
+    Shared by first ingestion and re-indexing so the two can never drift into producing
+    differently-shaped points.
+    """
+    # Batch the chunks so a single Gemini request does not carry too many at once.
+    vectors: list[list[float]] = []
+    batch_size = 32
+
+    for start in range(0, len(chunks), batch_size):
+        batch = chunks[start : start + batch_size]
+        vectors.extend(
+            embed_documents(
+                [chunk.text for chunk in batch],
+                title=document.title,
+            )
+        )
+
+    # No batching: BM25 runs locally, so there is no request size to keep under.
+    try:
+        sparse_vectors = embed_documents_sparse([chunk.text for chunk in chunks])
+    except SparseEmbeddingError as exc:
+        # Deliberately fatal. Indexing the dense vector alone would leave this document
+        # permanently unreachable by keyword search, with nothing to show that happened.
+        raise DocumentIngestionError("Could not compute BM25 sparse vectors.") from exc
+
+    index_document_chunks(
+        document_id=document.id,
+        title=document.title,
+        project_id=document.project_id,
+        visibility=document.visibility,
+        chunks=chunks,
+        vectors=vectors,
+        sparse_vectors=sparse_vectors,
+        category=document.category,
+        review_status=document.review_status,
+        legal_status=document.legal_status,
+        is_current=document.is_current,
+    )
+
+
+def reindex_document(db: Session, *, document_id: int) -> Document:
+    """Re-embed and re-index a document that is already stored, from its original file.
+
+    Exists for schema and model migrations: enabling hybrid retrieval changed the shape
+    of a Qdrant point, and every document ingested before that has to be rewritten to
+    carry a sparse vector.
+
+    Deliberately skips the prompt-injection scan, classification and conflict flagging —
+    all three ran at upload and none depends on the embedding. Old vectors are removed
+    first so a document whose chunk count shrank leaves nothing orphaned behind.
+    """
+    document = get_document(db, document_id)
+    if document is None:
+        raise DocumentIngestionError(f"Document {document_id} does not exist.")
+
+    if not document.file_path:
+        raise DocumentIngestionError(f"Document {document_id} has no stored original file to re-index.")
+
+    try:
+        file_bytes = _read_original_file(document.file_path)
+        sections = parse_document(document.title, file_bytes)
+
+        chunks = chunk_sections(sections)
+        if not chunks:
+            raise DocumentIngestionError("No chunks were produced.")
+
+        delete_document_vectors(document.id)
+        _embed_and_index(document, chunks)
+    except DocumentIngestionError:
+        raise
+    except Exception as exc:
+        raise DocumentIngestionError(f"Could not re-index document {document_id}.") from exc
+
+    logger.info(
+        "Re-indexed document %s.",
+        document.id,
+        extra={"event": "document.reindex.success", "document_id": document.id, "chunk_count": len(chunks)},
+    )
+    return document
+
+
+def _read_original_file(object_key: str) -> bytes:
+    """Fetch a stored original back out of MinIO."""
+    response = None
+    try:
+        response = get_minio_client().get_object(
+            bucket_name=settings.minio_bucket_documents,
+            object_name=object_key,
+        )
+        return response.read()
+    except Exception as exc:
+        raise DocumentIngestionError("Could not read the original file from MinIO.") from exc
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
 
 
 def flag_conflicts_for(db: Session, document: Document) -> list[int]:
