@@ -26,6 +26,7 @@ Two principles govern this whole file:
 """
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
@@ -37,6 +38,7 @@ from backend.ai.answer_cleanup import drop_image_denials
 from backend.ai.citations import build_citations
 from backend.ai.intent import needs_document_retrieval as query_needs_documents
 from backend.ai.intent import needs_inventory as query_needs_inventory
+from backend.core import tracing
 from backend.core.enums import DocumentVisibility, MessageEmotion
 from backend.core.gemini_client import generate_text
 from backend.services import answer_images_service, cache_service, risk_service, verifier_service
@@ -185,19 +187,23 @@ def _cache_check(state: PipelineState) -> dict[str, Any]:
     cannot key correctly — so they take the full path.
     """
     if state.get("conversation_history"):
+        tracing.step("cache_check", hit=False, skipped="has_history")
         return {"used_cache": False}
 
     # Same reasoning for long-term memory: the cache is shared across everyone, but a
     # personalised answer was shaped by one person's profile. Serving it to the next
     # person who happens to ask the same words would leak that shaping.
     if state.get("memory_profile"):
+        tracing.step("cache_check", hit=False, skipped="has_memory_profile")
         return {"used_cache": False}
 
     clearance = state.get("clearance", DocumentVisibility.INTERNAL)
     cached = cache_service.lookup_cache(state["query"], state.get("project_id"), clearance)
     if cached is None:
+        tracing.step("cache_check", hit=False)
         return {"used_cache": False}
 
+    tracing.step("cache_check", hit=True, verifier_score=cached.verifier_score)
     return {
         "used_cache": True,
         "draft_answer": cached.answer,
@@ -223,6 +229,15 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     needs_document_retrieval = query_needs_documents(query)
     hits: list[dict] = []
 
+    # The routing decision itself, recorded before it is acted on: "why did this question
+    # never call the inventory API?" is otherwise unanswerable after the fact.
+    tracing.step(
+        "intent",
+        needs_inventory=needs_inventory,
+        needs_document_retrieval=needs_document_retrieval,
+        clearance=str(clearance),
+    )
+
     if needs_document_retrieval:
         try:
             # Retrieval embeds the question expanded with the previous one, so a bare
@@ -244,14 +259,28 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
                     "query_len": len(query),
                 },
             )
+            tracing.step("retrieve", ok=False, error="qdrant_unavailable")
             # A combined inventory + policy question can still answer from its
             # live source when Qdrant is temporarily unavailable.
             if not needs_inventory:
                 return {"notice": RETRIEVAL_ERROR_MESSAGE}
+        else:
+            # Scores travel with the count: a run that retrieved five documents whose best
+            # score was 0.31 failed for a completely different reason than one that
+            # retrieved nothing, and the two are indistinguishable from a bare count.
+            top_score = hits[0].get("score") if hits else None
+            tracing.step(
+                "retrieve",
+                ok=True,
+                doc_count=len(hits),
+                top_score=round(top_score, 4) if isinstance(top_score, int | float) else None,
+                document_ids=[hit.get("document_id") for hit in hits],
+            )
 
     if not hits and not needs_inventory:
         # No documents ingested yet and the question is not an inventory lookup ->
         # Empty State, not a system error.
+        tracing.step("empty_state")
         return {"notice": _empty_state_message(clearance)}
 
     return {
@@ -272,6 +301,7 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
     genuinely cannot pick one.
     """
     project_id = state.get("project_id")
+    started = time.perf_counter()
 
     try:
         units = lookup_inventory(project_id, state["query"])
@@ -282,10 +312,23 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
             exc_info=True,
             extra={"event": "pipeline.inventory.failed", "project_id": project_id},
         )
+        # Latency is recorded on the failure path too: a timeout and an instant refusal
+        # are different faults, and only the duration tells them apart.
+        tracing.step(
+            "tool.inventory",
+            ok=False,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
         if state.get("retrieved_docs"):
             return {"inventory_failed": True, "inventory_units": []}
         return {"inventory_failed": True, "notice": INVENTORY_UNAVAILABLE_MESSAGE}
 
+    tracing.step(
+        "tool.inventory",
+        ok=True,
+        unit_count=len(units),
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
     # An empty `units` list is a valid answer ("no 2PN units left"), not a failure —
     # inventory_service keeps those two cases distinct.
     return {"inventory_units": units, "inventory_failed": False}
@@ -310,6 +353,8 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         correction=state.get("verifier_feedback") or "",
     )
     system_instruction = prompts.SYSTEM_INSTRUCTION_PUBLIC if is_public else prompts.SYSTEM_INSTRUCTION
+    attempt = state.get("retry_count", 0) + 1
+    started = time.perf_counter()
 
     try:
         answer = generate_text(prompt, system_instruction=system_instruction)
@@ -323,6 +368,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
                 "unit_count": len(units),
             },
         )
+        tracing.step("generate", attempt=attempt, ok=False)
         return {"notice": GENERATION_ERROR_MESSAGE}
 
     # Strip before checking for emptiness: an answer made up of only Markdown characters
@@ -331,10 +377,23 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     answer = strip_markdown(answer)
 
     if not answer:
+        tracing.step("generate", attempt=attempt, ok=False, empty=True)
         return {"notice": GENERATION_ERROR_MESSAGE}
 
     answer = drop_image_denials(answer, state.get("images") or [])
 
+    # `corrected` is the flag that makes a Reflexion visible in the trace: attempt 2 with
+    # a correction is the loop working, attempt 2 without one is a blind retry.
+    tracing.step(
+        "generate",
+        attempt=attempt,
+        ok=True,
+        answer_len=len(answer),
+        doc_count=len(docs),
+        unit_count=len(units),
+        corrected=bool(state.get("verifier_feedback")),
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
     return {"draft_answer": answer, "citations": build_citations(docs)}
 
 
@@ -347,7 +406,23 @@ def _verify(state: PipelineState) -> dict[str, Any]:
     """
     context = [doc["content"] for doc in state.get("retrieved_docs") or []]
     context.extend(prompts.format_unit_for_verifier(unit) for unit in state.get("inventory_units") or [])
+    started = time.perf_counter()
     result = verifier_service.score_answer(state["query"], state.get("draft_answer", ""), context)
+
+    # The label the eval flywheel is built on. `feedback` is deliberately absent: it can
+    # quote the answer text, and traces are written to a file with a much looser handling
+    # story than the audit log's.
+    tracing.step(
+        "verify",
+        attempt=state.get("retry_count", 0) + 1,
+        score=round(result.score, 4),
+        faithfulness=round(result.faithfulness, 4),
+        relevancy=round(result.relevancy, 4),
+        completeness=round(result.completeness, 4),
+        failure_mode=result.failure_mode.value,
+        next_action=result.next_action.value,
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
 
     return {
         "verifier_score": round(result.score, 4),
@@ -362,7 +437,9 @@ def _verify(state: PipelineState) -> dict[str, Any]:
 
 def _risk_check(state: PipelineState) -> dict[str, Any]:
     """Touches price/commitment -> raise the HITL flag so the Sale must read and confirm."""
-    return {"requires_hitl": risk_service.detect_commitment_risk(state.get("draft_answer", ""))}
+    requires_hitl = risk_service.detect_commitment_risk(state.get("draft_answer", ""))
+    tracing.step("risk_check", requires_hitl=requires_hitl)
+    return {"requires_hitl": requires_hitl}
 
 
 def _image_tool(state: PipelineState) -> dict[str, Any]:
@@ -383,12 +460,15 @@ def _image_tool(state: PipelineState) -> dict[str, Any]:
     """
     db = state.get("db")
     if db is None:
+        tracing.step("tool.images", ok=False, skipped="no_db_session")
         return {"images": []}
 
     context = "\n".join(
         f"{doc.get('title') or ''} {doc.get('content') or ''}" for doc in state.get("retrieved_docs") or []
     )
-    return {"images": answer_images_service.collect_images(db, state["query"], context)}
+    images = answer_images_service.collect_images(db, state["query"], context)
+    tracing.step("tool.images", ok=True, image_count=len(images))
+    return {"images": images}
 
 
 # --------------------------------------------------------------------------- routing
@@ -438,14 +518,18 @@ def _route_after_verify(state: PipelineState) -> str:
     """
     score = state.get("verifier_score", 0.0)
     if score >= _threshold():
+        tracing.step("route.after_verify", decision="accept", score=score)
         return "risk_check"
 
     if state.get("next_action") == verifier_service.NextAction.DECLINE.value:
+        tracing.step("route.after_verify", decision="decline", score=score, reason="verifier_declined")
         return "low_confidence"
 
     if state.get("retry_count", 0) < MAX_GENERATE_RETRIES:
+        tracing.step("route.after_verify", decision="retry", score=score)
         return "retry"
 
+    tracing.step("route.after_verify", decision="decline", score=score, reason="retries_exhausted")
     return "low_confidence"
 
 
@@ -538,6 +622,25 @@ def run_pipeline(
     if not query or not query.strip():
         return PipelineResult(_empty_state_message(clearance), [], 0.0, False, emotion=MessageEmotion.REGRETFUL)
 
+    tracing.start_run(query_len=len(query), project_id=project_id, clearance=str(clearance))
+    try:
+        return _run_traced(query, project_id, db, conversation_history, memory_profile, clearance)
+    finally:
+        # In a `finally` so a trace is still written when the graph raises. The outcome
+        # fields are read off the result inside `_run_traced`; this only guarantees the
+        # record is closed and flushed exactly once per run.
+        tracing.finish()
+
+
+def _run_traced(
+    query: str,
+    project_id: str | None,
+    db: Session | None,
+    conversation_history: list[prompts.ConversationTurn] | None,
+    memory_profile: str,
+    clearance: DocumentVisibility,
+) -> PipelineResult:
+    """The body of `run_pipeline`, split out so tracing can wrap every exit path."""
     initial: PipelineState = {
         "query": query.strip(),
         "project_id": project_id,
@@ -568,6 +671,7 @@ def run_pipeline(
                 "query_len": len(query),
             },
         )
+        tracing.set_outcome(outcome="crash", verifier_score=0.0)
         return PipelineResult(GENERATION_ERROR_MESSAGE, [], 0.0, False, emotion=MessageEmotion.REGRETFUL)
 
     notice = state.get("notice")
@@ -577,6 +681,12 @@ def run_pipeline(
         #
         # Photos still ride along. They were requested explicitly and assert nothing, so
         # withholding them because the *text* could not be verified helps nobody.
+        tracing.set_outcome(
+            outcome="notice",
+            verifier_score=state.get("verifier_score", 0.0),
+            failure_mode=state.get("failure_mode"),
+            retry_count=state.get("retry_count", 0),
+        )
         return PipelineResult(
             notice,
             [],
@@ -620,6 +730,15 @@ def run_pipeline(
     if not result.used_cache and not initial["conversation_history"] and not memory_profile:
         _store_cache(query, result, project_id, clearance)
 
+    tracing.set_outcome(
+        outcome="answered",
+        verifier_score=result.verifier_score,
+        failure_mode=result.failure_mode,
+        requires_hitl=result.requires_hitl,
+        used_cache=result.used_cache,
+        retry_count=state.get("retry_count", 0),
+        citation_count=len(result.citations),
+    )
     return result
 
 

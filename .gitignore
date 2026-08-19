@@ -74,6 +74,12 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 
+# Pipeline traces and generated eval reports. The graders and the runner are code and
+# stay tracked; recorded runs are operational data (one line per question asked) and a
+# report is derived from them, so neither belongs in git.
+eval/runs.jsonl
+eval/results/report.json
+
 # Claude Code project files
 CLAUDE.md
 .claude/scheduled_tasks.lock

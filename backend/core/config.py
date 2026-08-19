@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     cohere_api_key: str = ""
     cohere_rerank_model: str = "rerank-v3.5"
 
+    # Pipeline tracing: one JSONL record per question holding every routing decision,
+    # tool call and retry. Separate from the audit log, which keeps one business row per
+    # request in MySQL — see backend/core/tracing.py for why they are not the same sink.
+    # Off by default: it writes to local disk, which is ephemeral on Render and of no use
+    # in production; turn it on while gathering runs to build an eval set from.
+    tracing_enabled: bool = False
+    trace_file: str = "eval/runs.jsonl"
+
     # Long-term memory (Redis). Ho so ghi nho theo tung nguoi dung — KHONG phai
     # nguon su that: Redis chet thi pipeline van tra loi day du, chi mat ca nhan hoa.
     # De trong de tat han tinh nang (vi du khi chay test hoac deploy khong co Redis).
