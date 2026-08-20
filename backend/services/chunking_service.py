@@ -20,6 +20,7 @@ class DocumentChunk:
     index: int
     text: str
     page: int | None
+    content_type: str = "prose"  # "prose" | "table", carried from ParsedSection
 
 
 def chunk_sections(
@@ -37,20 +38,54 @@ def chunk_sections(
     chunks: list[DocumentChunk] = []
 
     for section in sections:
-        for text in _split_text(
-            section.text,
-            chunk_chars=chunk_chars,
-            overlap_chars=overlap_chars,
-        ):
+        texts = (
+            _split_table(section.text, chunk_chars=chunk_chars)
+            if section.content_type == "table"
+            else _split_text(section.text, chunk_chars=chunk_chars, overlap_chars=overlap_chars)
+        )
+        for text in texts:
             chunks.append(
                 DocumentChunk(
                     index=len(chunks),
                     text=text,
                     page=section.page,
+                    content_type=section.content_type,
                 )
             )
 
     return chunks
+
+
+def _split_table(markdown: str, *, chunk_chars: int) -> list[str]:
+    """Split a markdown table into whole-table or row-batch chunks.
+
+    Kept as a whole table whenever it fits, so retrieval returns one complete,
+    self-contained table. Larger tables (e.g. an 11-row payment schedule) are cut
+    into row-batches instead — separate from _split_text/_append_block, which are
+    heading-breadcrumb oriented rather than table-row oriented.
+    """
+    if not markdown.strip():
+        return []
+
+    if len(markdown) <= chunk_chars:
+        return [markdown]
+
+    lines = [line for line in markdown.splitlines() if line.strip()]
+    batches: list[str] = []
+    current: list[str] = []
+
+    for line in lines:
+        candidate = "\n".join(current + [line])
+        if len(candidate) > chunk_chars and current:
+            batches.append("\n".join(current))
+            current = [line]
+        else:
+            current.append(line)
+
+    if current:
+        batches.append("\n".join(current))
+
+    return batches
 
 
 # Regexes recognising the additional heading levels

@@ -31,6 +31,81 @@ def test_parse_pdf_keeps_page_numbers():
     assert sections[1].page == 2
 
 
+def _make_pdf_with_ruled_table_bytes() -> bytes:
+    """A page with prose, then a ruled 2-column label/value table, then more prose —
+    mirrors the label/value tables common in Vietnamese real-estate brochures (e.g.
+    "Ten du an | The Senique Hanoi")."""
+    document = fitz.open()
+    page = document.new_page()
+
+    rows = [
+        ("Ten du an", "The Senique Hanoi"),
+        ("Chu dau tu", "CapitaLand Development"),
+        ("Vi tri", "O B6-CT02 Gia Lam"),
+    ]
+
+    page.insert_text((50, 50), "Day la doan van truoc bang.", fontsize=11)
+
+    y = 80
+    row_height = 25
+    table_top = 65
+    table_bottom = table_top + len(rows) * row_height + 5
+    for label, value in rows:
+        page.insert_text((50, y), label, fontsize=11)
+        page.insert_text((250, y), value, fontsize=11)
+        y += row_height
+
+    page.draw_rect(fitz.Rect(40, table_top, 480, table_bottom))
+    for index in range(len(rows) + 1):
+        line_y = table_top + index * row_height + (5 if index == len(rows) else 0)
+        page.draw_line((40, line_y), (480, line_y))
+    page.draw_line((240, table_top), (240, table_bottom))
+
+    page.insert_text((50, y + 20), "Day la doan van sau bang.", fontsize=11)
+
+    data = document.tobytes()
+    document.close()
+    return data
+
+
+def test_parse_pdf_extracts_ruled_table_as_markdown():
+    sections = parse_document("thong-tin-du-an.pdf", _make_pdf_with_ruled_table_bytes())
+
+    table_sections = [section for section in sections if section.content_type == "table"]
+    assert len(table_sections) == 1
+
+    table_text = table_sections[0].text
+    assert table_sections[0].page == 1
+    # Every row must survive — none silently promoted into a dropped header.
+    assert "Ten du an" in table_text
+    assert "The Senique Hanoi" in table_text
+    assert "Chu dau tu" in table_text
+    assert "CapitaLand Development" in table_text
+    assert "Vi tri" in table_text
+    assert "O B6-CT02 Gia Lam" in table_text
+
+
+def test_parse_pdf_excludes_table_text_from_prose_section():
+    sections = parse_document("thong-tin-du-an.pdf", _make_pdf_with_ruled_table_bytes())
+
+    prose_sections = [section for section in sections if section.content_type == "prose"]
+    assert len(prose_sections) == 1
+
+    prose_text = prose_sections[0].text
+    assert "Day la doan van truoc bang." in prose_text
+    assert "Day la doan van sau bang." in prose_text
+    # The table's cell values must not be duplicated into the prose section.
+    assert "The Senique Hanoi" not in prose_text
+    assert "CapitaLand Development" not in prose_text
+
+
+def test_parse_pdf_without_tables_is_unchanged():
+    sections = parse_document("bang-gia.pdf", _make_pdf_bytes())
+
+    assert len(sections) == 2
+    assert all(section.content_type == "prose" for section in sections)
+
+
 def test_parse_docx_returns_text_without_page(tmp_path):
     path = tmp_path / "chinh-sach.docx"
 

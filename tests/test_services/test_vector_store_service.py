@@ -181,11 +181,33 @@ def test_index_document_chunks_upserts_expected_payload(qdrant):
         "page": 1,
         "chunk_index": 0,
         "content": "Gia can 2PN tu 3.5 ty.",
+        "content_type": "prose",
         "category": "other",
         "review_status": "pending",
         "legal_status": "unknown",
         "is_current": True,
     }
+
+
+def test_index_document_chunks_carries_table_content_type(qdrant):
+    """A chunk built from a detected PDF table must be identifiable in Qdrant, so
+    Admin tooling can later report how many table chunks a document produced."""
+    chunks = [
+        DocumentChunk(index=0, text="|Loai|Gia|\n|2PN|3.5 ty|", page=1, content_type="table"),
+    ]
+
+    vector_store_service.index_document_chunks(
+        document_id=12,
+        title="bang-gia.pdf",
+        project_id="project-a",
+        visibility="internal",
+        chunks=chunks,
+        vectors=[[0.1, 0.2, 0.3]],
+        sparse_vectors=[_sparse()],
+    )
+
+    point = qdrant.upsert_calls[0]["points"][0]
+    assert point.payload["content_type"] == "table"
 
 
 def test_index_document_chunks_uses_stable_point_ids(qdrant):

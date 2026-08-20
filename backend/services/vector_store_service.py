@@ -147,6 +147,7 @@ def index_document_chunks(
                 "page": chunk.page,
                 "chunk_index": chunk.index,
                 "content": chunk.text,
+                "content_type": chunk.content_type,
                 "category": category,
                 "review_status": review_status,
                 "legal_status": legal_status,

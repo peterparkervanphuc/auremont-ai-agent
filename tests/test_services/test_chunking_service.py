@@ -176,3 +176,41 @@ def test_chunk_sections_ignores_empty_sections():
     ]
 
     assert chunk_sections(sections) == []
+
+
+def test_chunk_sections_keeps_small_table_as_one_chunk():
+    table = "|Ten du an|The Senique Hanoi|\n|Chu dau tu|CapitaLand|\n|Vi tri|Gia Lam|"
+    sections = [ParsedSection(text=table, page=1, content_type="table")]
+
+    chunks = chunk_sections(sections, chunk_chars=3200, overlap_chars=400)
+
+    assert len(chunks) == 1
+    assert chunks[0].content_type == "table"
+    assert chunks[0].text == table
+    assert chunks[0].page == 1
+
+
+def test_chunk_sections_splits_large_table_without_dropping_rows():
+    rows = [f"|A-{number:03d}|2PN|{3 + number / 10:.1f} ty|" for number in range(20)]
+    table = "\n".join(rows)
+    sections = [ParsedSection(text=table, page=8, content_type="table")]
+
+    chunks = chunk_sections(sections, chunk_chars=100, overlap_chars=20)
+
+    assert len(chunks) > 1
+    assert all(chunk.content_type == "table" for chunk in chunks)
+    assert all(chunk.page == 8 for chunk in chunks)
+
+    # Every row must survive exactly once: none dropped, none duplicated.
+    seen_rows = "\n".join(chunk.text for chunk in chunks).splitlines()
+    assert sorted(seen_rows) == sorted(rows)
+
+
+def test_chunk_sections_table_chunks_do_not_exceed_chunk_chars():
+    rows = [f"|A-{number:03d}|2PN|{3 + number / 10:.1f} ty|" for number in range(20)]
+    table = "\n".join(rows)
+    sections = [ParsedSection(text=table, page=8, content_type="table")]
+
+    chunks = chunk_sections(sections, chunk_chars=100, overlap_chars=20)
+
+    assert all(len(chunk.text) <= 100 for chunk in chunks)
