@@ -34,6 +34,7 @@ from backend.schemas.document import (
     DocumentCreate,
     DocumentResponse,
 )
+from backend.services.cache_service import clear_cache
 from backend.services.ingestion_service import (
     DocumentIngestionError,
     PromptInjectionError,
@@ -43,6 +44,7 @@ from backend.services.ingestion_service import (
 from backend.services.vector_store_service import (
     VectorStoreError,
     update_document_vector_metadata,
+    update_document_vector_visibility,
 )
 
 router = APIRouter(
@@ -288,7 +290,7 @@ async def set_document_visibility(
     db: Session = Depends(get_db),
 ) -> DocumentResponse:
     try:
-        return update_document_visibility(
+        document = update_document_visibility(
             db,
             document_id,
             payload.visibility,
@@ -298,6 +300,29 @@ async def set_document_visibility(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
+
+    try:
+        # Without this, the dropdown in DocumentsTab.tsx changes MySQL and looks like it
+        # worked, but rag_service's retrieval filter reads visibility off the Qdrant
+        # payload (set once at ingestion time) — a customer's PUBLIC-clearance query kept
+        # excluding/including the document exactly as it was before, silently.
+        update_document_vector_visibility(document.id, document.visibility)
+    except VectorStoreError as exc:
+        # The DB change is committed first; leaving Qdrant stale is safe (retrieval keeps
+        # using the pre-change visibility) but must not look like the toggle succeeded.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Visibility was updated but could not be synced to the search index.",
+        ) from exc
+
+    # A question asked (and cached) while this document was still internal would otherwise
+    # keep serving that stale "no data" answer forever after it goes public — the cache has
+    # no way to know only THIS document changed, so it clears entirely. Best-effort: a
+    # failure here never blocks the visibility change itself (see clear_cache's own
+    # fail-silent contract).
+    clear_cache()
+
+    return document
 
 
 @router.delete(

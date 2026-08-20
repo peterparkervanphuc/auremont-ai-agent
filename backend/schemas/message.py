@@ -9,6 +9,10 @@ class Citation(BaseModel):
     document_id: int
     title: str
     page: int | None = None
+    # PDF points from the page's top — lets the citation preview scroll straight to this
+    # spot instead of just the top of the page. None for DOCX, or a chunk indexed before
+    # this field existed. See chunking_service.py / CitationList.tsx's withPageAnchor.
+    y_position: float | None = None
 
 
 class AnswerImage(BaseModel):
@@ -40,6 +44,8 @@ class MessageResponse(BaseModel):
     # Drives AuremontAvatar.tsx — see MessageEmotion. `None` on a Sale/Customer's own
     # message, or an AGENT message from before this field existed.
     emotion: MessageEmotion | None = None
+    # Short reply options the customer can tap instead of typing — see Message.quick_replies.
+    quick_replies: list[str] | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

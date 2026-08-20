@@ -1362,18 +1362,61 @@
   opacity: 0.7;
 }
 
-/* Non-clickable citation chip — the public/customer chat page (CustomerChatPage.tsx)
-   shows source titles without a click-through, since the signed view-url endpoint is
-   Sale/Admin-only and does not filter by document visibility. */
-.chat-citation--static {
-  cursor: default;
+/* ── Quick-reply pills (CustomerChatPage.tsx) — tap instead of typing, offered by the
+   model itself only on the discovery question it just asked (prompts.ConsultAnswer). Soft
+   tinted fill like the citation chips above rather than a hard outline, so they read as
+   part of the same chat surface instead of a form control dropped under the bubble. ── */
+.chat-quick-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
 }
-.chat-citation--static:hover {
-  background: rgba(0, 80, 239, 0.08);
+
+.chat-quick-reply {
+  padding: 8px 16px;
+  border-radius: 100px;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(0, 80, 239, 0.07);
+  border: 1px solid rgba(0, 80, 239, 0.16);
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast),
+    color var(--t-fast),
+    transform var(--t-fast);
+}
+
+.chat-quick-reply:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.chat-quick-reply:active {
+  transform: translateY(0);
+}
+
+.chat-quick-reply:disabled {
+  cursor: wait;
+  opacity: 0.6;
+  transform: none;
+}
+
+.chat-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* ── AI -> Sale live handoff (CustomerChatPage.tsx, LiveChatPage.tsx) ───── */
-.chat-request-human-btn {
+.chat-request-human-btn,
+.chat-newconvo-btn {
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -1395,7 +1438,6 @@
   background: rgba(16, 185, 129, 0.08);
   color: var(--emerald);
 }
-
 .chat-live-banner-action {
   margin-left: auto;
   flex-shrink: 0;

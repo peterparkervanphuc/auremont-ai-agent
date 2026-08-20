@@ -20,6 +20,11 @@ class DocumentChunk:
     index: int
     text: str
     page: int | None
+    # Y position in PDF points from the page's top, for scrolling a citation's PDF
+    # viewer straight to this chunk instead of just the top of its page — see
+    # _estimate_y_position. None when the section carries no position data (DOCX, or a
+    # PDF page whose blocks couldn't be correlated back onto its text).
+    y_position: float | None = None
 
 
 def chunk_sections(
@@ -47,10 +52,47 @@ def chunk_sections(
                     index=len(chunks),
                     text=text,
                     page=section.page,
+                    y_position=_estimate_y_position(text, section),
                 )
             )
 
     return chunks
+
+
+def _estimate_y_position(chunk_text: str, section: ParsedSection) -> float | None:
+    """Where roughly does this chunk sit vertically on its source page?
+
+    A chunk's text is not always a clean substring of `section.text` — `_start_chunk`
+    above prepends a heading breadcrumb, and can prepend overlap carried over from the
+    PREVIOUS chunk, both of which are real page content but not from where this chunk
+    visually starts. So this searches line by line for the first reasonably long,
+    unambiguous line (short lines match too many places on a dense policy page) and uses
+    *its* position — skipping past a prepended breadcrumb naturally, since headings are
+    short and this only matches lines with real length.
+    """
+    if not section.block_offsets:
+        return None
+
+    for line in chunk_text.splitlines():
+        line = line.strip()
+        if len(line) < 15:
+            continue
+        offset = section.text.find(line)
+        if offset >= 0:
+            return _y_for_offset(offset, section.block_offsets)
+
+    return None
+
+
+def _y_for_offset(offset: int, block_offsets: tuple[tuple[int, float], ...]) -> float:
+    """The Y of the last breakpoint at or before `offset` — block_offsets is sorted
+    ascending by offset, so this is "which visual block does this character fall in"."""
+    y = block_offsets[0][1]
+    for bp_offset, bp_y in block_offsets:
+        if bp_offset > offset:
+            break
+        y = bp_y
+    return y
 
 
 # Regexes recognising the additional heading levels

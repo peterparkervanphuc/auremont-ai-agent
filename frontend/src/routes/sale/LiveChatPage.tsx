@@ -5,15 +5,8 @@ import type { MessageResponse } from "../../types";
 import { AnswerImageStrip } from "./AnswerImageStrip";
 import { parseServerDate } from "../../utils/datetime";
 import { AuremontAvatar } from "../../components/AuremontAvatar";
-import {
-  ArrowLeftIcon,
-  DocumentIcon,
-  LoaderIcon,
-  SendIcon,
-  SparklesIcon,
-  UserIcon,
-  UsersIcon,
-} from "../../components/Icons";
+import { CitationList } from "../../components/CitationList";
+import { ArrowLeftIcon, LoaderIcon, SendIcon, SparklesIcon, UserIcon, UsersIcon } from "../../components/Icons";
 
 function formatTime(iso: string): string {
   const d = parseServerDate(iso);
@@ -173,15 +166,7 @@ export function LiveChatPage() {
                     <p className="chat-bubble-text">{m.content}</p>
 
                     {isCustomer && m.citations && m.citations.length > 0 && (
-                      <div className="chat-citations">
-                        <span className="chat-citations-label">Nguồn</span>
-                        {[...new Set(m.citations.map((c) => c.title))].map((title) => (
-                          <span key={title} className="chat-citation chat-citation--static">
-                            <DocumentIcon size={12} />
-                            {title}
-                          </span>
-                        ))}
-                      </div>
+                      <CitationList citations={m.citations} className="chat-citations" label="Nguồn" />
                     )}
 
                     {isCustomer && m.images && m.images.length > 0 && <AnswerImageStrip images={m.images} />}

@@ -22,6 +22,7 @@ from backend.repositories.hitl_log import confirmed_message_ids, delete_hitl_log
 from backend.repositories.message import (
     create_message,
     delete_messages_for_session,
+    history_for_pipeline,
     list_messages_for_session,
 )
 from backend.schemas.chat_session import ChatSessionCreate, ChatSessionResponse
@@ -105,10 +106,14 @@ async def ask_in_session(
     session = _owned_session(db, session_id, user)
     set_title_if_empty(db, session, payload.content)
 
+    # Fetched BEFORE persisting the new turn below, so it excludes that turn — same
+    # ordering as customer_chat.py's ask_in_customer_session, for the same reason.
+    history = history_for_pipeline(list_messages_for_session(db, session_id))
+
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
 
     started = time.perf_counter()
-    result = agent_pipeline.run_pipeline(payload.content, project_id=session.project_id, db=db)
+    result = agent_pipeline.run_pipeline(payload.content, project_id=session.project_id, db=db, history=history)
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
 
     # The core business record for Admin Tab 2 (AI Evaluation): the Verifier score

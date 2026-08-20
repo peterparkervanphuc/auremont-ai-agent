@@ -39,6 +39,12 @@ Hai tiêu chí, mỗi tiêu chí cho điểm từ 0.0 đến 1.0:
 - "relevancy": câu trả lời có trực tiếp giải đáp CÂU HỎI không?
   Lan man, trả lời sang chuyện khác -> điểm thấp.
 
+NGOẠI LỆ QUAN TRỌNG: nếu CÂU TRẢ LỜI là một lời từ chối trung thực — thẳng thắn nói KHÔNG có
+đủ dữ liệu để trả lời đúng điều được hỏi, không bịa số liệu thay thế — thì cho CẢ HAI tiêu chí
+đều 1.0, bất kể câu đó có chứa số liệu hay không. Từ chối đúng lúc khi thiếu dữ liệu là hành vi
+ĐÚNG của hệ thống, không phải câu trả lời kém chất lượng — không chấm thấp chỉ vì nó là câu giao
+tiếp thay vì số liệu cụ thể.
+
 CÂU HỎI:
 {query}
 

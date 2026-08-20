@@ -33,6 +33,12 @@
   --grad-primary: linear-gradient(135deg, #0050ef, #0a2e7a);
   --grad-wide: linear-gradient(135deg, #0050ef 0%, #2e7bff 42%, #0a2e7a 100%);
 
+  /* Chat-only background — separate from --bg (used app-wide) because --bg and --bg-2 (the
+     bot bubble) already contrast enough against each other in dark mode, but in light mode
+     they're too close (#f4f8fc vs #ffffff) for the white bubble to read as sitting "on" the
+     page rather than blending into it. */
+  --chat-bg: var(--bg);
+
   --glow-accent: 0 0 40px rgba(0, 80, 239, 0.14);
   --glow-accent-2: 0 0 40px rgba(10, 46, 122, 0.12);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
@@ -85,6 +91,7 @@
   --glow-accent: 0 0 40px rgba(26, 86, 219, 0.10);
   --glow-accent-2: 0 0 40px rgba(10, 46, 122, 0.08);
   --shadow: 0 10px 30px rgba(10, 46, 122, 0.10);
+  --chat-bg: #eef2f7;
 }
 
 /* ── Animations ──────────────────────────────────────────── */
@@ -2850,12 +2857,12 @@ code {
   40%            { transform: translateY(-7px); opacity: 1;   }
 }
 @keyframes msg-in-bot {
-  from { opacity: 0; transform: translateX(-12px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 @keyframes msg-in-user {
-  from { opacity: 0; transform: translateX(12px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* Layout */
@@ -2864,6 +2871,7 @@ code {
   flex-direction: column;
   height: calc(100vh - 64px);
   overflow: hidden;
+  background: var(--chat-bg);
 }
 
 /* Topbar */
@@ -3057,9 +3065,10 @@ code {
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-bottom-left-radius: 4px;
+  box-shadow: 0 2px 10px rgba(10, 30, 60, 0.06);
 }
 .chat-bubble--user {
-  background: var(--grad-primary);
+  background: var(--grad-wide);
   color: #fff;
   border-bottom-right-radius: 4px;
   box-shadow: 0 4px 16px rgba(0,80,239,0.35);
@@ -3757,6 +3766,10 @@ code {
 }
 .login-submit { width: 100%; justify-content: center; padding: 12px; font-size: 0.9375rem; margin-top: 4px; }
 .login-hint { text-align: center; font-size: 0.8rem; color: var(--text-3); margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+/* A second line stacked under .login-hint (Login.tsx's register link, Register.tsx's
+   login link) — same look, no second divider on top of the first. */
+.login-hint + .login-hint { margin-top: 8px; padding-top: 0; border-top: none; }
+.login-hint a { color: var(--accent); font-weight: 600; }
 
 /* Soft-paywall gate shown mid-conversation to an anonymous customer-chat visitor
    (frontend/src/components/RegisterGateModal.tsx) — reuses .login-* field/button
@@ -3806,6 +3819,66 @@ code {
 }
 .gate-modal-tab:hover { color: var(--text-1); }
 .gate-modal-tab--active { color: var(--accent); border-color: var(--accent); }
+
+/* In-page PDF citation preview (CitationList.tsx) — a Sale checking a source stays on the
+   chat instead of losing it behind a new tab. Only ever holds a PDF: browsers have no
+   in-page renderer for .docx/etc, so those still open in a new tab (see PDF_TITLE there). */
+.doc-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 13, 24, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 200;
+  animation: fade-up 0.2s var(--ease) both;
+}
+.doc-preview-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 900px;
+  height: 100%;
+  max-height: 880px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-h);
+  border-radius: calc(var(--radius) + 4px);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+.doc-preview-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.doc-preview-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.doc-preview-action {
+  flex-shrink: 0;
+  display: flex;
+  padding: 6px;
+  color: var(--text-3);
+  border-radius: 6px;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.doc-preview-action:hover { color: var(--text-1); background: var(--bg-3); }
+.doc-preview-iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #525659;
+}
 
 /* Seed accounts for dev — click to auto-fill the form. Only rendered when import.meta.env.DEV. */
 .login-devbox { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; padding: 12px; background: var(--bg-2); border: 1px dashed var(--border); border-radius: var(--radius-sm); }
@@ -5040,13 +5113,16 @@ code {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 8px 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .chat-widget-msg--user {
   align-self: flex-end;
   color: #fff;
-  background: var(--grad-primary);
+  background: var(--grad-wide);
   border-color: transparent;
+  box-shadow: 0 3px 12px rgba(0,80,239,0.3);
 }
 
 .chat-widget-input {

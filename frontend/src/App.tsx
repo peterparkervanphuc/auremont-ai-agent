@@ -7,6 +7,7 @@ import { useAuth } from "./hooks/useAuth";
 import { Landing } from "./routes/Landing";
 import { Home } from "./routes/Home";
 import { Login } from "./routes/sale/Login";
+import { Register } from "./routes/Register";
 import { SalePage } from "./routes/sale/SalePage";
 import { CustomerChatPage } from "./routes/CustomerChatPage";
 import { CategoryDetailPage } from "./routes/sale/CategoryDetailPage";
@@ -178,6 +179,7 @@ function App() {
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
       <Route path="/chat/*" element={<ChatRoute />} />
       <Route path="*" element={<AppShell />} />
     </Routes>

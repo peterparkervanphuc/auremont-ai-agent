@@ -70,6 +70,21 @@ def needs_document_retrieval(query: str) -> bool:
     )
 
 
+def names_specific_document_topic(query: str) -> bool:
+    """True only for the keyword-matched half of `needs_document_retrieval` above — a
+    query that names something (policy, discount, legal, price list...) that should live
+    in an ingested document, as opposed to `needs_document_retrieval`'s generic catch-all
+    (True for almost anything that isn't an inventory question, including a bare "tư vấn
+    giúp em" with nothing to look up yet).
+
+    Used to decide whether zero retrieval hits means "genuinely missing data, say so
+    plainly" versus "nothing specific was asked for, let the model have a normal
+    conversation instead" — see agent_pipeline._retrieve.
+    """
+    normalized = strip_diacritics(query)
+    return any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
+
+
 # Signals that an anonymous visitor is past general curiosity and into a sales-closing
 # question — this is the one moment the customer chat flow (backend/routers/customer_chat.py)
 # withholds the real answer and shows the register/login gate instead. Keyword matching,

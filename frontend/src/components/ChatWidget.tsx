@@ -123,6 +123,7 @@ export function ChatWidget() {
       requires_hitl: false,
       hitl_confirmed: false,
       emotion: null,
+      quick_replies: null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
@@ -158,6 +159,7 @@ export function ChatWidget() {
           requires_hitl: false,
           hitl_confirmed: false,
           emotion: null,
+          quick_replies: null,
           created_at: new Date().toISOString(),
         },
       ]);
@@ -248,14 +250,35 @@ export function ChatWidget() {
                 </div>
               ) : (
                 <div className="chat-widget-messages" ref={scrollRef}>
-                  {messages.map((m) => (
-                    <div
-                      key={m.id}
-                      className={`chat-widget-msg ${m.sender === "sale" || m.sender === "customer" ? "chat-widget-msg--user" : ""}`}
-                    >
-                      {m.content}
-                    </div>
-                  ))}
+                  {messages.map((m, index) => {
+                    const isLastMessage = index === messages.length - 1;
+                    const showQuickReplies =
+                      !isSale && isLastMessage && sessionStatus === "bot_handling" && !!m.quick_replies?.length;
+                    return (
+                      <div key={m.id}>
+                        <div
+                          className={`chat-widget-msg ${m.sender === "sale" || m.sender === "customer" ? "chat-widget-msg--user" : ""}`}
+                        >
+                          {m.content}
+                        </div>
+                        {showQuickReplies && (
+                          <div className="chat-quick-replies">
+                            {m.quick_replies?.map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                className="chat-quick-reply"
+                                disabled={loading}
+                                onClick={() => sendMessage(option)}
+                              >
+                                {option}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                   {loading && (
                     <div className="chat-widget-msg">
                       <LoaderIcon size={14} className="icon-spin" />

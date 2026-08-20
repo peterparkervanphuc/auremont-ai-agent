@@ -23,7 +23,7 @@ from backend.repositories.chat_session import (
     list_waiting_sessions,
     return_to_bot,
 )
-from backend.repositories.message import create_message, list_messages_for_session
+from backend.repositories.message import create_message, history_for_pipeline, list_messages_for_session
 from backend.repositories.user import get_user_by_id
 from backend.schemas.message import MessageResponse
 from backend.schemas.sale_live import LiveInboxEntry, SaleLiveMessageRequest, SaleSuggestResponse
@@ -155,7 +155,15 @@ async def suggest(
     if last_customer_message is None:
         return SaleSuggestResponse(draft="")
 
+    # Everything except the message being used as the query itself — same "history is
+    # what came before" contract as customer_chat.py/sale_chat.py, just sliced out of an
+    # already-fetched list here instead of fetched separately before persisting a new one.
+    history = history_for_pipeline([m for m in messages if m is not last_customer_message])
     result = agent_pipeline.run_pipeline(
-        last_customer_message.content, project_id=session.project_id, db=db, clearance=DocumentVisibility.INTERNAL
+        last_customer_message.content,
+        project_id=session.project_id,
+        db=db,
+        clearance=DocumentVisibility.INTERNAL,
+        history=history,
     )
     return SaleSuggestResponse(draft=result.draft_answer)

@@ -113,6 +113,7 @@ def index_document_chunks(
                 "visibility": visibility,
                 "title": title,
                 "page": chunk.page,
+                "y_position": chunk.y_position,
                 "chunk_index": chunk.index,
                 "content": chunk.text,
                 "category": category,
@@ -206,3 +207,40 @@ def update_document_vector_metadata(
         )
     except Exception as exc:
         raise VectorStoreError(f"Could not update vector metadata for document {document_id}.") from exc
+
+
+def update_document_vector_visibility(document_id: int, visibility: str) -> None:
+    """Synchronise `visibility` for every existing chunk of one document — the field
+    `rag_service._visibility_condition` filters on, so this is what actually makes an
+    Admin's "Nội bộ" -> "Công khai" (or back) change in DocumentsTab.tsx take effect for
+    customer-facing (PUBLIC clearance) retrieval.
+
+    Separate from `update_document_vector_metadata` above (not folded into it): that one
+    runs from the classification-approval flow, which has review_status/legal_status/
+    category on hand already; the standalone visibility toggle only ever has `visibility`
+    itself, and fetching the other three just to satisfy that function's signature would
+    add a DB round trip for nothing. Same "does not re-embed, payload-only" shape either
+    way.
+    """
+    try:
+        client = get_qdrant_client()
+        if not client.collection_exists(settings.qdrant_collection):
+            return
+
+        client.set_payload(
+            collection_name=settings.qdrant_collection,
+            payload={"visibility": visibility},
+            points=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="document_id",
+                            match=models.MatchValue(value=document_id),
+                        )
+                    ]
+                )
+            ),
+            wait=True,
+        )
+    except Exception as exc:
+        raise VectorStoreError(f"Could not update vector visibility for document {document_id}.") from exc

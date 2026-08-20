@@ -96,7 +96,7 @@ def stub_pipeline(monkeypatch):
     monkeypatch.setattr(
         agent_pipeline,
         "run_pipeline",
-        lambda query, project_id=None, db=None, clearance=None: PipelineResult(
+        lambda query, project_id=None, db=None, clearance=None, history=None: PipelineResult(
             draft_answer=f"Trả lời cho: {query}",
             citations=[],
             verifier_score=0.9,

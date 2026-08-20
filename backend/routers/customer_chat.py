@@ -27,7 +27,12 @@ from backend.repositories.chat_session import (
 )
 from backend.repositories.feedback import delete_feedback_for_session
 from backend.repositories.hitl_log import delete_hitl_logs_for_session
-from backend.repositories.message import create_message, delete_messages_for_session, list_messages_for_session
+from backend.repositories.message import (
+    create_message,
+    delete_messages_for_session,
+    history_for_pipeline,
+    list_messages_for_session,
+)
 from backend.repositories.user import create_user, get_user_by_email
 from backend.schemas.customer import (
     AnonymousSessionResponse,
@@ -61,12 +66,23 @@ _HUMAN_REQUEST_GATE_MESSAGE = (
     "Để kết nối bạn với chuyên viên tư vấn, bạn vui lòng đăng ký/đăng nhập tài khoản nhé — "
     "mình sẽ báo ngay cho chuyên viên sau khi bạn hoàn tất."
 )
-# Shown once a logged-in customer's session flips to WAITING_SALE — the one moment the AI
-# stops answering and a live Sale takes over (see the status branching in ask_in_customer_session).
+# Shown once a logged-in customer's session flips to WAITING_SALE via the AI itself
+# detecting the need (needs_human_handoff keyword match in ask_in_customer_session) — the
+# "phần này liên quan đến..." framing states WHY it's handing off, which only makes sense
+# when the AI is the one deciding to; see _HANDOFF_DIRECT_REQUEST_MESSAGE below for the
+# other trigger (the customer asking directly), which needs no such justification.
 _HANDOFF_NOTICE_MESSAGE = (
     "Dạ phần này liên quan đến chính sách bán hàng chi tiết, em xin phép kết nối anh/chị với "
     "chuyên viên tư vấn ngay bây giờ ạ. Chuyên viên sẽ đọc lại toàn bộ nội dung mình vừa trao "
     "đổi nên anh/chị không cần nhắc lại từ đầu."
+)
+# Shown when the customer themselves asks for a human — the "Gặp chuyên viên tư vấn" button
+# (request_human below). Explaining "vì phần này liên quan đến chính sách..." here would be
+# inventing a reason that isn't true: they asked directly, nothing about their last message
+# triggered this.
+_HANDOFF_DIRECT_REQUEST_MESSAGE = (
+    "Dạ vâng, em xin phép kết nối anh/chị với chuyên viên tư vấn ngay bây giờ ạ. Chuyên viên "
+    "sẽ đọc lại toàn bộ nội dung mình vừa trao đổi nên anh/chị không cần nhắc lại từ đầu."
 )
 # Shown when the customer explicitly leaves the live handoff — either they asked to (see
 # `return_to_ai` below), or the Sale ended it (`sale_live.end`, mirrored into this session).
@@ -213,6 +229,11 @@ async def ask_in_customer_session(
     _resolve_customer_asker(db, session, user, x_visitor_token)
     set_title_if_empty(db, session, payload.content)
 
+    # Fetched BEFORE persisting the new customer turn below, specifically so it excludes
+    # that turn — run_pipeline's `history` is "everything before this question", and the
+    # question itself is passed separately.
+    history = history_for_pipeline(list_messages_for_session(db, session_id))
+
     create_message(db, session_id, sender=MessageSender.CUSTOMER, content=payload.content)
 
     if session.status != SessionStatus.BOT_HANDLING:
@@ -237,6 +258,9 @@ async def ask_in_customer_session(
     # here, let me connect you properly") — RESPECTFUL for all of them; only the real
     # pipeline branch can also land on HAPPY/REGRETFUL, from `result.emotion`.
     emotion: MessageEmotion | None = MessageEmotion.RESPECTFUL
+    # Only the real pipeline branch below ever fills this in — a gate/handoff message is
+    # fixed copy, never a discovery question with options to tap.
+    quick_replies: list[str] = []
 
     if is_anonymous and needs_registration_gate(payload.content):
         gate = "closing_intent"
@@ -260,7 +284,7 @@ async def ask_in_customer_session(
     else:
         started = time.perf_counter()
         result = agent_pipeline.run_pipeline(
-            payload.content, project_id=session.project_id, db=db, clearance=DocumentVisibility.PUBLIC
+            payload.content, project_id=session.project_id, db=db, clearance=DocumentVisibility.PUBLIC, history=history
         )
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         used_cache = result.used_cache
@@ -278,6 +302,7 @@ async def ask_in_customer_session(
             verifier_score, requires_hitl = result.verifier_score, result.requires_hitl
             faithfulness, answer_relevancy = result.faithfulness, result.answer_relevancy
             emotion = MessageEmotion(result.emotion) if result.emotion else None
+            quick_replies = result.quick_replies
 
     log_event(
         "customer.query",
@@ -306,6 +331,7 @@ async def ask_in_customer_session(
         faithfulness=faithfulness,
         answer_relevancy=answer_relevancy,
         emotion=emotion,
+        quick_replies=quick_replies,
     )
 
     response = CustomerAskResponse.model_validate(message)
@@ -334,7 +360,11 @@ async def request_human(
     if session.status == SessionStatus.BOT_HANDLING:
         enter_waiting_queue(db, session)
         message = create_message(
-            db, session_id, sender=MessageSender.AGENT, content=_HANDOFF_NOTICE_MESSAGE, emotion=MessageEmotion.RESPECTFUL
+            db,
+            session_id,
+            sender=MessageSender.AGENT,
+            content=_HANDOFF_DIRECT_REQUEST_MESSAGE,
+            emotion=MessageEmotion.RESPECTFUL,
         )
         log_event("customer.handoff.requested", session_id=session_id, customer_id=user.id)
     else:
@@ -347,7 +377,11 @@ async def request_human(
             None,
         )
         message = prior_notice or create_message(
-            db, session_id, sender=MessageSender.AGENT, content=_HANDOFF_NOTICE_MESSAGE, emotion=MessageEmotion.RESPECTFUL
+            db,
+            session_id,
+            sender=MessageSender.AGENT,
+            content=_HANDOFF_DIRECT_REQUEST_MESSAGE,
+            emotion=MessageEmotion.RESPECTFUL,
         )
 
     response = CustomerAskResponse.model_validate(message)

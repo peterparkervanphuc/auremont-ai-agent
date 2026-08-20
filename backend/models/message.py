@@ -31,6 +31,14 @@ class Message(Base):
     # or an older row from before this column existed) reads as a neutral idle pose.
     emotion = Column(String(20), nullable=True)
 
+    # Short reply options for the customer to tap instead of typing, e.g. ["Để ở", "Đầu
+    # tư"] — only ever set on a PUBLIC-clearance AGENT message where the model itself
+    # decided the question it just asked has a natural short-list of answers (see
+    # SYSTEM_INSTRUCTION_PUBLIC/ConsultAnswer in backend/ai/prompts.py). NULL everywhere
+    # else: a Sale/customer's own message, an INTERNAL answer, a canned gate/notice, or a
+    # row from before this column existed.
+    quick_replies = Column(JSON, nullable=True)
+
     verifier_score = Column(Float, nullable=True)  # Overall Verifier score: min(faithfulness, relevancy)
     # The two component scores behind verifier_score, kept apart for the Admin dashboard:
     # low faithfulness means invented figures, low relevancy means retrieval fetched the wrong

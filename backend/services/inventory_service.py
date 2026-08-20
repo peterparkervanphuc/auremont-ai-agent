@@ -67,6 +67,20 @@ class InventoryApiError(Exception):
     """Lost connection to, or a bad response from, the internal inventory API."""
 
 
+class InventoryProjectUnresolvedError(InventoryApiError):
+    """Not an API failure — the API was never called. The session names no project and
+    INVENTORY_PROJECT_MAP has no '*' catch-all, so there is genuinely no way to know
+    *which* project's stock to check.
+
+    Kept as its own subclass (still an InventoryApiError, so any old `except
+    InventoryApiError` still catches it) specifically so agent_pipeline._tool_call can
+    tell "the inventory API is down" apart from "ask which project first" — those two
+    situations read as completely different messages to a customer: one is a system
+    hiccup to apologise for and retry later, the other is a perfectly normal follow-up
+    question a real Sale would also ask.
+    """
+
+
 @dataclass
 class InventoryUnit:
     unit_code: str
@@ -92,11 +106,12 @@ def lookup_inventory(project_id: str | None, query: str) -> list[InventoryUnit]:
     the inventory. Conflating the two would show the Sale "Tạm thời không tra được tồn kho"
     while the API is perfectly healthy and the correct answer is simply "sold out".
 
-    Raises `InventoryApiError` only when data genuinely cannot be fetched from the API.
+    Raises `InventoryProjectUnresolvedError` (a project no one can resolve — see that
+    class) or `InventoryApiError` when data genuinely cannot be fetched from the API.
     """
     api_project_id = resolve_api_project_id(project_id)
     if api_project_id is None:
-        raise InventoryApiError(
+        raise InventoryProjectUnresolvedError(
             "No inventory project id: the session carries no project and "
             "INVENTORY_PROJECT_MAP defines no '*' catch-all."
         )
@@ -118,7 +133,7 @@ def resolve_api_project_id(project_id: str | None) -> str | None:
     `subdivision`. Sending the slug through unmapped is a guaranteed 404.
 
     Returns None only when nothing can be resolved — no project on the session and no
-    catch-all configured — which the caller turns into `InventoryApiError`.
+    catch-all configured — which `lookup_inventory` turns into `InventoryProjectUnresolvedError`.
     """
     mapping = _project_map()
 

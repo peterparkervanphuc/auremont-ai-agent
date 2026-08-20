@@ -134,6 +134,8 @@ def test_returns_expected_shape_and_normalized_score(qdrant):
             "title": "bang-gia.pdf",
             "content": "Giá căn hộ tham khảo.",
             "page": 3,
+            "y_position": None,
+            "project_id": None,
             "score": 1.0,
         }
     ]

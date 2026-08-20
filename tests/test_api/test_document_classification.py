@@ -77,12 +77,18 @@ def client(db_session, admin):
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_current_user] = lambda: admin
     # API tests exercise the DB contract; Qdrant is tested independently.
-    original_sync = documents_router.update_document_vector_metadata
+    original_metadata_sync = documents_router.update_document_vector_metadata
+    original_visibility_sync = documents_router.update_document_vector_visibility
+    original_clear_cache = documents_router.clear_cache
     documents_router.update_document_vector_metadata = lambda *_args, **_kwargs: None
+    documents_router.update_document_vector_visibility = lambda *_args, **_kwargs: None
+    documents_router.clear_cache = lambda: None
 
     yield TestClient(app)
 
-    documents_router.update_document_vector_metadata = original_sync
+    documents_router.update_document_vector_metadata = original_metadata_sync
+    documents_router.update_document_vector_visibility = original_visibility_sync
+    documents_router.clear_cache = original_clear_cache
     app.dependency_overrides.clear()
 
 
@@ -221,6 +227,87 @@ def test_classifying_an_unknown_document_returns_404(client):
             "category": "other",
             "legal_status": "unknown",
         },
+    )
+
+    assert response.status_code == 404
+
+
+# --- Changing visibility must reach Qdrant, not just MySQL — rag_service's retrieval
+# filter reads the payload it baked in at ingestion time, so a stale payload means the
+# dropdown in DocumentsTab.tsx silently has no effect on what customers can retrieve. ---
+
+
+def test_changing_visibility_syncs_the_vector_store(client, db_session, admin):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Zurich_VHOP_ThongTinDuAn_Full.pdf"),
+        uploaded_by=admin.id,
+    )
+    calls = []
+    documents_router.update_document_vector_visibility = lambda doc_id, visibility: calls.append((doc_id, visibility))
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/visibility",
+        json={"visibility": "public"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["visibility"] == "public"
+    assert calls == [(document.id, "public")]
+
+
+def test_changing_visibility_clears_the_semantic_cache(client, db_session, admin):
+    """Otherwise a question cached while this document was still internal keeps serving
+    that stale answer forever after it goes public — the cache has no idea anything about
+    this specific document changed, so the only correct move is clearing all of it."""
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Zurich_VHOP_ThongTinDuAn_Full.pdf"),
+        uploaded_by=admin.id,
+    )
+    calls = []
+    documents_router.clear_cache = lambda: calls.append("cleared")
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/visibility",
+        json={"visibility": "public"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert calls == ["cleared"]
+
+
+def test_visibility_sync_failure_returns_503(client, db_session, admin):
+    from backend.services.vector_store_service import VectorStoreError
+
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Zurich_VHOP_ThongTinDuAn_Full.pdf"),
+        uploaded_by=admin.id,
+    )
+
+    def _boom(*_args, **_kwargs):
+        raise VectorStoreError("Qdrant unreachable")
+
+    documents_router.update_document_vector_visibility = _boom
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/visibility",
+        json={"visibility": "public"},
+    )
+
+    assert response.status_code == 503
+    # The DB write is not rolled back — retrieval still uses the pre-change value
+    # (visibility stays "internal" in Qdrant too), so nothing is served inconsistently;
+    # only the Admin needs to know the toggle didn't fully take effect.
+    db_session.refresh(document)
+    assert document.visibility == "public"
+
+
+def test_changing_visibility_for_an_unknown_document_returns_404(client):
+    response = client.patch(
+        "/api/v1/documents/999999/visibility",
+        json={"visibility": "public"},
     )
 
     assert response.status_code == 404

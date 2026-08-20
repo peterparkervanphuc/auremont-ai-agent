@@ -21,21 +21,70 @@ export class CustomerApiError extends Error {
   }
 }
 
+function isAuthenticatedCustomer(): boolean {
+  return Boolean(localStorage.getItem("access_token")) && localStorage.getItem("role") === "customer";
+}
+
 function authHeaders(): HeadersInit {
   const token = localStorage.getItem("access_token");
-  const role = localStorage.getItem("role");
-  if (token && role === "customer") return { Authorization: `Bearer ${token}` };
+  if (isAuthenticatedCustomer()) return { Authorization: `Bearer ${token}` };
 
   const visitor = getVisitorSession();
   return visitor ? { "X-Visitor-Token": visitor.visitorToken } : {};
 }
 
-async function customerFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+function buildHeaders(options: RequestInit): Headers {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
   for (const [key, value] of Object.entries(authHeaders())) headers.set(key, value);
+  return headers;
+}
 
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+// Same silent-refresh-and-retry-once pattern as api/client.ts, duplicated rather than shared
+// (see the file-level comment above on why this client stays separate) — an access token
+// expiring mid-conversation must not surface as a failed send. Only reachable for a logged-in
+// customer: an anonymous visitor has no tokens to refresh, so a 401 there falls straight
+// through to a real failure.
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function refreshAccessToken(): Promise<boolean> {
+  const refreshToken = localStorage.getItem("refresh_token");
+  if (!refreshToken) return false;
+
+  const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  }).catch(() => null);
+
+  if (!response?.ok) return false;
+
+  const data = (await response.json()) as { access_token: string; refresh_token: string };
+  localStorage.setItem("access_token", data.access_token);
+  localStorage.setItem("refresh_token", data.refresh_token);
+  return true;
+}
+
+/** Both tokens are dead — drop them so the header falls back to whatever visitor cache (if
+ * any) exists, instead of keeping stale credentials around that would just 401 again. */
+function clearCustomerSession(): void {
+  ["access_token", "refresh_token", "role", "username"].forEach((k) => localStorage.removeItem(k));
+}
+
+async function customerFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  let response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers: buildHeaders(options) });
+
+  if (response.status === 401 && isAuthenticatedCustomer()) {
+    refreshInFlight ??= refreshAccessToken().finally(() => {
+      refreshInFlight = null;
+    });
+
+    if (await refreshInFlight) {
+      response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers: buildHeaders(options) });
+    } else {
+      clearCustomerSession();
+    }
+  }
 
   if (!response.ok) {
     const body = await response.json().catch(() => null);

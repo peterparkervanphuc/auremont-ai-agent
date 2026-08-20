@@ -41,6 +41,8 @@ export interface Citation {
   document_id: number;
   title: string;
   page: number | null;
+  /** PDF points from the page's top — see CitationList.tsx's withPageAnchor. */
+  y_position: number | null;
 }
 
 export interface AnswerImage {
@@ -61,6 +63,9 @@ export interface MessageResponse {
   /** Derived server-side from the audit trail; never sent by this client. */
   hitl_confirmed: boolean;
   emotion: MessageEmotion | null;
+  /** Short reply options to tap instead of typing — only ever set on a customer-facing
+   * AGENT message asking a discovery question with a natural short list of answers. */
+  quick_replies: string[] | null;
   created_at: string;
 }
 
