@@ -103,10 +103,12 @@ def test_sale_consultation_journey(sale_headers):
         f"{API}/sale/sessions/{session_id}/messages",
         json={"content": "Giá căn 2PN?"},
         headers=sale_headers,
-        timeout=30,
+        # The live journey includes retrieval plus multiple external Gemini calls;
+        # provider latency can legitimately exceed the shorter CRUD timeout.
+        timeout=60,
     )
-    # agent_pipeline hiện vẫn là TODO stub -> 500 là trạng thái đã biết, không phải
-    # lỗi hồi quy. Chỉ khi pipeline chạy được mới kiểm tiếp phần feedback.
+    # A provider failure may still surface as 500; when the pipeline succeeds, verify
+    # the rest of the persisted-message and feedback journey as well.
     if answer.status_code == 201:
         message_id = answer.json()["id"]
 
@@ -129,7 +131,7 @@ def test_sale_consultation_journey(sale_headers):
 
 
 def test_admin_document_journey(admin_headers):
-    """Upload tài liệu → đổi phân quyền RBAC → xoá."""
+    """Legacy raw-text registration stays quarantined until real ingestion, then deletes."""
     ingest = httpx.post(
         f"{API}/documents/ingest",
         json={"title": f"E2E doc {uuid.uuid4().hex[:6]}.txt", "raw_text": "Bảng giá căn 2PN: 3.5 tỷ."},
@@ -142,15 +144,15 @@ def test_admin_document_journey(admin_headers):
     listed = httpx.get(f"{API}/documents", headers=admin_headers, timeout=15).json()
     assert document_id in [d["id"] for d in listed]
 
-    # Mặc định INTERNAL để tài liệu chưa gán nhãn không lọt ra ngoài.
+    # Legacy /ingest only registers a PENDING row; it must not be publicised as if
+    # parse/chunk/embed/conflict processing had completed.
     visibility = httpx.patch(
         f"{API}/documents/{document_id}/visibility",
         json={"visibility": "public"},
         headers=admin_headers,
         timeout=15,
     )
-    assert visibility.status_code == 200, visibility.text
-    assert visibility.json()["visibility"] == "public"
+    assert visibility.status_code == 409, visibility.text
 
     assert httpx.delete(f"{API}/documents/{document_id}", headers=admin_headers, timeout=15).status_code == 204
 

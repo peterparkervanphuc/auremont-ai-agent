@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from backend.core.enums import DocumentReviewStatus, DocumentStatus
+from backend.core.enums import DocumentReviewStatus, DocumentStatus, LegalStatus
 from backend.models.document import Document
 from backend.schemas.document import (
     DocumentClassificationUpdate,
@@ -51,8 +51,19 @@ def list_documents(db: Session) -> list[Document]:
     return db.query(Document).order_by(Document.created_at.desc()).all()
 
 
-def get_document(db: Session, doc_id: int) -> Document | None:
-    return db.query(Document).filter(Document.id == doc_id).first()
+def get_document(
+    db: Session,
+    doc_id: int,
+    *,
+    for_update: bool = False,
+) -> Document | None:
+    query = db.query(Document).filter(Document.id == doc_id)
+    if for_update:
+        # A locking read under MySQL is current, but SQLAlchemy can otherwise hand
+        # back an older instance already present in the identity map. Refresh it so
+        # decisions made after waiting for the row lock use the committed state.
+        query = query.populate_existing().with_for_update()
+    return query.first()
 
 
 def list_completed_siblings(db: Session, project_id: str | None, exclude_id: int) -> list[Document]:
@@ -100,13 +111,22 @@ def update_document_status(db: Session, doc_id: int, status: str) -> Document:
     return document
 
 
-def update_document_visibility(db: Session, doc_id: int, visibility: str) -> Document:
-    document = get_document(db, doc_id)
+def update_document_visibility(
+    db: Session,
+    doc_id: int,
+    visibility: str,
+    *,
+    commit: bool = True,
+) -> Document:
+    document = get_document(db, doc_id, for_update=not commit)
     if document is None:
         raise ValueError(f"Document with id={doc_id} not found.")
     document.visibility = visibility
-    db.commit()
-    db.refresh(document)
+    if commit:
+        db.commit()
+        db.refresh(document)
+    else:
+        db.flush()
     return document
 
 
@@ -130,7 +150,10 @@ def list_documents_pending_review(db: Session) -> list[Document]:
 
     return (
         db.query(Document)
-        .filter(Document.review_status == DocumentReviewStatus.PENDING)
+        .filter(
+            Document.review_status == DocumentReviewStatus.PENDING,
+            Document.status == DocumentStatus.COMPLETED,
+        )
         .order_by(Document.created_at.desc())
         .all()
     )
@@ -141,25 +164,63 @@ def update_document_classification(
     document_id: int,
     payload: DocumentClassificationUpdate,
     reviewed_by: int,
+    *,
+    commit: bool = True,
 ) -> Document:
     """Record the Admin's confirmed or corrected classification metadata."""
 
-    document = get_document(db, document_id)
+    document = get_document(db, document_id, for_update=True)
     if document is None:
         raise ValueError(f"Document with id={document_id} not found.")
+    if document.review_status != DocumentReviewStatus.PENDING:
+        raise ValueError(f"Document {document_id} classification has already been reviewed.")
+    if document.status != DocumentStatus.COMPLETED:
+        raise ValueError(f"Document {document_id} is not ready for classification review (status={document.status}).")
 
-    # model_dump chỉ trả field có trong schema update, không ảnh hưởng các field
-    # kỹ thuật như title, status, file_path hay uploaded_by.
-    for field_name, value in payload.model_dump().items():
+    updates = payload.model_dump(exclude_unset=True)
+    if payload.category != document.category:
+        raise ValueError("Changing document category requires quarantine, conflict rescan and controlled re-indexing.")
+
+    scope_fields = ("subdivision_names", "building_codes", "unit_types")
+    changed_scope_fields = [
+        field_name
+        for field_name in scope_fields
+        if field_name in updates
+        and _normalised_string_set(updates[field_name]) != _normalised_string_set(getattr(document, field_name))
+    ]
+    if changed_scope_fields:
+        raise ValueError(
+            "Changing conflict-scope metadata requires a controlled conflict rescan: "
+            f"{', '.join(changed_scope_fields)}."
+        )
+
+    # PATCH semantics: omitted optional fields retain the classifier suggestion instead
+    # of being silently overwritten with None/default values.
+    for field_name, value in updates.items():
         setattr(document, field_name, value)
+
+    if document.legal_status in {
+        LegalStatus.NOT_YET_EFFECTIVE,
+        LegalStatus.EXPIRED,
+        LegalStatus.REPEALED,
+        LegalStatus.REPLACED,
+    }:
+        document.is_current = False
 
     document.review_status = DocumentReviewStatus.APPROVED
     document.reviewed_by = reviewed_by
     document.reviewed_at = utcnow()
 
-    db.commit()
-    db.refresh(document)
+    if commit:
+        db.commit()
+        db.refresh(document)
+    else:
+        db.flush()
     return document
+
+
+def _normalised_string_set(values: list[str] | None) -> frozenset[str]:
+    return frozenset(" ".join(value.split()).casefold() for value in (values or []) if value.strip())
 
 
 def update_document_classification_suggestion(

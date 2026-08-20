@@ -23,11 +23,6 @@ const CATEGORIES: Array<[DocumentCategory, string]> = [
   ["other", "Khác"],
 ];
 
-function asList(value: string): string[] | null {
-  const values = value.split(",").map((item) => item.trim()).filter(Boolean);
-  return values.length ? values : null;
-}
-
 function asText(values: string[] | null): string {
   return values?.join(", ") ?? "";
 }
@@ -129,12 +124,16 @@ export function DocumentReviewTab() {
             <section className="review-form">
               <h3 className="section-title">{selected.title}</h3>
               {selected.classification_reason && <p className="review-reason">Đề xuất hệ thống: {selected.classification_reason}</p>}
+              <p className="review-reason">
+                Loại tài liệu và phạm vi conflict được khóa ở bước duyệt. Nếu các trường này sai,
+                hãy giữ tài liệu trong quarantine và chạy quy trình re-index/rescan thay vì chỉ đổi metadata.
+              </p>
               <div className="review-grid">
-                <label>Loại tài liệu<select value={draft.category} onChange={(event) => update("category", event.target.value as DocumentCategory)}>{CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                <label>Loại tài liệu<select value={draft.category} disabled>{CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                 <label>Phân loại phụ<input value={draft.subcategory ?? ""} onChange={(event) => update("subcategory", event.target.value || null)} /></label>
-                <label>Phân khu (cách nhau dấu phẩy)<input value={asText(draft.subdivision_names)} onChange={(event) => update("subdivision_names", asList(event.target.value))} /></label>
-                <label>Tòa / block (cách nhau dấu phẩy)<input value={asText(draft.building_codes)} onChange={(event) => update("building_codes", asList(event.target.value))} /></label>
-                <label>Loại căn (cách nhau dấu phẩy)<input value={asText(draft.unit_types)} onChange={(event) => update("unit_types", asList(event.target.value))} /></label>
+                <label>Phân khu<input value={asText(draft.subdivision_names)} readOnly /></label>
+                <label>Tòa / block<input value={asText(draft.building_codes)} readOnly /></label>
+                <label>Loại căn<input value={asText(draft.unit_types)} readOnly /></label>
                 <label>Phạm vi áp dụng<input value={draft.applicable_area ?? ""} onChange={(event) => update("applicable_area", event.target.value || null)} /></label>
                 <label>Hiệu lực từ<input type="date" value={draft.effective_date ?? ""} onChange={(event) => update("effective_date", event.target.value || null)} /></label>
                 <label>Hết hiệu lực<input type="date" value={draft.expiry_date ?? ""} onChange={(event) => update("expiry_date", event.target.value || null)} /></label>
@@ -151,7 +150,7 @@ export function DocumentReviewTab() {
               </div>}
 
               <label className="review-summary">Tóm tắt<textarea value={draft.document_summary ?? ""} onChange={(event) => update("document_summary", event.target.value || null)} rows={4} /></label>
-              <button className="btn btn-primary" type="button" onClick={() => void approve()} disabled={saving}>{saving ? <LoaderIcon size={16} className="icon-spin" /> : <CheckIcon size={16} />} Duyệt và cho phép AI sử dụng</button>
+              <button className="btn btn-primary" type="button" onClick={() => void approve()} disabled={saving}>{saving ? <LoaderIcon size={16} className="icon-spin" /> : <CheckIcon size={16} />} {draft.category === "legal_document" && ["expired", "repealed", "replaced"].includes(draft.legal_status) ? "Duyệt và giữ ngoài RAG" : "Duyệt và cho phép AI sử dụng"}</button>
             </section>
           )}
         </div>

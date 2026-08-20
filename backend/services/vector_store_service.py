@@ -144,7 +144,8 @@ def update_document_vector_metadata(
     review_status: str,
     legal_status: str,
     category: str,
-    is_current: bool = True,
+    visibility: str,
+    is_current: bool,
 ) -> None:
     """Synchronise approval metadata for every existing chunk of one document.
 
@@ -163,6 +164,7 @@ def update_document_vector_metadata(
                 "legal_status": legal_status,
                 "is_current": is_current,
                 "category": category,
+                "visibility": visibility,
             },
             points=models.FilterSelector(
                 filter=models.Filter(

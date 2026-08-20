@@ -1,3 +1,4 @@
+import logging
 import time
 from pathlib import Path
 
@@ -11,14 +12,22 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.core.audit import log_event
 from backend.core.config import settings
 from backend.core.deps import require_role
-from backend.core.enums import DocumentStatus, DocumentVisibility, UserRole
+from backend.core.enums import (
+    DocumentReviewStatus,
+    DocumentStatus,
+    DocumentVisibility,
+    LegalStatus,
+    UserRole,
+)
 from backend.core.minio_client import presigned_get_url
 from backend.core.mysql_client import get_db
+from backend.models.document import Document
 from backend.models.user import User
 from backend.repositories.document import (
     create_document,
@@ -45,6 +54,8 @@ from backend.services.vector_store_service import (
     delete_document_vectors,
     update_document_vector_metadata,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/documents",
@@ -205,8 +216,9 @@ async def upload_document(
     finally:
         await file.close()
 
+    duplicate_quarantined = document.status == DocumentStatus.BLOCKED
     log_event(
-        "document.ingest.success",
+        "document.ingest.duplicate_quarantined" if duplicate_quarantined else "document.ingest.success",
         document_id=document.id,
         status=document.status,
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
@@ -214,7 +226,11 @@ async def upload_document(
     return IngestResponse(
         document_id=document.id,
         status=document.status,
-        message="Document uploaded and indexed successfully.",
+        message=(
+            "Document was quarantined because identical content already exists."
+            if duplicate_quarantined
+            else "Document uploaded and indexed successfully."
+        ),
     )
 
 
@@ -288,16 +304,108 @@ async def set_document_visibility(
     payload: VisibilityUpdateRequest,
     db: Session = Depends(get_db),
 ) -> DocumentResponse:
+    document = get_document(db, document_id, for_update=True)
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with id={document_id} not found.",
+        )
+    if document.status != DocumentStatus.COMPLETED:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Document visibility can change only after ingestion completes (status={document.status}).",
+        )
+    if document.visibility == payload.visibility:
+        db.commit()
+        db.refresh(document)
+        return document
+
+    previous_metadata = _vector_metadata_snapshot(document)
+    loosening_access = (
+        document.visibility == DocumentVisibility.INTERNAL and payload.visibility == DocumentVisibility.PUBLIC
+    )
+
+    if loosening_access:
+        # Phase 1 is fail-closed: quarantine the points while holding the row lock,
+        # then commit PUBLIC in MySQL. No failure can expose the document early.
+        quarantine_attempted = False
+        try:
+            quarantine_attempted = True
+            update_document_vector_metadata(
+                document.id,
+                review_status=document.review_status,
+                legal_status=document.legal_status,
+                category=document.category,
+                visibility=document.visibility,
+                is_current=False,
+            )
+            update_document_visibility(db, document_id, payload.visibility, commit=False)
+            db.commit()
+        except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
+            try:
+                if quarantine_attempted:
+                    _restore_document_vector_metadata(document.id, previous_metadata)
+            finally:
+                db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Document visibility was not changed because retrieval could not be safely quarantined.",
+            ) from exc
+
+        # Phase 2 obtains a fresh row lock after the commit. A conflict/relation that
+        # ran between phases may have set is_current=false; publishing that fresh value
+        # prevents this request from reactivating a newly blocked document.
+        try:
+            document = get_document(db, document_id, for_update=True)
+            if document is None:  # pragma: no cover - deletion also needs the same row lock
+                raise ValueError(f"Document with id={document_id} not found.")
+            update_document_vector_metadata(
+                document.id,
+                review_status=document.review_status,
+                legal_status=document.legal_status,
+                category=document.category,
+                visibility=document.visibility,
+                is_current=_safe_vector_current(document),
+            )
+            db.commit()
+            db.refresh(document)
+            return document
+        except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
+            # Do not reactivate from a stale snapshot. Qdrant remains quarantined (or
+            # the timed-out write already applied the fresh DB state), both fail-safe.
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Visibility changed in MySQL, but retrieval remains quarantined until synchronisation is retried.",
+            ) from exc
+
+    # Tightening PUBLIC -> INTERNAL reaches Qdrant before the MySQL commit while the
+    # row remains locked. If either operation fails, any partial Qdrant result is more
+    # restrictive than the still-public DB state and is therefore safe.
     try:
-        return update_document_visibility(
+        document = update_document_visibility(
             db,
             document_id,
             payload.visibility,
+            commit=False,
         )
-    except ValueError as exc:
+        update_document_vector_metadata(
+            document.id,
+            review_status=document.review_status,
+            legal_status=document.legal_status,
+            category=document.category,
+            visibility=document.visibility,
+            is_current=_safe_vector_current(document),
+        )
+        db.commit()
+        db.refresh(document)
+        return document
+    except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
+        db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document visibility was not fully synchronised; retrieval remains on the more restrictive value.",
         ) from exc
 
 
@@ -364,29 +472,125 @@ async def approve_document_classification(
 ) -> DocumentResponse:
     """Correct metadata and approve a file, which is what makes it retrievable by RAG."""
 
+    # Phase 1 writes the approved metadata in a quarantined state while holding the
+    # document row lock. Even a provider timeout that actually applied the payload
+    # cannot make a not-yet-committed approval retrievable.
     try:
+        existing = get_document(db, document_id, for_update=True)
+        if existing is None:
+            raise ValueError(f"Document with id={document_id} not found.")
         document = update_document_classification(
             db,
             document_id=document_id,
             payload=payload,
             reviewed_by=admin.id,
+            commit=False,
         )
         update_document_vector_metadata(
             document.id,
             review_status=document.review_status,
             legal_status=document.legal_status,
             category=document.category,
+            visibility=document.visibility,
+            is_current=False,
         )
-        return document
+        db.commit()
     except ValueError as exc:
+        db.rollback()
+        if any(
+            marker in str(exc)
+            for marker in (
+                "already been reviewed",
+                "not ready for classification review",
+                "requires quarantine, conflict rescan and controlled re-indexing",
+                "requires a controlled conflict rescan",
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
-    except VectorStoreError as exc:
-        # The DB approval is committed first; leaving Qdrant pending is safe
-        # because RAG will keep excluding it until the sync is retried.
+    except (VectorStoreError, SQLAlchemyError) as exc:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Document was approved but vector metadata could not be synced.",
+            detail="Document classification was not approved because retrieval metadata could not be synchronised.",
         ) from exc
+
+    # Phase 2 re-locks and refreshes after the commit. A conflict or relation may have
+    # quarantined the document between phases; publishing the fresh is_current value
+    # cannot undo that newer decision.
+    try:
+        document = get_document(db, document_id, for_update=True)
+        if document is None:  # pragma: no cover - deletion also requires the row lock
+            raise ValueError(f"Document with id={document_id} not found.")
+        update_document_vector_metadata(
+            document.id,
+            review_status=document.review_status,
+            legal_status=document.legal_status,
+            category=document.category,
+            visibility=document.visibility,
+            is_current=_safe_vector_current(document),
+        )
+        db.commit()
+        db.refresh(document)
+        return document
+    except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document was approved in MySQL, but retrieval remains quarantined until synchronisation is retried.",
+        ) from exc
+
+
+def _vector_metadata_snapshot(document: Document) -> dict[str, str | bool]:
+    return {
+        "review_status": str(document.review_status),
+        "legal_status": str(document.legal_status),
+        "category": str(document.category),
+        "visibility": str(document.visibility),
+        "is_current": bool(document.is_current),
+    }
+
+
+def _safe_vector_current(document: Document) -> bool:
+    """Clamp cross-store publication to states retrieval is allowed to expose."""
+    return bool(
+        document.is_current
+        and document.status == DocumentStatus.COMPLETED
+        and document.review_status != DocumentReviewStatus.REJECTED
+        and document.legal_status
+        not in {
+            LegalStatus.NOT_YET_EFFECTIVE,
+            LegalStatus.EXPIRED,
+            LegalStatus.REPEALED,
+            LegalStatus.REPLACED,
+        }
+    )
+
+
+def _restore_document_vector_metadata(
+    document_id: int,
+    metadata: dict[str, str | bool],
+) -> None:
+    """Best-effort compensation while the document row remains locked."""
+    try:
+        update_document_vector_metadata(
+            document_id,
+            review_status=str(metadata["review_status"]),
+            legal_status=str(metadata["legal_status"]),
+            category=str(metadata["category"]),
+            visibility=str(metadata["visibility"]),
+            is_current=bool(metadata["is_current"]),
+        )
+    except VectorStoreError:
+        # The MySQL rollback below leaves the document pending. The audit command
+        # reports any Qdrant drift if this best-effort restoration also fails.
+        logger.exception(
+            "Could not restore vector metadata after classification approval failed.",
+            extra={"event": "document.classification.vector_compensation_failed", "document_id": document_id},
+        )
