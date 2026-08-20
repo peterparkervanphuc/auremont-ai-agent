@@ -289,7 +289,11 @@ def _merge(existing: list[Lesson], new: Lesson) -> list[Lesson]:
             merged.append(lesson)
 
     if not reinforced:
-        merged.append(new)
+        # Prepended, not appended: `time.time()` on Windows only ticks every ~15ms, so a
+        # burst of writes all carry an identical `updated_at`. A stable sort then leaves a
+        # freshly appended lesson last among its equals, evicting it on the very same call
+        # that stored it — it could never survive to be reinforced a second time.
+        merged.insert(0, new)
 
     # Evict by least reinforced, then stalest — a lesson earned once and never again is
     # the cheapest one to lose.
