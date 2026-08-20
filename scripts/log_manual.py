@@ -19,12 +19,12 @@ Examples:
   # Quick interactive mode
   python scripts/log_manual.py
 """
+import argparse
 import json
 import os
-import sys
 import subprocess
-import argparse
-from datetime import datetime, timezone, timedelta
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 VN_TZ = timezone(timedelta(hours=7))

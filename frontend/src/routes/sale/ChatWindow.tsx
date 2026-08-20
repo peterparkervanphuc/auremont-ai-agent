@@ -37,9 +37,9 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
     if (!sessionId) return;
     setError(null);
     api
-.get<MessageResponse[]>(`/sale/sessions/${sessionId}/messages`)
-.then(setMessages)
-.catch(() => setError("Không tải được lịch sử phiên tư vấn."));
+      .get<MessageResponse[]>(`/sale/sessions/${sessionId}/messages`)
+      .then(setMessages)
+      .catch(() => setError("Không tải được lịch sử phiên tư vấn."));
   }, [sessionId]);
 
   // Always scroll to the latest message.

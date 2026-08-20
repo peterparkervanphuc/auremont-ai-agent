@@ -13,13 +13,13 @@ services:
       QDRANT_URL: http://qdrant:6333
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
-      # Dia chi trinh duyet dung de tai anh cong khai. Phai la localhost, khong
-      # phai `minio:9000` — the <img> chay tren may host, khong trong network Docker.
+      # Browser-facing address for loading public images. Must be localhost, not
+      # `minio:9000` — the <img> tag runs on the host machine, not in the Docker network.
       MINIO_PUBLIC_ENDPOINT: localhost:9000
-      # Nguon anh du an (~58MB, khong nam trong git). Backend tai ve MinIO luc
-      # khoi dong. Dat gia tri trong .env — bo trong thi catalogue chay khong anh.
+      # Source of project images (~58MB, not in git). Backend downloads to MinIO at
+      # startup. Set the value in .env — leaving it empty runs the catalogue without images.
       PROJECT_IMAGES_BASE_URL: ${PROJECT_IMAGES_BASE_URL:-}
-      # Mot file .tar.gz chua toan bo anh; mot request thay vi ~180.
+      # A single .tar.gz containing all images; one request instead of ~180.
       PROJECT_IMAGES_ARCHIVE_URL: ${PROJECT_IMAGES_ARCHIVE_URL:-}
     depends_on:
       mysql:
@@ -79,8 +79,8 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
-  # Long-term memory (ho so ghi nho theo tung khach / tung sale). Khong phai nguon
-  # su that: mat Redis thi he thong van tra loi binh thuong, chi kem ca nhan hoa.
+  # Long-term memory (per-customer / per-sale profiles). Not a source of truth:
+  # if Redis is lost, the system still answers normally, just without personalization.
   redis:
     image: redis:7-alpine
     container_name: ai20k_redis
@@ -88,7 +88,7 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    # AOF: ho so ghi nho song qua restart. Mat vai giay cuoi khong sao.
+    # AOF: memory profiles survive restarts. Losing the last few seconds is fine.
     command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
