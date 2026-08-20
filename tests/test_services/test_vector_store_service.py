@@ -182,6 +182,7 @@ def test_index_document_chunks_upserts_expected_payload(qdrant):
         "chunk_index": 0,
         "content": "Gia can 2PN tu 3.5 ty.",
         "content_type": "prose",
+        "y_position": None,
         "category": "other",
         "review_status": "pending",
         "legal_status": "unknown",

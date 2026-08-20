@@ -98,6 +98,12 @@ Sau đó phân loại lỗi và nêu hướng sửa:
 - "next_action": "accept" (đạt), "regenerate" (viết lại thì cứu được),
   "decline" (ngữ cảnh không có dữ liệu, viết lại cũng vô ích).
 
+NGOẠI LỆ QUAN TRỌNG: nếu CÂU TRẢ LỜI là một lời từ chối trung thực — thẳng thắn nói KHÔNG có
+đủ dữ liệu để trả lời đúng điều được hỏi, không bịa số liệu thay thế — thì cho CẢ HAI tiêu chí
+đều 1.0, bất kể câu đó có chứa số liệu hay không. Từ chối đúng lúc khi thiếu dữ liệu là hành vi
+ĐÚNG của hệ thống, không phải câu trả lời kém chất lượng — không chấm thấp chỉ vì nó là câu giao
+tiếp thay vì số liệu cụ thể.
+
 CÂU HỎI:
 {query}
 

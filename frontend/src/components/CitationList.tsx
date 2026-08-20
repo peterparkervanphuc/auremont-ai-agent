@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Citation } from "../types";
-import { DocumentIcon } from "./Icons";
+import { DocumentIcon, ExternalLinkIcon, XIcon } from "./Icons";
 import { fetchDocumentViewUrl } from "../api/projects";
 
 interface Props {
@@ -10,7 +10,24 @@ interface Props {
   label: string;
 }
 
-// Source chips under an answer: one per file.
+const PDF_TITLE = /\.pdf$/i;
+
+// #page=N is a PDF viewer convention (Chrome/Firefox/Edge's built-in viewer, and the
+// <iframe> preview below, both jump straight there) — a plain URL fragment, so it rides
+// along on the signed link without touching its query-string signature. `&zoom=100,0,Y`
+// goes a step further and scrolls to a specific vertical spot ON that page (confirmed
+// against this project's own viewer — see chunking_service.py for where Y comes from):
+// without it, a page with several unrelated sections only lands at the top of the page,
+// which in the compact preview panel below is often nowhere near the cited paragraph.
+function withPageAnchor(url: string, citation: Citation): string {
+  if (!citation.page || !PDF_TITLE.test(citation.title)) return url;
+  const target = `${url}#page=${citation.page}`;
+  return citation.y_position != null ? `${target}&zoom=100,0,${Math.round(citation.y_position)}` : target;
+}
+
+// Source chips under an answer: one per file. Sale/Admin only — a citation click-through
+// to the raw file is a "verify what I'm about to tell the customer" tool for a Sale, not
+// something a customer sees (CustomerChatPage renders no citations at all).
 //
 // The de-duplication is repeated here even though the backend already collapses
 // citations per file, because messages stored before that change still hold one entry
@@ -18,6 +35,7 @@ interface Props {
 // renders whatever was saved. Doing it at render time fixes the history too.
 export function CitationList({ citations, className, label }: Props) {
   const [loadingId, setLoadingId] = useState<number | null>(null);
+  const [preview, setPreview] = useState<{ title: string; url: string } | null>(null);
 
   const seen = new Set<string>();
   const unique = citations.filter((c) => {
@@ -29,12 +47,21 @@ export function CitationList({ citations, className, label }: Props) {
 
   if (unique.length === 0) return null;
 
-  const openDocument = async (documentId: number) => {
+  const openDocument = async (citation: Citation) => {
     if (loadingId !== null) return;
-    setLoadingId(documentId);
+    setLoadingId(citation.document_id);
     try {
-      const url = await fetchDocumentViewUrl(documentId);
-      window.open(url, "_blank", "noopener,noreferrer");
+      const url = await fetchDocumentViewUrl(citation.document_id);
+      const target = withPageAnchor(url, citation);
+      // A PDF renders straight into the page via <iframe> below — no reason to leave the
+      // chat for it. A .docx (or anything else) has no in-browser renderer at all, native
+      // or embedded, so that one still has to go to a new tab (where the browser either
+      // shows or downloads it, whichever it does for that file type).
+      if (PDF_TITLE.test(citation.title)) {
+        setPreview({ title: citation.title, url: target });
+      } else {
+        window.open(target, "_blank", "noopener,noreferrer");
+      }
     } catch {
       // The signed link can fail to generate (file moved, storage hiccup) — worth a
       // console trace for support, not worth a chat bubble interrupting the answer.
@@ -52,13 +79,41 @@ export function CitationList({ citations, className, label }: Props) {
           key={c.title}
           type="button"
           className="chat-citation"
-          onClick={() => openDocument(c.document_id)}
+          onClick={() => openDocument(c)}
           disabled={loadingId === c.document_id}
         >
           <DocumentIcon size={12} />
           {c.title}
         </button>
       ))}
+
+      {preview && (
+        <div className="doc-preview-backdrop" onMouseDown={() => setPreview(null)}>
+          <div className="doc-preview-panel" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="doc-preview-header">
+              <span className="doc-preview-title">{preview.title}</span>
+              <a
+                className="doc-preview-action"
+                href={preview.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Mở trong tab mới"
+              >
+                <ExternalLinkIcon size={15} />
+              </a>
+              <button
+                type="button"
+                className="doc-preview-action"
+                onClick={() => setPreview(null)}
+                aria-label="Đóng"
+              >
+                <XIcon size={16} />
+              </button>
+            </div>
+            <iframe className="doc-preview-iframe" src={preview.url} title={preview.title} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

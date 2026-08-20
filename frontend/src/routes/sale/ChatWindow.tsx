@@ -80,6 +80,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
       requires_hitl: false,
       hitl_confirmed: false,
       emotion: null,
+      quick_replies: null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);

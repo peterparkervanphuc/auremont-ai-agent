@@ -16,6 +16,12 @@ def build_citations(docs: list[dict]) -> list[dict]:
     `Citation` declares a non-nullable `document_id: int` — letting one through becomes a
     ValidationError 500 while serializing the response. `content`/`score` are dropped too,
     since the schema does not accept those fields.
+
+    `page` (and `y_position`, same reasoning) is kept from the FIRST chunk seen for that
+    title — `docs` arrives already ordered by `_rerank`, so that's the chunk the answer is
+    most likely actually drawing from. It lets the citation chip open straight to that
+    spot instead of just the top of the file; later chunks of the same file (different
+    pages) are still collapsed away, same as the title-level dedup above.
     """
     citations: list[dict] = []
     seen: set[str] = set()
@@ -31,6 +37,13 @@ def build_citations(docs: list[dict]) -> list[dict]:
             continue
         seen.add(key)
 
-        citations.append({"document_id": document_id, "title": title})
+        citations.append(
+            {
+                "document_id": document_id,
+                "title": title,
+                "page": doc.get("page"),
+                "y_position": doc.get("y_position"),
+            }
+        )
 
     return citations

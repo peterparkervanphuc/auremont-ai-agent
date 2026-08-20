@@ -36,11 +36,12 @@ from sqlalchemy.orm import Session
 from backend.ai import prompts
 from backend.ai.answer_cleanup import drop_image_denials
 from backend.ai.citations import build_citations
+from backend.ai.intent import names_specific_document_topic
 from backend.ai.intent import needs_document_retrieval as query_needs_documents
 from backend.ai.intent import needs_inventory as query_needs_inventory
 from backend.core import tracing
-from backend.core.enums import DocumentVisibility, MessageEmotion
-from backend.core.gemini_client import generate_text
+from backend.core.enums import DocumentVisibility, MessageEmotion, MessageSender
+from backend.core.gemini_client import generate_json, generate_text
 from backend.services import (
     answer_images_service,
     cache_service,
@@ -48,13 +49,29 @@ from backend.services import (
     risk_service,
     verifier_service,
 )
-from backend.services.inventory_service import InventoryApiError, InventoryUnit, lookup_inventory
+from backend.services.inventory_service import (
+    InventoryApiError,
+    InventoryProjectUnresolvedError,
+    InventoryUnit,
+    lookup_inventory,
+)
 from backend.services.rag_service import RetrievalError, retrieve
 from backend.utils.text import strip_markdown
 
 logger = logging.getLogger(__name__)
 
 RETRIEVAL_TOP_K = 5
+
+# Caps how much prior conversation is threaded into a turn — see run_pipeline's `history`
+# param. Every message beyond this many (most-recent-first) is dropped: unbounded history
+# would both blow the prompt-size/latency budget on a long-running chat and dilute the
+# LLM's attention on the actual current question with turns that stopped being relevant.
+# 16 (8 exchanges), not fewer: SYSTEM_INSTRUCTION_PUBLIC now has the model ask discovery
+# questions ONE AT A TIME rather than bundled ("để ở hay đầu tư" then, separately,
+# "ngân sách bao nhiêu") — that takes more turns to gather the same info than before, so a
+# tighter cap would drop the customer's own early answers (budget, ở/đầu tư) before the
+# conversation even gets to a recommendation.
+MAX_HISTORY_MESSAGES = 16
 
 # Regenerate exactly once when the Verifier scores low. Each loop costs two more LLM
 # calls (generate + verify); more than that blows the sub-3-second field response budget.
@@ -70,6 +87,17 @@ EMPTY_STATE_MESSAGE_PUBLIC = (
     "lại thông tin liên hệ để được chuyên viên hỗ trợ nhé."
 )
 INVENTORY_UNAVAILABLE_MESSAGE = "Tạm thời không tra được tồn kho."
+# Distinct from the message above on purpose: this is not the inventory API being down,
+# it's a genuinely normal follow-up question ("which project?") that a real Sale would
+# also ask — see InventoryProjectUnresolvedError. Wording it like a system apology
+# ("temporarily unable to check") would be actively misleading here.
+INVENTORY_NEEDS_PROJECT_MESSAGE_INTERNAL = (
+    "Phiên chat này chưa gắn với dự án cụ thể — nêu rõ tên dự án hoặc phân khu trong câu hỏi để tra đúng tồn kho nhé."
+)
+INVENTORY_NEEDS_PROJECT_MESSAGE_PUBLIC = (
+    "Dạ bên em hiện có nhiều dự án khác nhau, anh chị đang quan tâm dự án nào để em kiểm tra "
+    "tồn kho chính xác giúp mình ạ?"
+)
 LOW_CONFIDENCE_MESSAGE_INTERNAL = "Không đủ thông tin, liên hệ Admin."
 LOW_CONFIDENCE_MESSAGE_PUBLIC = (
     "Auremont chưa đủ thông tin để trả lời chính xác câu này. Bạn có thể hỏi cụ thể hơn, "
@@ -102,6 +130,14 @@ def _low_confidence_message(clearance: DocumentVisibility) -> str:
     return LOW_CONFIDENCE_MESSAGE_PUBLIC if clearance == DocumentVisibility.PUBLIC else LOW_CONFIDENCE_MESSAGE_INTERNAL
 
 
+def _inventory_needs_project_message(clearance: DocumentVisibility) -> str:
+    return (
+        INVENTORY_NEEDS_PROJECT_MESSAGE_PUBLIC
+        if clearance == DocumentVisibility.PUBLIC
+        else INVENTORY_NEEDS_PROJECT_MESSAGE_INTERNAL
+    )
+
+
 @dataclass
 class PipelineResult:
     draft_answer: str
@@ -131,6 +167,10 @@ class PipelineResult:
     # router) decides the emotion itself (customer_chat.py's gate/handoff branches, which
     # never reach the pipeline at all, set it directly rather than through this field).
     emotion: str | None = None
+    # Short reply options the customer can tap — only ever non-empty on a PUBLIC-clearance
+    # answer (see prompts.ConsultAnswer); Sale/INTERNAL answers keep this empty, they're
+    # generated as plain text.
+    quick_replies: list[str] = field(default_factory=list)
 
 
 class PipelineState(TypedDict, total=False):
@@ -138,9 +178,6 @@ class PipelineState(TypedDict, total=False):
 
     query: str
     project_id: str | None
-    # Short-term working memory: earlier turns of this session, oldest first. Empty for the
-    # first question in a session and whenever the caller has no DB session.
-    conversation_history: list[prompts.ConversationTurn]
     # Long-term memory, already rendered by memory_service.format_profile.
     memory_profile: str
     # Lessons the agent learned from its own earlier mistakes, already rendered by
@@ -151,6 +188,11 @@ class PipelineState(TypedDict, total=False):
     # Admin (full access), PUBLIC for the customer chat flow (anonymous or logged-in
     # customer). See backend/routers/customer_chat.py.
     clearance: DocumentVisibility
+    # Prior turns of the SAME session, oldest first, already capped to
+    # MAX_HISTORY_MESSAGES by run_pipeline — [{"sender": "customer"|"agent"|"sale",
+    # "content": str}, ...]. Read-only past this point: only prompts.build_prompt (via
+    # _generate) and _retrieve's query-expansion touch it; no node ever writes it back.
+    history: list[dict]
     retrieved_docs: list[dict]
     needs_inventory: bool
     needs_document_retrieval: bool
@@ -158,6 +200,7 @@ class PipelineState(TypedDict, total=False):
     inventory_failed: bool
     draft_answer: str
     citations: list[dict]
+    quick_replies: list[str]
     verifier_score: float
     faithfulness: float
     answer_relevancy: float
@@ -181,6 +224,11 @@ class PipelineState(TypedDict, total=False):
     # When set, this replaces draft_answer as the final answer: one of the edge-case
     # messages above. A notice means the flow stops here and goes no further.
     notice: str
+    # Overrides the default REGRETFUL avatar mood a notice gets in run_pipeline — most
+    # notices really are bad news (empty state, low confidence, an API down), but the
+    # "which project do you mean?" notice from _tool_call is an ordinary, pleasant
+    # follow-up question, not an apology, so it sets RESPECTFUL here instead.
+    notice_emotion: MessageEmotion
     used_cache: bool
 
 
@@ -190,13 +238,14 @@ class PipelineState(TypedDict, total=False):
 def _cache_check(state: PipelineState) -> dict[str, Any]:
     """Check the Semantic Cache before spending any tokens.
 
-    Skipped entirely once the session has history. The cache matches on the question text
-    alone, so a follow-up like "còn 3PN thì sao?" would collide with the same words asked in
-    a completely different conversation and serve back an answer about another project.
-    Mid-conversation questions depend most on context and are exactly the ones the cache
-    cannot key correctly — so they take the full path.
+    Skipped entirely once there is conversation history. `cache_service` keys purely on
+    the bare query text — a context-dependent follow-up ("giá bao nhiêu?") answered under
+    one customer's history must never be replayed verbatim to a different customer whose
+    "giá bao nhiêu?" means something else. Only a conversation's opening question, which
+    carries no such ambiguity, is eligible for the cache — see the matching guard around
+    `_store_cache`'s call site in `run_pipeline`.
     """
-    if state.get("conversation_history"):
+    if state.get("history"):
         tracing.step("cache_check", hit=False, skipped="has_history")
         return {"used_cache": False}
 
@@ -225,6 +274,81 @@ def _cache_check(state: PipelineState) -> dict[str, Any]:
     }
 
 
+# A query long/specific enough to name its own topic ("Tôi xem giá Sapphire 2") needs no
+# help from history — folding in prior context here only pollutes the embedding with an
+# unrelated topic from a few turns back (a live bug: "...thế có hồ bơi không" folded into
+# "Tôi xem giá Sapphire 2" buried the actual Sapphire 2 price docs under pool-amenity ones,
+# since "hồ bơi" had nothing to do with the topic the customer just switched to). Folding is
+# reserved for genuinely short queries that can't carry a topic on their own.
+_SHORT_QUERY_WORD_LIMIT = 4
+
+# Vietnamese continuation openers pivot to a new angle on whatever topic is already live,
+# WITHOUT naming it — "Thế tôi muốn mua để đầu tư thì sao?" carries exactly as little topic
+# signal on its own as a bare "có", but at 9 words it sails past _SHORT_QUERY_WORD_LIMIT.
+# Word count alone doesn't catch these, so a query starting with one of these needs folding
+# too, regardless of length.
+_CONTINUATION_PREFIXES = ("thế ", "vậy ", "còn ", "nếu ")
+
+
+def _needs_history_fold(query: str) -> bool:
+    if len(query.split()) <= _SHORT_QUERY_WORD_LIMIT:
+        return True
+    return query.strip().lower().startswith(_CONTINUATION_PREFIXES)
+
+
+def _retrieval_query(query: str, history: list[dict] | None) -> str:
+    """Fold recent turns into the string that gets embedded for retrieval — a bare
+    follow-up ("giá bao nhiêu?", "có", "thế ... thì sao?") carries almost no signal on its
+    own. Two distinct patterns need covering, and neither alone is enough:
+
+    1. The topic a HUMAN set with their own last substantive messages — any non-AGENT
+       sender counts (customer, or sale replying mid-handoff or drafting via the /suggest
+       co-pilot), not just "whoever has this call's clearance", which stops matching who's
+       actually asking once /suggest runs a CUSTOMER's message at INTERNAL clearance for
+       Sale's benefit. Up to the last TWO such turns, not just one: a single turn back can
+       itself be another referential follow-up ("Khu này có bãi đỗ xe không?") that doesn't
+       repeat the actual standing topic (project name, budget) set further back — a live
+       bug where "Thế tôi muốn mua để đầu tư thì sao?", three turns after "...ngân sách 3
+       tỷ, muốn mua The Pavilion", lost both the project name and the budget because only
+       the immediately preceding (unrelated, parking-related) turn got folded in.
+    2. A topic the AI ITSELF just introduced by asking about it ("...các khoản chiết khấu
+       này không ạ?" -> "có"). Folding in only pattern 1 drops this entirely — a short
+       affirmative/negative reply to the AI's own question then retrieves against
+       whatever topic was live several turns earlier, which reads as the AI forgetting the
+       question it just asked. Only counts when that AI turn actually ends in "?" (a
+       closing statement or plain greeting carries no topic worth folding in — a short
+       reply isn't answering a question that wasn't asked), and only its tail is kept (not
+       the whole paragraph before it), since the trailing question is what a short reply is
+       responding to and a long AI reply would otherwise dilute the embedding with prose.
+
+    Only applied when `query` itself needs it (see _needs_history_fold) — a query that
+    already names its own topic is self-sufficient and must not be diluted by whatever was
+    being discussed a turn earlier.
+
+    Deliberately shallow — up to two turns back, not a scan of the whole history — so an
+    old, since-resolved topic much earlier in the conversation doesn't keep dragging
+    retrieval toward it. Does not affect keyword classification
+    (needs_inventory/needs_document_retrieval) or what the LLM sees as "the question" — see
+    _retrieve and build_prompt, both of which keep using the bare `query`.
+    """
+    if not history or not _needs_history_fold(query):
+        return query
+
+    human_turns = [turn.get("content", "") for turn in history if turn.get("sender") != MessageSender.AGENT]
+    recent_human_turns = list(dict.fromkeys(human_turns[-2:]))
+
+    last_turn = history[-1]
+    last_turn_content = last_turn.get("content", "")
+    ai_question_tail = (
+        last_turn_content[-160:]
+        if last_turn.get("sender") == MessageSender.AGENT and last_turn_content.rstrip().endswith("?")
+        else ""
+    )
+
+    parts = [part for part in (ai_question_tail, *recent_human_turns) if part]
+    return f"{' '.join(parts)} {query}" if parts else query
+
+
 def _retrieve(state: PipelineState) -> dict[str, Any]:
     """Pull context from Qdrant and decide whether the inventory API is needed.
 
@@ -235,6 +359,9 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     query = state["query"]
     clearance = state.get("clearance", DocumentVisibility.INTERNAL)
 
+    # Keyword classification stays on the bare current-turn query — expanding it here
+    # would let an old turn's inventory/document keywords leak into a question that no
+    # longer needs them. Only the string actually embedded for retrieval is expanded.
     needs_inventory = query_needs_inventory(query)
     needs_document_retrieval = query_needs_documents(query)
     hits: list[dict] = []
@@ -255,7 +382,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
             # vector. Intent detection above deliberately keeps reading the raw query: the
             # question at hand decides whether inventory is needed, not the one before it.
             hits = retrieve(
-                prompts.build_retrieval_query(query, state.get("conversation_history") or []),
+                _retrieval_query(query, state.get("history")),
                 clearance,
                 state.get("project_id"),
                 RETRIEVAL_TOP_K,
@@ -287,9 +414,17 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
                 document_ids=[hit.get("document_id") for hit in hits],
             )
 
-    if not hits and not needs_inventory:
-        # No documents ingested yet and the question is not an inventory lookup ->
-        # Empty State, not a system error.
+    if not hits and not needs_inventory and names_specific_document_topic(query):
+        # Zero hits for a query that named something specific (policy, discount, legal,
+        # price list...) -> genuinely missing data, Empty State rather than a system error.
+        #
+        # The `names_specific_document_topic` check matters: `needs_document_retrieval`
+        # above is True for almost any non-inventory question, including a bare "tư vấn
+        # giúp em" with nothing to look up yet — retrieval running (and finding nothing)
+        # on a query that never named anything specific isn't "missing data", it's an
+        # opening message. Falling through to Generate with empty context lets the model
+        # have a normal conversation (SYSTEM_INSTRUCTION_PUBLIC has it ask about needs)
+        # instead of a canned "not enough information" wall on hello.
         tracing.step("empty_state")
         return {"notice": _empty_state_message(clearance)}
 
@@ -303,18 +438,31 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
 def _tool_call(state: PipelineState) -> dict[str, Any]:
     """Function Calling into the internal inventory API for constantly changing data.
 
-    A session with no project is NOT short-circuited here. Sessions stopped carrying a
-    project when the picker was dropped from session creation, so bailing on a missing
-    `project_id` made every live-inventory question answer "Tạm thời không tra được tồn
-    kho" while the API was perfectly healthy. `lookup_inventory` resolves the project to
-    query (see `resolve_api_project_id`) and raises `InventoryApiError` only when it
-    genuinely cannot pick one.
+    Sessions carry no project by default (the picker was dropped from session creation),
+    so a missing `project_id` is the common case, not a rare one — see
+    InventoryProjectUnresolvedError, caught separately below. A genuine `InventoryApiError`
+    (network/API actually down) still degrades to answering from whatever documents were
+    also retrieved, falling back to the generic "temporarily unavailable" notice only when
+    there is nothing else to answer from.
     """
     project_id = state.get("project_id")
+    clearance = state.get("clearance", DocumentVisibility.INTERNAL)
     started = time.perf_counter()
 
     try:
         units = lookup_inventory(project_id, state["query"])
+    except InventoryProjectUnresolvedError:
+        # Not an API failure — nothing to log/alert on. This is a normal, frequent shape
+        # of question (no project on the session, several projects in the catalogue) with
+        # a deterministic, correct response: ask which project, same as a real Sale would.
+        # Always the clarifying question here, even if documents were also retrieved —
+        # answering an inventory question from an unrelated project's policy doc would be
+        # worse than asking.
+        return {
+            "inventory_failed": True,
+            "notice": _inventory_needs_project_message(clearance),
+            "notice_emotion": MessageEmotion.RESPECTFUL,
+        }
     except InventoryApiError:
         logger.warning(
             "Inventory lookup failed for project %s.",
@@ -357,18 +505,25 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         state.get("needs_inventory", False),
         state.get("inventory_failed", False),
         state.get("images") or [],
-        state.get("conversation_history") or [],
+        state.get("history") or [],
         state.get("memory_profile") or "",
         is_public=is_public,
         correction=state.get("verifier_feedback") or "",
         lessons=state.get("reflection_lessons") or "",
     )
-    system_instruction = prompts.SYSTEM_INSTRUCTION_PUBLIC if is_public else prompts.SYSTEM_INSTRUCTION
+    quick_replies: list[str] = []
     attempt = state.get("retry_count", 0) + 1
     started = time.perf_counter()
 
     try:
-        answer = generate_text(prompt, system_instruction=system_instruction)
+        if is_public:
+            # Structured output on the SAME call (schema-constrained decoding), not a
+            # second LLM call — see prompts.ConsultAnswer. Sale/INTERNAL has no quick-reply
+            # UI to feed, so it stays on the simpler plain-text generate_text.
+            parsed = generate_json(prompt, prompts.ConsultAnswer, system_instruction=prompts.SYSTEM_INSTRUCTION_PUBLIC)
+        else:
+            parsed = None
+            answer = generate_text(prompt, system_instruction=prompts.SYSTEM_INSTRUCTION)
     except Exception:
         logger.exception(
             "Answer generation failed.",
@@ -381,6 +536,17 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         )
         tracing.step("generate", attempt=attempt, ok=False)
         return {"notice": GENERATION_ERROR_MESSAGE}
+
+    if is_public:
+        if parsed is None:
+            # Same fail-closed posture as verifier_service: a judge/consult call that
+            # returns nothing parseable is a generation failure, not an empty answer.
+            logger.warning(
+                "Consult LLM returned no parseable answer.",
+                extra={"event": "pipeline.generate.unparseable", "project_id": state.get("project_id")},
+            )
+            return {"notice": GENERATION_ERROR_MESSAGE}
+        answer, quick_replies = parsed.text, parsed.quick_replies
 
     # Strip before checking for emptiness: an answer made up of only Markdown characters
     # renders as blank on screen, so it must fall into the error branch instead of
@@ -408,7 +574,24 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         with_lessons=bool(state.get("reflection_lessons")),
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
     )
-    return {"draft_answer": answer, "citations": build_citations(docs)}
+    return {"draft_answer": answer, "citations": _citations_for(docs), "quick_replies": quick_replies}
+
+
+def _citations_for(docs: list[dict]) -> list[dict]:
+    """Citations are only worth showing when they point at one coherent source.
+
+    An unscoped search (no `project_id` on the session/query) can return top hits from
+    several unrelated projects — the exact shape of query that also makes the model ask
+    "which project/tower do you mean?" instead of actually answering from any of them.
+    Chips naming 2-3 different projects' files under a reply that never engaged with any
+    of them read as noise at best and as false grounding at worst, so this drops citations
+    entirely rather than picking one project's files to keep — there's no principled way
+    to know which project (if any) the answer actually used.
+    """
+    project_ids = {doc.get("project_id") for doc in docs if doc.get("project_id")}
+    if len(project_ids) > 1:
+        return []
+    return build_citations(docs)
 
 
 def _verify(state: PipelineState) -> dict[str, Any]:
@@ -420,8 +603,14 @@ def _verify(state: PipelineState) -> dict[str, Any]:
     """
     context = [doc["content"] for doc in state.get("retrieved_docs") or []]
     context.extend(prompts.format_unit_for_verifier(unit) for unit in state.get("inventory_units") or [])
+    # Same history-expanded query as retrieval (see _retrieval_query) — otherwise the judge
+    # sees a bare "có" as "the question" next to a correct, on-topic draft answer about
+    # chiết khấu, marks it irrelevant to "có", and the pipeline discards a good answer for
+    # the low-confidence fallback. The judge needs the same context a human reading the
+    # transcript would have: what "có" is actually saying yes to.
+    query = _retrieval_query(state["query"], state.get("history"))
     started = time.perf_counter()
-    result = verifier_service.score_answer(state["query"], state.get("draft_answer", ""), context)
+    result = verifier_service.score_answer(query, state.get("draft_answer", ""), context)
 
     # The label the eval flywheel is built on. `feedback` is deliberately absent: it can
     # quote the answer text, and traces are written to a file with a much looser handling
@@ -527,6 +716,16 @@ def _route_after_generate(state: PipelineState) -> str:
     if state.get("images") and answer_images_service.wants_images(state["query"]):
         return "risk_check"
 
+    # No documents, no inventory units — the only way Generate is reached with both empty
+    # is the "nothing specific was asked for" fallthrough in _retrieve (see
+    # names_specific_document_topic there). Verify scores faithfulness against context
+    # that doesn't exist, which is always 0.0 regardless of answer quality — that would
+    # send every ordinary "tư vấn giúp em" opener through a retry and then the low-
+    # confidence wall, exactly the canned-answer problem this fallthrough exists to avoid.
+    # Same reasoning as the images branch above: nothing here for Verify to check.
+    if not state.get("retrieved_docs") and not state.get("inventory_units"):
+        return "risk_check"
+
     return "verify"
 
 
@@ -620,7 +819,7 @@ def run_pipeline(
     query: str,
     project_id: str | None = None,
     db: Session | None = None,
-    conversation_history: list[prompts.ConversationTurn] | None = None,
+    history: list[dict] | None = None,
     memory_profile: str = "",
     clearance: DocumentVisibility = DocumentVisibility.INTERNAL,
 ) -> PipelineResult:
@@ -634,10 +833,13 @@ def run_pipeline(
     callers with no session (unit tests driving the pipeline directly) keep working; those
     simply get an answer with no photos attached.
 
-    `conversation_history` is the session's short-term working memory — earlier turns,
-    oldest first — which lets the agent resolve a follow-up that names nothing ("còn 3PN
-    thì sao?"). Omitting it degrades to the previous stateless behaviour rather than
-    failing, so every existing caller keeps working unchanged.
+    `history` is the session's prior turns, oldest first — [{"sender": ..., "content":
+    ...}, ...] — from BEFORE this `query` (the caller persists the new turn separately;
+    passing it here too would just show the model its own current question twice). `None`/
+    empty means either a brand-new session or a caller that hasn't been updated to fetch
+    it yet — both read identically to the pipeline: no context, cache eligible, exactly
+    the old behaviour. Capped to the most recent `MAX_HISTORY_MESSAGES` here so a caller
+    can pass a whole session's history without thinking about the limit itself.
 
     Never raises under any circumstance — the router calls this directly to build the
     response message, so every failure must collapse into a readable `PipelineResult`.
@@ -647,7 +849,7 @@ def run_pipeline(
 
     tracing.start_run(query_len=len(query), project_id=project_id, clearance=str(clearance))
     try:
-        return _run_traced(query, project_id, db, conversation_history, memory_profile, clearance)
+        return _run_traced(query, project_id, db, history, memory_profile, clearance)
     finally:
         # In a `finally` so a trace is still written when the graph raises. The outcome
         # fields are read off the result inside `_run_traced`; this only guarantees the
@@ -659,7 +861,7 @@ def _run_traced(
     query: str,
     project_id: str | None,
     db: Session | None,
-    conversation_history: list[prompts.ConversationTurn] | None,
+    history: list[dict] | None,
     memory_profile: str,
     clearance: DocumentVisibility,
 ) -> PipelineResult:
@@ -667,10 +869,10 @@ def _run_traced(
     initial: PipelineState = {
         "query": query.strip(),
         "project_id": project_id,
-        "conversation_history": conversation_history or [],
         "memory_profile": memory_profile,
         "reflection_lessons": _lessons_for(query),
         "clearance": clearance,
+        "history": (history or [])[-MAX_HISTORY_MESSAGES:],
         "retrieved_docs": [],
         "citations": [],
         "verifier_score": 0.0,
@@ -721,12 +923,13 @@ def _run_traced(
             # needs to diagnose, and "which failure mode" is the whole diagnosis.
             failure_mode=state.get("failure_mode"),
             verifier_feedback=state.get("verifier_feedback"),
-            emotion=MessageEmotion.REGRETFUL,
+            emotion=state.get("notice_emotion", MessageEmotion.REGRETFUL),
         )
 
     result = PipelineResult(
         draft_answer=state.get("draft_answer", ""),
         citations=state.get("citations") or [],
+        quick_replies=state.get("quick_replies") or [],
         verifier_score=state.get("verifier_score", 0.0),
         requires_hitl=state.get("requires_hitl", False),
         used_cache=state.get("used_cache", False),
@@ -745,13 +948,13 @@ def _run_traced(
         emotion=MessageEmotion.HAPPY,
     )
 
-    # Mid-conversation answers are never written to the cache, for the mirror of the reason
-    # `_cache_check` skips reading it: the key would be the bare follow-up text, while the
-    # answer only makes sense given the turns before it. Storing "còn 3PN thì sao?" would
-    # poison the cache for every later session asking those same words.
+    # Mid-conversation answers are never written to the cache, mirroring the read-side
+    # guard in `_cache_check`: the key would be the bare follow-up text, while the answer
+    # only makes sense given the turns before it. Storing "còn 3PN thì sao?" would poison
+    # the cache for every later session asking those same words.
     # `memory_profile` is excluded for the same reason: the answer was shaped by one
     # person's remembered preferences, so it is not a safe generic answer to replay.
-    if not result.used_cache and not initial["conversation_history"] and not memory_profile:
+    if not result.used_cache and not initial["history"] and not memory_profile:
         _store_cache(query, result, project_id, clearance)
 
     tracing.set_outcome(

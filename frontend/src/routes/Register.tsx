@@ -1,28 +1,21 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api } from "../../api/client";
-import { useAuth } from "../../hooks/useAuth";
-import type { UserRole } from "../../types";
-import { EyeIcon, EyeOffIcon, LoaderIcon, LogInIcon, AuremontLogoIcon } from "../../components/Icons";
+import { customerApi } from "../api/customerChat";
+import { getVisitorSession, clearVisitorSession } from "../hooks/useVisitorToken";
+import { useAuth } from "../hooks/useAuth";
+import type { TokenResponse } from "../types";
+import { EyeIcon, EyeOffIcon, LoaderIcon, LogInIcon, AuremontLogoIcon } from "../components/Icons";
 
 const HERO_IMAGE_URL =
   "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
 
-interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-}
-
-function decodeRoleFromToken(accessToken: string): UserRole {
-  // backend/core/security.py create_access_token embeds {"role":...} in the JWT payload.
-  const payload = JSON.parse(atob(accessToken.split(".")[1])) as { role: UserRole };
-  return payload.role;
-}
-
-// Shared internal login screen; routes to SALE or ADMIN flow after authentication.
-export function Login() {
-  const [username, setUsername] = useState("");
+// Standalone customer registration screen — a full page, not just the mid-chat gate
+// modal (RegisterGateModal.tsx), so a visitor can create an account straight from the
+// login screen instead of only after being prompted a few messages into a chat. Same
+// POST /customer/register endpoint either way; if the visitor was already chatting
+// anonymously, their in-progress session is claimed here too, exactly like the modal does.
+export function Register() {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,23 +23,26 @@ export function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const canSubmit = Boolean(username.trim() && password) && !loading;
+  const canSubmit = Boolean(email.trim() && password) && !loading;
 
-  // POST /auth/login uses OAuth2PasswordRequestForm, so the body must be
-  // form-urlencoded, not JSON.
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     setError(null);
     setLoading(true);
     try {
-      const body = new URLSearchParams({ username: username.trim(), password });
-      const result = await api.postUrlEncoded<TokenResponse>("/auth/login", body);
-      const role = decodeRoleFromToken(result.access_token);
-      login(result.access_token, result.refresh_token, role, username.trim());
+      const visitor = getVisitorSession();
+      const token = await customerApi.post<TokenResponse>("/customer/register", {
+        email: email.trim(),
+        password,
+        session_id: visitor?.sessionId ?? null,
+        visitor_token: visitor?.visitorToken ?? null,
+      });
+      login(token.access_token, token.refresh_token, token.user.role, token.user.username);
+      clearVisitorSession();
       navigate("/home", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Đăng nhập thất bại");
+      setError(err instanceof Error ? err.message : "Đăng ký thất bại, vui lòng thử lại.");
     } finally {
       setLoading(false);
     }
@@ -59,43 +55,46 @@ export function Login() {
       <div className="login-card">
         <div className="login-logo">
           <AuremontLogoIcon size={36} />
-          <span className="logo-text" style={{ fontSize: "1.25rem" }}>Auremont</span>
+          <span className="logo-text" style={{ fontSize: "1.25rem" }}>
+            Auremont
+          </span>
         </div>
 
-        <h1 className="login-title">Đăng nhập</h1>
-        <p className="login-subtitle">Dùng tài khoản nội bộ Sale hoặc Admin để tiếp tục.</p>
+        <h1 className="login-title">Đăng ký tài khoản</h1>
+        <p className="login-subtitle">Tạo tài khoản khách hàng để lưu lại lịch sử trò chuyện và nhận tư vấn sâu hơn.</p>
 
         <form className="login-form" onSubmit={handleSubmit} noValidate>
           <div className="login-field">
-            <label className="login-label" htmlFor="username">
-              Tên đăng nhập
+            <label className="login-label" htmlFor="register-email">
+              Email
             </label>
             <input
-              id="username"
-              type="text"
+              id="register-email"
+              type="email"
               className="login-input"
-              placeholder="admin"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
+              placeholder="ban@vidu.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
               autoFocus
               disabled={loading}
             />
           </div>
 
           <div className="login-field">
-            <label className="login-label" htmlFor="password">
+            <label className="login-label" htmlFor="register-password">
               Mật khẩu
             </label>
             <div className="login-input-wrap">
               <input
-                id="password"
+                id="register-password"
                 type={showPwd ? "text" : "password"}
                 className="login-input login-input--pwd"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
+                autoComplete="new-password"
+                minLength={8}
                 disabled={loading}
               />
               <button
@@ -108,6 +107,7 @@ export function Login() {
                 {showPwd ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
               </button>
             </div>
+            <span className="field-hint">Tối thiểu 8 ký tự.</span>
           </div>
 
           {error && <div className="login-error">{error}</div>}
@@ -116,20 +116,19 @@ export function Login() {
             {loading ? (
               <>
                 <LoaderIcon size={16} className="icon-spin" />
-                Đang đăng nhập...
+                Đang đăng ký...
               </>
             ) : (
               <>
-                Đăng nhập
+                Đăng ký
                 <LogInIcon size={15} />
               </>
             )}
           </button>
         </form>
 
-        <p className="login-hint">Hệ thống tự chuyển tới màn hình phù hợp theo vai trò tài khoản.</p>
         <p className="login-hint">
-          Là khách hàng, chưa có tài khoản? <Link to="/register">Đăng ký ngay</Link>
+          Đã có tài khoản? <Link to="/login">Đăng nhập</Link>
         </p>
       </div>
     </div>

@@ -7,7 +7,7 @@ replacing run_pipeline outright, so it never actually exercises cache_check -> r
 -> generate -> verify with that history. This file closes that gap: it lets the real
 graph run across two real turns and asserts the second turn's *prompt* — the thing
 generate_text actually receives — contains the first turn's question and answer, in
-Vietnamese, oldest-first, exactly as prompts.format_history renders it.
+Vietnamese, oldest-first, exactly as prompts._format_history renders it.
 """
 
 import pytest
@@ -69,7 +69,7 @@ def wired_pipeline(monkeypatch):
     so every turn reaches risk_check/END rather than the low-confidence branch.
 
     Everything else — cache_check, the LangGraph wiring itself, prompts.build_prompt,
-    prompts.format_history, risk_service.detect_commitment_risk — runs for real.
+    prompts._format_history, risk_service.detect_commitment_risk — runs for real.
     """
     prompts_seen: list[str] = []
 
@@ -121,7 +121,7 @@ def test_second_turn_prompt_carries_the_first_turns_question_and_answer(client, 
 
     assert "LỊCH SỬ HỘI THOẠI" in second_prompt
     assert "Sale: Gia can 2PN?" in second_prompt
-    assert "Trợ lý: Can 2PN gia 3.6 ty dong." in second_prompt
+    assert "Bạn: Can 2PN gia 3.6 ty dong." in second_prompt
     # The current question must still be the one actually being answered now.
     assert "CÂU HỎI CỦA SALE:\nCon 3PN thi sao?" in second_prompt
     # Oldest-first: the prior turn's line precedes the current question.

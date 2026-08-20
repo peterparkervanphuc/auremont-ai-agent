@@ -23,6 +23,7 @@ from backend.repositories.hitl_log import confirmed_message_ids, delete_hitl_log
 from backend.repositories.message import (
     create_message,
     delete_messages_for_session,
+    history_for_pipeline,
     list_messages_for_session,
     list_recent_messages,
 )
@@ -41,12 +42,7 @@ class SaleAskRequest(BaseModel):
     content: str
 
 
-# Three question/answer pairs. Enough for a Sale to build on what was just said without
-# the prompt drifting back into a topic the conversation has already moved off.
-HISTORY_TURN_LIMIT = 6
-
-
-def _conversation_history(db: Session, session_id: int) -> list[prompts.ConversationTurn]:
+def _conversation_history(db: Session, session_id: int) -> list[dict]:
     """The session's short-term working memory, oldest first.
 
     Edge-case notices are dropped rather than replayed. "Không đủ thông tin, liên hệ Admin"
@@ -54,13 +50,12 @@ def _conversation_history(db: Session, session_id: int) -> list[prompts.Conversa
     project; feeding them back as context invites the model to treat "there is no data" as
     an established fact and repeat it after retrieval has since succeeded.
     """
-    turns = []
-    for message in list_recent_messages(db, session_id, HISTORY_TURN_LIMIT):
-        is_sale = message.sender == MessageSender.SALE
-        if not is_sale and message.content in agent_pipeline.NOTICE_MESSAGES:
-            continue
-        turns.append(prompts.ConversationTurn(is_sale=is_sale, content=message.content))
-    return turns
+    messages = [
+        message
+        for message in list_messages_for_session(db, session_id)
+        if message.sender == MessageSender.SALE or message.content not in agent_pipeline.NOTICE_MESSAGES
+    ]
+    return history_for_pipeline(messages)
 
 
 def _owned_session(db: Session, session_id: int, user: User):
@@ -129,9 +124,8 @@ async def ask_in_session(
     session = _owned_session(db, session_id, user)
     set_title_if_empty(db, session, payload.content)
 
-    # Read the short-term memory BEFORE persisting the new question, otherwise the question
-    # being answered comes back as the last "earlier turn" and the model is handed its own
-    # input twice.
+    # Fetched BEFORE persisting the new turn below, so it excludes that turn — same
+    # ordering as customer_chat.py's ask_in_customer_session, for the same reason.
     history = _conversation_history(db, session_id)
 
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
@@ -147,7 +141,7 @@ async def ask_in_session(
         payload.content,
         project_id=session.project_id,
         db=db,
-        conversation_history=history,
+        history=history,
         memory_profile=memory_profile,
     )
     duration_ms = round((time.perf_counter() - started) * 1000, 2)

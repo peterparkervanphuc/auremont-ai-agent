@@ -18,8 +18,8 @@ import { parseServerDate } from "../utils/datetime";
 import {
   ArrowRightIcon,
   ClockIcon,
-  DocumentIcon,
   LoaderIcon,
+  PlusIcon,
   SendIcon,
   UserIcon,
   UsersIcon,
@@ -103,6 +103,15 @@ export function CustomerChatPage() {
           setSessionId(id);
           const history = await customerApi.get<MessageResponse[]>(`/customer/sessions/${id}/messages`);
           if (!cancelled) setMessages(history);
+
+          // A resumed ANONYMOUS conversation (not a brand-new one) only ever lives in this
+          // browser's localStorage — surface the same register/login prompt normally shown
+          // after a few messages (see RegisterGateModal's "turn_limit" copy, which already
+          // says exactly this) right away, instead of waiting for the gate to trigger
+          // naturally or leaving it to a passive banner the visitor can miss entirely.
+          if (!isCustomer && !cancelled && history.length > 0) {
+            setGate("turn_limit");
+          }
         }
       } catch {
         // No existing session yet, or the cached one no longer resolves — start fresh
@@ -184,6 +193,7 @@ export function CustomerChatPage() {
         requires_hitl: false,
         hitl_confirmed: false,
         emotion: null,
+        quick_replies: null,
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, optimisticUser]);
@@ -248,6 +258,31 @@ export function CustomerChatPage() {
     }
   }, [sessionId, returningToAi]);
 
+  // Doesn't delete anything server-side — just drops the local session pointer so the next
+  // message lazily creates a brand-new one (same lazy-create path `ensureSession` already
+  // uses for a first-ever message). A logged-in customer's old sessions stay queryable via
+  // `GET /customer/sessions`, just no longer the one this page resumes; an anonymous
+  // visitor's old session has no such list, so clearing its localStorage cache here is the
+  // only way to stop resuming it.
+  const startNewChat = useCallback(() => {
+    if (loading || messages.length === 0) return;
+    const confirmed = window.confirm(
+      sessionStatus !== "bot_handling"
+        ? "Bắt đầu cuộc trò chuyện mới? Bạn sẽ rời khỏi phiên chat hiện tại."
+        : "Bắt đầu cuộc trò chuyện mới? Đoạn chat hiện tại sẽ không còn hiển thị ở đây nữa.",
+    );
+    if (!confirmed) return;
+
+    if (!isCustomer) clearVisitorSession();
+    setSessionId(null);
+    setSessionStatus("bot_handling");
+    setMessages([]);
+    setGate(null);
+    setError(null);
+    setJustReturnedToAi(false);
+    setInput("");
+  }, [loading, messages.length, sessionStatus, isCustomer]);
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     sendMessage(input);
@@ -306,12 +341,26 @@ export function CustomerChatPage() {
           </div>
         </div>
 
-        {isCustomer && !isLive && (
-          <button className="btn btn-outline chat-request-human-btn" type="button" onClick={requestHuman} disabled={requestingHuman}>
-            {requestingHuman ? <LoaderIcon size={15} className="icon-spin" /> : <UsersIcon size={15} />}
-            Gặp chuyên viên tư vấn
-          </button>
-        )}
+        <div className="chat-topbar-actions">
+          {messages.length > 0 && (
+            <button
+              className="btn btn-outline chat-newconvo-btn"
+              type="button"
+              onClick={startNewChat}
+              disabled={loading}
+              title="Cuộc trò chuyện mới"
+            >
+              <PlusIcon size={15} />
+              Cuộc trò chuyện mới
+            </button>
+          )}
+          {isCustomer && !isLive && (
+            <button className="btn btn-outline chat-request-human-btn" type="button" onClick={requestHuman} disabled={requestingHuman}>
+              {requestingHuman ? <LoaderIcon size={15} className="icon-spin" /> : <UsersIcon size={15} />}
+              Gặp chuyên viên tư vấn
+            </button>
+          )}
+        </div>
       </header>
 
       {sessionStatus === "waiting_sale" && (
@@ -365,9 +414,18 @@ export function CustomerChatPage() {
             </div>
           )}
 
-          {messages.map((m) => {
+          {messages.map((m, index) => {
             const isUser = m.sender === "customer";
             const isSaleAgent = m.sender === "sale";
+            // Options expire once superseded — only the single most recent AI message can
+            // still be answered by tapping instead of typing, and only while the AI (not a
+            // Sale) is the one who'd read the reply.
+            const showQuickReplies =
+              !isUser &&
+              !isSaleAgent &&
+              index === messages.length - 1 &&
+              sessionStatus === "bot_handling" &&
+              !!m.quick_replies?.length;
             return (
               <div key={m.id} className={`chat-message ${isUser ? "chat-message--user" : "chat-message--bot"}`}>
                 <div className={`chat-avatar ${isUser ? "chat-avatar--user" : "chat-avatar--bot"}`}>
@@ -385,20 +443,29 @@ export function CustomerChatPage() {
                   <div className={`chat-bubble ${isUser ? "chat-bubble--user" : "chat-bubble--bot"}`}>
                     <p className="chat-bubble-text">{m.content}</p>
 
-                    {!isUser && m.citations && m.citations.length > 0 && (
-                      <div className="chat-citations">
-                        <span className="chat-citations-label">Nguồn</span>
-                        {[...new Set(m.citations.map((c) => c.title))].map((title) => (
-                          <span key={title} className="chat-citation chat-citation--static">
-                            <DocumentIcon size={12} />
-                            {title}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                    {/* No source citations here, by design — that's a Sale-facing feature
+                        (checking which internal doc backs an answer), not something a customer
+                        should see or click through to the raw file. */}
 
                     {!isUser && m.images && m.images.length > 0 && <AnswerImageStrip images={m.images} />}
                   </div>
+
+                  {showQuickReplies && (
+                    <div className="chat-quick-replies">
+                      {m.quick_replies?.map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          className="chat-quick-reply"
+                          disabled={loading}
+                          onClick={() => sendMessage(option)}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
                   <span className="chat-timestamp">{formatTime(m.created_at)}</span>
                 </div>
               </div>

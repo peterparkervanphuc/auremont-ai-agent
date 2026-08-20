@@ -18,6 +18,7 @@ def create_message(
     completeness: float | None = None,
     failure_mode: str | None = None,
     emotion: MessageEmotion | None = None,
+    quick_replies: list[str] | None = None,
 ) -> Message:
     message = Message(
         session_id=session_id,
@@ -32,6 +33,7 @@ def create_message(
         completeness=completeness,
         failure_mode=failure_mode,
         emotion=emotion,
+        quick_replies=quick_replies or None,
     )
     db.add(message)
     db.commit()
@@ -56,6 +58,15 @@ def list_recent_messages(db: Session, session_id: int, limit: int) -> list[Messa
     """
     rows = db.query(Message).filter(Message.session_id == session_id).order_by(Message.id.desc()).limit(limit).all()
     return list(reversed(rows))
+
+
+def history_for_pipeline(messages: list[Message]) -> list[dict]:
+    """Shape `list_messages_for_session`'s rows into what `agent_pipeline.run_pipeline`'s
+    `history` param expects — plain dicts, not ORM objects, so the pipeline module has no
+    reason to import `Message`/SQLAlchemy at all. Shared by customer_chat.py and
+    sale_chat.py rather than each rolling its own so the shape can't drift between them.
+    """
+    return [{"sender": m.sender, "content": m.content} for m in messages]
 
 
 def get_message(db: Session, message_id: int) -> Message | None:

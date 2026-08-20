@@ -52,7 +52,7 @@ def stub_pipeline(monkeypatch):
     monkeypatch.setattr(
         agent_pipeline,
         "run_pipeline",
-        lambda query, project_id=None, db=None, conversation_history=None, **_kwargs: PipelineResult(
+        lambda query, project_id=None, db=None, history=None, **_kwargs: PipelineResult(
             draft_answer="Gia can 2PN la 3.6 ty dong.",
             citations=[{"document_id": 1, "title": "Bang gia", "page": 2}],
             verifier_score=0.91,

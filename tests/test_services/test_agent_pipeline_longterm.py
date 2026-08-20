@@ -39,7 +39,7 @@ def test_no_profile_leaves_the_prompt_byte_identical():
 
 def test_profile_sits_above_the_conversation_history():
     """Ai dang hoi doc truoc, roi moi den ho dang noi gi trong phien nay."""
-    history = [prompts.ConversationTurn(is_sale=True, content="Gia can 2PN?")]
+    history = [{"sender": "sale", "content": "Gia can 2PN?"}]
 
     prompt = prompts.build_prompt("Con 3PN?", [], [], False, False, history=history, profile=PROFILE)
 

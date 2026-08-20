@@ -1,13 +1,25 @@
 import logging
+import time
 from typing import TypeVar
 
 import google.genai as genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
 
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Bulk document upload (Admin's multi-file queue) fires one embed_content call per
+# document in quick succession, each covering many chunks — comfortably enough to blow
+# through the Gemini free tier's ~100 requests/minute embedding quota partway through a
+# batch. A 429 there is not a real failure (the document is fine, the model call would
+# succeed if it weren't for the moment's rate limit) but every retry-less call above this
+# treated it as one, silently leaving gaps in the knowledge base that later read as "the
+# AI has no data" for whichever project's doc lost the race. See _embed's retry loop.
+_EMBED_MAX_ATTEMPTS = 4
+_EMBED_RETRY_STATUS_CODES = {429}
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -124,18 +136,50 @@ def _embed(
     if title:
         config_kwargs["title"] = title
 
-    try:
-        response = get_gemini_client().models.embed_content(
-            model=settings.embedding_model,
-            contents=texts,
-            config=types.EmbedContentConfig(**config_kwargs),
-        )
-    except Exception as exc:
-        logger.exception(
-            "Gemini embedding call failed.",
-            extra={"event": "gemini.embed.failed", "model": settings.embedding_model, "input_count": len(texts)},
-        )
-        raise GeminiEmbeddingError("Gemini embedding request failed.") from exc
+    response = None
+    for attempt in range(1, _EMBED_MAX_ATTEMPTS + 1):
+        try:
+            response = get_gemini_client().models.embed_content(
+                model=settings.embedding_model,
+                contents=texts,
+                config=types.EmbedContentConfig(**config_kwargs),
+            )
+            break
+        except genai_errors.APIError as exc:
+            is_last_attempt = attempt == _EMBED_MAX_ATTEMPTS
+            if exc.code not in _EMBED_RETRY_STATUS_CODES or is_last_attempt:
+                logger.exception(
+                    "Gemini embedding call failed.",
+                    extra={
+                        "event": "gemini.embed.failed",
+                        "model": settings.embedding_model,
+                        "input_count": len(texts),
+                        "status_code": exc.code,
+                        "attempt": attempt,
+                    },
+                )
+                raise GeminiEmbeddingError("Gemini embedding request failed.") from exc
+
+            delay = _retry_delay_seconds(exc)
+            logger.warning(
+                "Gemini embedding rate-limited; retrying.",
+                extra={
+                    "event": "gemini.embed.rate_limited",
+                    "model": settings.embedding_model,
+                    "input_count": len(texts),
+                    "attempt": attempt,
+                    "delay_seconds": delay,
+                },
+            )
+            time.sleep(delay)
+        except Exception as exc:
+            logger.exception(
+                "Gemini embedding call failed.",
+                extra={"event": "gemini.embed.failed", "model": settings.embedding_model, "input_count": len(texts)},
+            )
+            raise GeminiEmbeddingError("Gemini embedding request failed.") from exc
+
+    assert response is not None  # every loop exit either raises or breaks with a response
 
     if not response.embeddings:
         raise GeminiEmbeddingError("Gemini returned no embeddings.")
@@ -149,3 +193,29 @@ def _embed(
         raise GeminiEmbeddingError("Gemini returned an embedding with an unexpected dimension.")
 
     return vectors
+
+
+_DEFAULT_RETRY_DELAY_SECONDS = 20.0
+
+
+def _retry_delay_seconds(exc: genai_errors.APIError) -> float:
+    """The 429 response itself names how long to back off (google.rpc.RetryInfo,
+    e.g. "21s") — use it instead of guessing, falling back to a fixed default only if the
+    response is ever shaped differently than the one this was built against.
+
+    `exc.details` is the raw response body, `{"error": {..., "details": [...]}}` — note
+    the outer "details" is the whole error object (APIError's own attribute name), the
+    inner one is the list of google.rpc.* structs actually being searched here.
+    """
+    body = getattr(exc, "details", None)
+    error = body.get("error") if isinstance(body, dict) else None
+    entries = error.get("details") if isinstance(error, dict) else None
+    if isinstance(entries, list):
+        for entry in entries:
+            retry_delay = isinstance(entry, dict) and entry.get("retryDelay")
+            if isinstance(retry_delay, str) and retry_delay.endswith("s"):
+                try:
+                    return float(retry_delay[:-1])
+                except ValueError:
+                    pass
+    return _DEFAULT_RETRY_DELAY_SECONDS

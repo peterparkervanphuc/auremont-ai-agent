@@ -1,6 +1,6 @@
 """Long-term memory — what we remember about a person across sessions.
 
-Short-term working memory (`prompts.ConversationTurn`) covers the current thread and
+Short-term working memory (the `history` turns threaded into each prompt) covers the current thread and
 lives in MySQL. This module covers the layer above it: preferences that outlive any one
 conversation, so a returning customer does not have to restate a budget they mentioned
 last week, and a Sale gets their own recurring topics surfaced.

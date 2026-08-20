@@ -168,6 +168,30 @@ def store_cache(
         return
 
 
+def clear_cache() -> None:
+    """Drop every cached answer.
+
+    Cached answers have no reference back to which documents they drew on, so there is no
+    way to invalidate just the entries a specific document change might affect — this is
+    the only lever available. Called when an Admin changes a document's visibility (see
+    routers/documents.py::set_document_visibility): otherwise a question asked and cached
+    while a document was still internal keeps serving that stale "no data" answer forever
+    after the document goes public, since the cache has no idea anything changed. Safe to
+    call anytime — this is a cost optimisation, not a source of truth (see module
+    docstring); the only cost of clearing it early is a few extra tokens on the next ask.
+    """
+    try:
+        client = get_qdrant_client()
+        if client.collection_exists(CACHE_COLLECTION):
+            client.delete_collection(CACHE_COLLECTION)
+    except Exception:
+        logger.warning(
+            "Cache clear failed; stale cached answers may persist until they expire on their own.",
+            exc_info=True,
+            extra={"event": "cache.clear.failed"},
+        )
+
+
 def _ensure_cache_collection() -> None:
     client = get_qdrant_client()
     if client.collection_exists(CACHE_COLLECTION):

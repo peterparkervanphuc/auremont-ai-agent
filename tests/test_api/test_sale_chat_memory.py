@@ -11,13 +11,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.ai import prompts
 from backend.core.deps import get_current_user
 from backend.core.enums import UserRole
 from backend.core.mysql_client import Base, get_db
 from backend.main import app
 from backend.models.user import User
-from backend.routers import sale_chat
 from backend.services import agent_pipeline
 from backend.services.agent_pipeline import PipelineResult
 
@@ -56,10 +54,10 @@ def client(db_session, sale):
 @pytest.fixture
 def captured(monkeypatch):
     """Record the history handed to run_pipeline on each call, and answer with a canned reply."""
-    calls: list[list[prompts.ConversationTurn]] = []
+    calls: list[list[dict]] = []
 
-    def fake_pipeline(query, project_id=None, db=None, conversation_history=None, **_kwargs):
-        calls.append(list(conversation_history or []))
+    def fake_pipeline(query, project_id=None, db=None, history=None, **_kwargs):
+        calls.append(list(history or []))
         return PipelineResult(
             draft_answer=f"Tra loi cho: {query}",
             citations=[],
@@ -92,7 +90,7 @@ def test_the_question_being_asked_is_not_fed_back_as_its_own_context(client, cap
     _ask(client, session_id, "Gia can 2PN?")
     _ask(client, session_id, "Con 3PN thi sao?")
 
-    assert [turn.content for turn in captured[1]] == ["Gia can 2PN?", "Tra loi cho: Gia can 2PN?"]
+    assert [turn["content"] for turn in captured[1]] == ["Gia can 2PN?", "Tra loi cho: Gia can 2PN?"]
 
 
 def test_history_arrives_oldest_first(client, captured):
@@ -101,16 +99,8 @@ def test_history_arrives_oldest_first(client, captured):
     _ask(client, session_id, "Cau 2")
     _ask(client, session_id, "Cau 3")
 
-    contents = [turn.content for turn in captured[2]]
+    contents = [turn["content"] for turn in captured[2]]
     assert contents.index("Cau 1") < contents.index("Cau 2")
-
-
-def test_history_is_capped_at_the_turn_limit(client, captured):
-    session_id = _session(client)
-    for index in range(6):
-        _ask(client, session_id, f"Cau {index}")
-
-    assert len(captured[-1]) == sale_chat.HISTORY_TURN_LIMIT
 
 
 def test_speaker_is_recorded_on_every_turn(client, captured):
@@ -118,7 +108,7 @@ def test_speaker_is_recorded_on_every_turn(client, captured):
     _ask(client, session_id, "Gia can 2PN?")
     _ask(client, session_id, "Con 3PN thi sao?")
 
-    assert [turn.is_sale for turn in captured[1]] == [True, False]
+    assert [turn["sender"] for turn in captured[1]] == ["sale", "agent"]
 
 
 def test_edge_case_notices_are_not_replayed_as_context(client, captured, monkeypatch):
@@ -128,20 +118,20 @@ def test_edge_case_notices_are_not_replayed_as_context(client, captured, monkeyp
     monkeypatch.setattr(
         agent_pipeline,
         "run_pipeline",
-        lambda query, project_id=None, db=None, conversation_history=None, **_kwargs: PipelineResult(
+        lambda query, project_id=None, db=None, history=None, **_kwargs: PipelineResult(
             agent_pipeline.LOW_CONFIDENCE_MESSAGE_INTERNAL, [], 0.0, False
         ),
     )
     _ask(client, session_id, "Gia can 2PN?")
 
-    def fake_pipeline(query, project_id=None, db=None, conversation_history=None, **_kwargs):
-        captured.append(list(conversation_history or []))
+    def fake_pipeline(query, project_id=None, db=None, history=None, **_kwargs):
+        captured.append(list(history or []))
         return PipelineResult("ok", [], 0.9, False)
 
     monkeypatch.setattr(agent_pipeline, "run_pipeline", fake_pipeline)
     _ask(client, session_id, "Con 3PN thi sao?")
 
-    contents = [turn.content for turn in captured[-1]]
+    contents = [turn["content"] for turn in captured[-1]]
     assert contents == ["Gia can 2PN?"]
     assert agent_pipeline.LOW_CONFIDENCE_MESSAGE_INTERNAL not in contents
 

@@ -187,8 +187,18 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
                 "content": content,
                 # page travels along so the Generate step can cite down to a page number.
                 "page": payload.get("page"),
+                # Y position (PDF points from the page's top) for scrolling a citation's
+                # PDF viewer straight to this chunk — see chunking_service.py and
+                # CitationList.tsx's withPageAnchor. None for DOCX or an older chunk
+                # indexed before this field existed.
+                "y_position": payload.get("y_position"),
+                # project_id travels along so a reply built from an unscoped, cross-project
+                # search (no project_id filter above) can tell "these docs actually agree on
+                # one project" apart from "retrieval grabbed unrelated projects" — see
+                # agent_pipeline._generate's citation filtering.
+                "project_id": payload.get("project_id"),
                 # Qdrant cosine lives in [-1, 1]; rescale to [0, 1] so it reads well on
-                # the Admin dashboard.
+                # the Admin dashboard. A fused (hybrid) score is already normalised.
                 "score": point.score if fused else (point.score + 1.0) / 2.0,
             }
         )
