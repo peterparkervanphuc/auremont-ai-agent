@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from backend.ai import prompts
 from backend.core.audit import log_event, truncate
 from backend.core.config import settings
 from backend.core.deps import require_role
@@ -25,7 +24,6 @@ from backend.repositories.message import (
     delete_messages_for_session,
     history_for_pipeline,
     list_messages_for_session,
-    list_recent_messages,
 )
 from backend.schemas.chat_session import ChatSessionCreate, ChatSessionResponse
 from backend.schemas.message import MessageResponse
