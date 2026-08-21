@@ -43,6 +43,15 @@ def _ensure_payload_indexes(client, collection_name: str) -> None:
         field_name="is_current",
         field_schema=models.PayloadSchemaType.BOOL,
     )
+    # `delete_document_vectors` and the re-index path both filter on this — missing it
+    # doesn't fail loudly at write time (only reads/deletes hit the filter), so it's easy
+    # to add a new document_id-filtered query and not notice the index gap until a delete
+    # 503s in production.
+    client.create_payload_index(
+        collection_name=collection_name,
+        field_name="document_id",
+        field_schema=models.PayloadSchemaType.INTEGER,
+    )
 
 
 def ensure_collection() -> None:
