@@ -96,6 +96,11 @@ class Document(Base):
     )
     classification_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     classification_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The LLM's original safety signal is retained after an Admin reviews the document,
+    # so the audit trail can distinguish an automatic approval from a human decision.
+    # Legacy rows are NULL because the old classifier never produced this signal.
+    classification_requires_admin_review: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    classification_version: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     classified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     reviewed_by: Mapped[int | None] = mapped_column(

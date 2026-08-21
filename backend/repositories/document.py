@@ -1,7 +1,13 @@
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from backend.core.enums import DocumentReviewStatus, DocumentStatus, LegalStatus
+from backend.core.enums import (
+    ConflictStatus,
+    DocumentRelationType,
+    DocumentReviewStatus,
+    DocumentStatus,
+    LegalStatus,
+)
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
 from backend.models.document_relation import DocumentRelation
@@ -10,6 +16,7 @@ from backend.schemas.document import (
     DocumentCreate,
 )
 from backend.services.document_classification_service import (
+    DOCUMENT_CLASSIFICATION_VERSION,
     DocumentClassification,
 )
 from backend.utils.time import utcnow
@@ -167,10 +174,8 @@ def update_document_storage_path(
 def list_documents_for_metadata_edit(db: Session) -> list[Document]:
     """Ingested documents whose metadata an Admin can correct.
 
-    Every completed document, not a pending-approval queue: nothing waits for review to
-    become answerable, so the list exists to let an Admin fix legal status, effective dates
-    or a version label after the fact — `legal_status` in particular still decides whether
-    the document stays retrievable.
+    Includes both LLM suggestions waiting for approval and approved documents whose
+    metadata an Admin may need to correct later.
     """
 
     return (
@@ -194,8 +199,8 @@ def update_document_classification(
     document = get_document(db, document_id, for_update=True)
     if document is None:
         raise ValueError(f"Document with id={document_id} not found.")
-    # No "already reviewed" guard: metadata is editable for the life of the document, not
-    # once at an approval step. Nothing waits on review to become retrievable any more.
+    # No "already reviewed" guard: metadata remains editable for the life of the
+    # document. A PENDING suggestion is also approved through this endpoint.
     if document.status != DocumentStatus.COMPLETED:
         raise ValueError(f"Document {document_id} is not ready for classification review (status={document.status}).")
 
@@ -245,6 +250,51 @@ def _normalised_string_set(values: list[str] | None) -> frozenset[str]:
     return frozenset(" ".join(value.split()).casefold() for value in (values or []) if value.strip())
 
 
+def is_document_eligible_after_classification_approval(db: Session, document: Document) -> bool:
+    """Whether classification approval is the document's only remaining quarantine."""
+
+    if document.legal_status in {
+        LegalStatus.NOT_YET_EFFECTIVE,
+        LegalStatus.EXPIRED,
+        LegalStatus.REPEALED,
+        LegalStatus.REPLACED,
+    }:
+        return False
+
+    has_open_conflict = (
+        db.query(ConflictFlag.id)
+        .filter(
+            ConflictFlag.status == ConflictStatus.OPEN,
+            or_(
+                ConflictFlag.document_id_a == document.id,
+                ConflictFlag.document_id_b == document.id,
+            ),
+        )
+        .first()
+        is not None
+    )
+    if has_open_conflict:
+        return False
+
+    has_retirement_relation = (
+        db.query(DocumentRelation.id)
+        .filter(
+            DocumentRelation.target_document_id == document.id,
+            DocumentRelation.review_status == DocumentReviewStatus.APPROVED,
+            DocumentRelation.relation_type.in_(
+                [
+                    DocumentRelationType.REPLACES,
+                    DocumentRelationType.SUPERSEDES,
+                    DocumentRelationType.REPEALS,
+                ]
+            ),
+        )
+        .first()
+        is not None
+    )
+    return not has_retirement_relation
+
+
 def update_document_classification_suggestion(
     db: Session,
     document_id: int,
@@ -252,7 +302,7 @@ def update_document_classification_suggestion(
     *,
     auto_approve: bool = False,
 ) -> Document:
-    """Store the rule/AI suggestion. This is not approval; an Admin still has to decide."""
+    """Store the metadata returned by the document-classification LLM."""
 
     document = get_document(db, document_id)
     if document is None:
@@ -260,6 +310,7 @@ def update_document_classification_suggestion(
 
     document.category = classification.category
     document.subcategory = classification.subcategory
+    document.project_id = classification.project_id
     document.subdivision_names = classification.subdivision_names
     document.building_codes = classification.building_codes
     document.unit_types = classification.unit_types
@@ -280,15 +331,22 @@ def update_document_classification_suggestion(
 
     document.classification_confidence = classification.confidence
     document.classification_reason = classification.reason
+    document.classification_requires_admin_review = classification.requires_admin_review
+    document.classification_version = DOCUMENT_CLASSIFICATION_VERSION
     document.classified_at = utcnow()
 
-    if auto_approve:
+    # The model's explicit safety signal is authoritative even if a caller accidentally
+    # asks to auto-approve. Confidence policy is applied by the ingestion service.
+    if auto_approve and not classification.requires_admin_review:
         document.review_status = DocumentReviewStatus.APPROVED
         # This approval is made by the configured system rule, not an Admin.
         document.reviewed_by = None
         document.reviewed_at = utcnow()
+    else:
+        document.review_status = DocumentReviewStatus.PENDING
+        document.reviewed_by = None
+        document.reviewed_at = None
 
-    # Không đổi review_status: file vẫn phải chờ Admin duyệt.
     db.commit()
     db.refresh(document)
     return document

@@ -93,3 +93,28 @@ def test_schema_matches_models(migrated_db):
         "Chạy: alembic revision --autogenerate -m '<mô tả>'\n"
         f"Khác biệt: {diff}"
     )
+
+
+def test_repair_migration_restores_missing_document_relations(tmp_path):
+    """Heal a stamped long-lived DB whose relation table was removed or never created."""
+
+    db_path = tmp_path / "drifted.db"
+    url = f"sqlite:///{db_path}"
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.config_file_name = None
+    config.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
+    config.set_main_option("sqlalchemy.url", url)
+
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "b3c4d5e6f7a8")
+        with engine.begin() as connection:
+            connection.exec_driver_sql("DROP TABLE document_relations")
+
+        command.upgrade(config, "head")
+        assert "document_relations" in inspect(engine).get_table_names()
+        indexes = {item["name"] for item in inspect(engine).get_indexes("document_relations")}
+        assert "ix_document_relations_target_document_id" in indexes
+        assert "ix_document_relations_review_status" in indexes
+    finally:
+        engine.dispose()

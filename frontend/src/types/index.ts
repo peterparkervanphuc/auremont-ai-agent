@@ -176,9 +176,12 @@ export interface DocumentResponse {
   legal_issuer: string | null;
   legal_domain: string | null;
   legal_status: LegalStatus;
+  is_current: boolean;
   review_status: DocumentReviewStatus;
   classification_confidence: number | null;
   classification_reason: string | null;
+  classification_requires_admin_review: boolean | null;
+  classification_version: string | null;
   classified_at: string | null;
   reviewed_by: number | null;
   reviewed_at: string | null;
@@ -205,6 +208,15 @@ export interface DocumentClassificationUpdate {
   legal_issuer: string | null;
   legal_domain: string | null;
   legal_status: LegalStatus;
+}
+
+/**
+ * Payload for the controlled reclassification flow. Changing the project or
+ * conflict scope can affect retrieval/conflict membership, so these fields are
+ * intentionally only sent to POST /documents/{id}/reclassify.
+ */
+export interface DocumentReclassificationUpdate extends DocumentClassificationUpdate {
+  project_id: string | null;
 }
 
 export type DocumentRelationType = "replaces" | "amends" | "repeals" | "updates" | "supersedes" | "guides" | "related_to";

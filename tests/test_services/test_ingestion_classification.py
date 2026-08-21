@@ -14,7 +14,9 @@ from backend.core.enums import (
 from backend.core.mysql_client import Base
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
+from backend.models.project import Project
 from backend.services import ingestion_service
+from backend.services.document_classification_service import DocumentClassification
 from backend.services.parser_service import ParsedSection
 
 
@@ -52,11 +54,26 @@ def _document(db_session, title: str) -> Document:
     return document
 
 
-def _mock_external_services(monkeypatch, text: str):
+def _mock_external_services(
+    monkeypatch,
+    text: str,
+    classification: DocumentClassification | None = None,
+):
+    classification = classification or DocumentClassification(
+        category=DocumentCategory.OTHER,
+        confidence=0.9,
+        reason="LLM test fixture classification.",
+        requires_admin_review=False,
+    )
     monkeypatch.setattr(
         ingestion_service,
         "parse_document",
         lambda _filename, _data: [ParsedSection(text=text, page=1)],
+    )
+    monkeypatch.setattr(
+        ingestion_service,
+        "classify_document",
+        lambda _filename, _text: classification,
     )
     monkeypatch.setattr(
         ingestion_service,
@@ -97,6 +114,17 @@ def test_ingestion_saves_sales_policy_suggestion(
         Áp dụng từ 01/08/2026 đến 31/08/2026.
         Dành cho căn 1PN+, 2PN và 3PN tại tòa BE1.
         """,
+        DocumentClassification(
+            category=DocumentCategory.SALES_POLICY,
+            subdivision_names=["The Beverly"],
+            building_codes=["BE1"],
+            unit_types=["1PN+", "2PN", "3PN"],
+            effective_date=date(2026, 8, 1),
+            expiry_date=date(2026, 8, 31),
+            confidence=0.9,
+            reason="LLM xác định đây là chính sách bán hàng.",
+            requires_admin_review=False,
+        ),
     )
     document = _document(db_session, "CSBH The Beverly T8.pdf")
 
@@ -116,11 +144,42 @@ def test_ingestion_saves_sales_policy_suggestion(
     assert result.effective_date == date(2026, 8, 1)
     assert result.expiry_date == date(2026, 8, 31)
     assert result.classification_confidence == 0.9
+    assert result.classification_requires_admin_review is False
+    assert result.classification_version == "llm-v1"
     assert result.classified_at is not None
 
-    # Rule chỉ đề xuất; Admin mới được chuyển sang approved.
+    # Ingestion hiện vẫn tự publish metadata sau khi LLM trả kết quả hợp lệ.
     assert result.review_status == DocumentReviewStatus.APPROVED
     assert result.reviewed_by is None
+
+
+def test_ingestion_assigns_only_a_catalogued_llm_project(db_session, monkeypatch):
+    db_session.add(Project(id="the-beverly", name="The Beverly - Vinhomes Ocean Park"))
+    db_session.commit()
+    _mock_external_services(
+        monkeypatch,
+        "Tổng quan phân khu The Beverly.",
+        DocumentClassification(
+            category=DocumentCategory.SUBDIVISION_INFO,
+            project_id="the-beverly",
+            subdivision_names=["The Beverly"],
+            confidence=0.95,
+            reason="LLM khớp chính xác The Beverly trong danh mục dự án.",
+            requires_admin_review=False,
+        ),
+    )
+    document = _document(db_session, "Beverly.pdf")
+
+    result = ingestion_service.ingest_uploaded_document(
+        db_session,
+        document=document,
+        filename=document.title,
+        file_bytes=b"fake pdf content",
+        content_type="application/pdf",
+    )
+
+    assert result.project_id == "the-beverly"
+    assert result.review_status == DocumentReviewStatus.APPROVED
 
 
 def test_ingestion_saves_legal_document_suggestion(
@@ -136,6 +195,16 @@ def test_ingestion_saves_legal_document_suggestion(
         Quy định chi tiết một số điều của Luật Kinh doanh bất động sản.
         Nghị định này có hiệu lực thi hành kể từ ngày 01/08/2024.
         """,
+        DocumentClassification(
+            category=DocumentCategory.LEGAL_DOCUMENT,
+            legal_document_type="Nghị định",
+            legal_document_number="96/2024/NĐ-CP",
+            legal_status=LegalStatus.EFFECTIVE,
+            effective_date=date(2024, 8, 1),
+            confidence=0.97,
+            reason="LLM xác định đây là nghị định chính thức.",
+            requires_admin_review=False,
+        ),
     )
     document = _document(db_session, "Nghi dinh 96 2024 ND CP.pdf")
 
@@ -163,6 +232,16 @@ def test_future_legal_document_stays_outside_retrieval(db_session, monkeypatch):
         CỦA CHÍNH PHỦ
         Nghị định này có hiệu lực thi hành kể từ ngày 01/01/2099.
         """,
+        DocumentClassification(
+            category=DocumentCategory.LEGAL_DOCUMENT,
+            legal_document_type="Nghị định",
+            legal_document_number="123/2099/NĐ-CP",
+            legal_status=LegalStatus.NOT_YET_EFFECTIVE,
+            effective_date=date(2099, 1, 1),
+            confidence=0.97,
+            reason="LLM xác định văn bản chưa có hiệu lực.",
+            requires_admin_review=False,
+        ),
     )
     document = _document(db_session, "Nghi dinh 123 2099 ND CP.pdf")
 
@@ -184,13 +263,19 @@ def test_low_confidence_classification_waits_for_admin(
     db_session,
     monkeypatch,
 ):
-    """Weak evidence still records a low confidence, even though nothing gates on it now."""
+    """Weak/ambiguous evidence is stored but cannot enter retrieval before review."""
     _mock_external_services(
         monkeypatch,
         """
         Tong quan phan khu The Beverly.
         Thong tin ve tien ich va vi tri.
         """,
+        DocumentClassification(
+            category=DocumentCategory.SUBDIVISION_INFO,
+            confidence=0.75,
+            reason="LLM chưa đủ chắc chắn về mục đích chính.",
+            requires_admin_review=True,
+        ),
     )
     document = _document(db_session, "Tong quan The Beverly.pdf")
 
@@ -204,6 +289,68 @@ def test_low_confidence_classification_waits_for_admin(
 
     assert result.classification_confidence == 0.75
     assert result.classification_reason
+    assert result.classification_requires_admin_review is True
+    assert result.classification_version == "llm-v1"
+    assert result.review_status == DocumentReviewStatus.PENDING
+    assert result.reviewed_at is None
+    assert result.is_current is False
+
+
+def test_confidence_gate_requires_review_even_without_model_review_flag(
+    db_session,
+    monkeypatch,
+):
+    _mock_external_services(
+        monkeypatch,
+        "Tổng quan dự án còn thiếu nhiều trang.",
+        DocumentClassification(
+            category=DocumentCategory.SUBDIVISION_INFO,
+            confidence=0.89,
+            reason="Nội dung chính có thể nhận diện nhưng tài liệu không đầy đủ.",
+            requires_admin_review=False,
+        ),
+    )
+    document = _document(db_session, "Tong quan thieu trang.pdf")
+
+    result = ingestion_service.ingest_uploaded_document(
+        db_session,
+        document=document,
+        filename=document.title,
+        file_bytes=b"fake pdf content",
+        content_type="application/pdf",
+    )
+
+    assert result.classification_requires_admin_review is False
+    assert result.review_status == DocumentReviewStatus.PENDING
+    assert result.is_current is False
+
+
+def test_model_review_signal_overrides_high_confidence(
+    db_session,
+    monkeypatch,
+):
+    _mock_external_services(
+        monkeypatch,
+        "Tài liệu có hai mục đích chính ngang nhau.",
+        DocumentClassification(
+            category=DocumentCategory.OTHER,
+            confidence=0.99,
+            reason="Không có một mục đích chính duy nhất.",
+            requires_admin_review=True,
+        ),
+    )
+    document = _document(db_session, "tai-lieu-hon-hop.pdf")
+
+    result = ingestion_service.ingest_uploaded_document(
+        db_session,
+        document=document,
+        filename=document.title,
+        file_bytes=b"fake pdf content",
+        content_type="application/pdf",
+    )
+
+    assert result.review_status == DocumentReviewStatus.PENDING
+    assert result.is_current is False
 
 
 def test_admin_required_evidence_cannot_auto_approve_even_with_a_low_threshold(
@@ -217,6 +364,12 @@ def test_admin_required_evidence_cannot_auto_approve_even_with_a_low_threshold(
         BẢNG GIÁ THAM KHẢO
         BE1 | 3.500.000.000 VND
         """,
+        DocumentClassification(
+            category=DocumentCategory.PRICE_LIST,
+            confidence=0.91,
+            reason="LLM xác định nội dung chính là bảng giá.",
+            requires_admin_review=False,
+        ),
     )
     document = _document(db_session, "6f42d13e-1908-4a30-a828-e197c1c673db.pdf")
 
@@ -233,7 +386,16 @@ def test_admin_required_evidence_cannot_auto_approve_even_with_a_low_threshold(
 
 def test_unconfirmed_filename_cannot_auto_approve_with_low_threshold(db_session, monkeypatch):
     """A filename the body never confirms is still classified from the filename."""
-    _mock_external_services(monkeypatch, "Nội dung mô tả vị trí và tiện ích.")
+    _mock_external_services(
+        monkeypatch,
+        "Nội dung mô tả vị trí và tiện ích.",
+        DocumentClassification(
+            category=DocumentCategory.SUBDIVISION_INFO,
+            confidence=0.88,
+            reason="LLM xác định đây là tài liệu giới thiệu phân khu.",
+            requires_admin_review=False,
+        ),
+    )
     document = _document(db_session, "HaiAu_VHOP_ThongTinDuAn_Full.pdf")
 
     result = ingestion_service.ingest_uploaded_document(
@@ -289,6 +451,96 @@ def test_prompt_injection_is_blocked_before_classification(
     db_session.refresh(document)
     assert classifier_called is False
     assert document.status == DocumentStatus.BLOCKED
+
+
+def test_llm_classification_failure_marks_document_failed_before_indexing(
+    db_session,
+    monkeypatch,
+):
+    document = _document(db_session, "tai-lieu-hop-le.pdf")
+    indexed = False
+
+    monkeypatch.setattr(
+        ingestion_service,
+        "parse_document",
+        lambda _filename, _data: [ParsedSection(text="Nội dung tài liệu hợp lệ.", page=1)],
+    )
+
+    def fail_classification(_filename: str, _text: str):
+        raise ingestion_service.DocumentClassificationError("provider unavailable")
+
+    def record_index(**_kwargs):
+        nonlocal indexed
+        indexed = True
+
+    monkeypatch.setattr(ingestion_service, "classify_document", fail_classification)
+    monkeypatch.setattr(ingestion_service, "index_document_chunks", record_index)
+
+    with pytest.raises(ingestion_service.DocumentIngestionError, match="with the LLM"):
+        ingestion_service.ingest_uploaded_document(
+            db_session,
+            document=document,
+            filename=document.title,
+            file_bytes=b"fake pdf content",
+            content_type="application/pdf",
+        )
+
+    db_session.refresh(document)
+    assert document.status == DocumentStatus.FAILED
+    assert document.is_current is False
+    assert indexed is False
+
+
+def test_llm_quota_failure_is_retryable_safe_and_never_indexes(
+    db_session,
+    monkeypatch,
+):
+    from google.genai import errors as genai_errors
+
+    document = _document(db_session, "tai-lieu-het-han-muc.pdf")
+    indexed = False
+    provider_error = genai_errors.ClientError(
+        429,
+        {
+            "error": {
+                "code": 429,
+                "status": "RESOURCE_EXHAUSTED",
+                "message": "quota error containing secret-key-value",
+            }
+        },
+    )
+
+    monkeypatch.setattr(
+        ingestion_service,
+        "parse_document",
+        lambda _filename, _data: [ParsedSection(text="Nội dung tài liệu hợp lệ.", page=1)],
+    )
+
+    def fail_classification(_filename: str, _text: str):
+        raise ingestion_service.DocumentClassificationError("classification unavailable") from provider_error
+
+    def record_index(*_args, **_kwargs):
+        nonlocal indexed
+        indexed = True
+
+    monkeypatch.setattr(ingestion_service, "classify_document", fail_classification)
+    monkeypatch.setattr(ingestion_service, "_embed_and_index", record_index)
+
+    with pytest.raises(ingestion_service.DocumentAIQuotaExceededError) as error:
+        ingestion_service.ingest_uploaded_document(
+            db_session,
+            document=document,
+            filename=document.title,
+            file_bytes=b"fake pdf content",
+            content_type="application/pdf",
+        )
+
+    db_session.refresh(document)
+    assert document.status == DocumentStatus.FAILED
+    assert document.is_current is False
+    assert indexed is False
+    assert str(error.value) == ingestion_service.AI_SERVICE_QUOTA_PUBLIC_MESSAGE
+    assert "secret-key-value" not in str(error.value)
 
 
 def test_sanitized_text_is_what_gets_embedded(db_session, monkeypatch):
@@ -359,7 +611,16 @@ def test_exact_duplicate_is_blocked_without_an_open_conflict(db_session, monkeyp
     indexed: list[dict] = []
     activations: list[dict] = []
 
-    _mock_external_services(monkeypatch, text)
+    _mock_external_services(
+        monkeypatch,
+        text,
+        DocumentClassification(
+            category=DocumentCategory.SALES_POLICY,
+            confidence=0.96,
+            reason="LLM xác định đây là chính sách bán hàng.",
+            requires_admin_review=False,
+        ),
+    )
     monkeypatch.setattr(ingestion_service, "scan_conflicts_for", real_scan)
     monkeypatch.setattr(
         ingestion_service,

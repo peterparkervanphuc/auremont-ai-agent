@@ -38,6 +38,16 @@ const STATUS_LABEL: Record<
   },
 };
 
+function documentStatusLabel(document: DocumentResponse): { text: string; badge: string } {
+  if (document.status === "completed" && document.review_status === "pending") {
+    return { text: "Chờ Admin duyệt metadata", badge: "badge-warning" };
+  }
+  if (document.status === "completed" && !document.is_current) {
+    return { text: "Đang cách ly khỏi AI", badge: "badge-warning" };
+  }
+  return STATUS_LABEL[document.status] ?? { text: document.status, badge: "badge-muted" };
+}
+
 // Shown in the per-row category picker. Ordered by how often an Admin actually corrects to
 // them, with "other" last — it is where the classifier puts anything it could not identify,
 // and the value a correction is normally moving away from.
@@ -93,6 +103,7 @@ export function DocumentsTab() {
   const [uploadVisibility, setUploadVisibility] = useState<DocumentVisibility>("internal");
   const [reclassifyingId, setReclassifyingId] = useState<number | null>(null);
   const categoryFilter = searchParams.get("category") ?? "";
+  const coverageScope = searchParams.get("coverage_scope") ?? "";
   const fileInputRef = useRef<HTMLInputElement>(null);
   const filteredDocuments = documents.filter((document) =>
     (!searchParams.get("project_id") || document.project_id === searchParams.get("project_id")) &&
@@ -102,11 +113,12 @@ export function DocumentsTab() {
   const uploading = queue.some((item) => item.status === "pending" || item.status === "uploading");
 
   const loadDocuments = useCallback(() => {
+    const query = coverageScope ? `?coverage_scope=${encodeURIComponent(coverageScope)}` : "";
     api
-      .get<DocumentResponse[]>("/documents")
+      .get<DocumentResponse[]>(`/documents${query}`)
       .then(setDocuments)
       .catch(() => setDocuments([]));
-  }, []);
+  }, [coverageScope]);
 
   useEffect(() => {
     loadDocuments();
@@ -158,7 +170,7 @@ export function DocumentsTab() {
             prev.map((q) =>
               q.id === item.id
                 ? result.status === "completed"
-                  ? { ...q, status: "done" }
+                  ? { ...q, status: "done", message: result.message }
                   : { ...q, status: "error", message: result.message }
                 : q,
             ),
@@ -279,7 +291,7 @@ export function DocumentsTab() {
           value={projectId}
           onChange={(event) => setProjectId(event.target.value)}
         >
-          <option value="">— Không gắn dự án —</option>
+          <option value="">— Để AI nhận diện dự án —</option>
           {projects.map((project) => (
             <option key={project.id} value={project.id}>
               {project.name}
@@ -288,8 +300,8 @@ export function DocumentsTab() {
         </select>
         {!projectId && (
           <span className="upload-project-hint">
-            Để trống nghĩa là tài liệu áp dụng chung: Sale không lọc được theo dự án, và hệ thống chỉ đối
-            chiếu mâu thuẫn với các tài liệu cũng không gắn dự án và cùng phân khu / tòa / loại căn.
+            AI sẽ đối chiếu tên dự án/phân khu trong tài liệu với danh mục dự án hiện có. Nếu kết quả mơ hồ,
+            tài liệu được cách ly và chuyển sang trang Metadata để Admin xác nhận.
           </span>
         )}
 
@@ -396,7 +408,7 @@ export function DocumentsTab() {
           và cách đối chiếu mâu thuẫn. File gồm nhiều phần thì chọn phần chiếm chính, hoặc để &ldquo;Khác&rdquo;.
         </p>
 
-        {(searchParams.get("project_id") || categoryFilter) && <div className="document-filter-notice"><span>Đang xem tài liệu được chọn từ dashboard.</span><button type="button" onClick={() => setSearchParams({})}>Xóa bộ lọc</button></div>}
+        {(searchParams.get("project_id") || coverageScope || categoryFilter) && <div className="document-filter-notice"><span>Đang xem tài liệu được chọn từ dashboard.</span><button type="button" onClick={() => setSearchParams({})}>Xóa bộ lọc</button></div>}
 
         {filteredDocuments.length === 0 ? (
           <div className="empty-state">
@@ -408,11 +420,7 @@ export function DocumentsTab() {
         ) : (
           <div className="data-list">
             {filteredDocuments.map((document) => {
-              const displayStatus =
-                STATUS_LABEL[document.status] ?? {
-                  text: document.status,
-                  badge: "badge-muted",
-                };
+              const displayStatus = documentStatusLabel(document);
 
               return (
                 <div key={document.id} className="data-row">

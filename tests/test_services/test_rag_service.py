@@ -117,15 +117,17 @@ def test_project_id_omitted_when_not_given(qdrant):
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
 
     keys = [condition.key for condition in _conditions(qdrant.query_calls[0])]
-    assert keys == ["visibility", "is_current"]
+    assert keys == ["visibility", "review_status", "is_current"]
 
 
-def test_retrieval_does_not_wait_for_admin_approval(qdrant):
-    """An uploaded document answers immediately — there is no approval step."""
+def test_retrieval_requires_admin_or_policy_approval(qdrant):
+    """A weak LLM suggestion cannot answer before an Admin approves it."""
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
 
-    keys = [condition.key for condition in _conditions(qdrant.query_calls[0])]
-    assert "review_status" not in keys
+    review_condition = next(
+        condition for condition in _conditions(qdrant.query_calls[0]) if condition.key == "review_status"
+    )
+    assert review_condition.match.value == "approved"
 
 
 def test_retrieval_still_excludes_documents_that_are_not_current(qdrant):

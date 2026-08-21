@@ -382,6 +382,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     )
 
     if needs_document_retrieval:
+        started = time.perf_counter()
         try:
             # Retrieval embeds the question expanded with the previous one, so a bare
             # follow-up ("còn 3PN thì sao?") still carries the project and topic into the
@@ -406,7 +407,12 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
                     "query_len": len(query),
                 },
             )
-            tracing.step("retrieve", ok=False, error="qdrant_unavailable")
+            tracing.step(
+                "retrieve",
+                ok=False,
+                error="qdrant_unavailable",
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
             # A combined inventory + policy question can still answer from its
             # live source when Qdrant is temporarily unavailable.
             if not needs_inventory:
@@ -422,6 +428,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
                 doc_count=len(hits),
                 top_score=round(top_score, 4) if isinstance(top_score, int | float) else None,
                 document_ids=[hit.get("document_id") for hit in hits],
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
             )
 
     if not hits and not needs_inventory and names_specific_document_topic(query):
@@ -546,7 +553,12 @@ def _generate(state: PipelineState) -> dict[str, Any]:
                 "unit_count": len(units),
             },
         )
-        tracing.step("generate", attempt=attempt, ok=False)
+        tracing.step(
+            "generate",
+            attempt=attempt,
+            ok=False,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
         return {"notice": GENERATION_ERROR_MESSAGE}
 
     if parsed is None:
@@ -555,6 +567,13 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         logger.warning(
             "Consult LLM returned no parseable answer.",
             extra={"event": "pipeline.generate.unparseable", "project_id": state.get("project_id")},
+        )
+        tracing.step(
+            "generate",
+            attempt=attempt,
+            ok=False,
+            empty=True,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
         return {"notice": GENERATION_ERROR_MESSAGE}
 
@@ -569,7 +588,13 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     answer = strip_markdown(answer)
 
     if not answer:
-        tracing.step("generate", attempt=attempt, ok=False, empty=True)
+        tracing.step(
+            "generate",
+            attempt=attempt,
+            ok=False,
+            empty=True,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
         return {"notice": GENERATION_ERROR_MESSAGE}
 
     answer = drop_image_denials(answer, state.get("images") or [])
@@ -734,11 +759,17 @@ def _image_tool(state: PipelineState) -> dict[str, Any]:
         tracing.step("tool.images", ok=False, skipped="no_db_session")
         return {"images": []}
 
+    started = time.perf_counter()
     context = "\n".join(
         f"{doc.get('title') or ''} {doc.get('content') or ''}" for doc in state.get("retrieved_docs") or []
     )
     images = answer_images_service.collect_images(db, state["query"], context)
-    tracing.step("tool.images", ok=True, image_count=len(images))
+    tracing.step(
+        "tool.images",
+        ok=True,
+        image_count=len(images),
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
     return {"images": images}
 
 

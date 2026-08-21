@@ -67,6 +67,8 @@ class DocumentResponse(BaseModel):
     review_status: str
     classification_confidence: float | None = None
     classification_reason: str | None = None
+    classification_requires_admin_review: bool | None = None
+    classification_version: str | None = None
     classified_at: datetime | None = None
     reviewed_by: int | None = None
     reviewed_at: datetime | None = None

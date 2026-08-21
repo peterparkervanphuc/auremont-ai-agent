@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 import logging
 import re
 import uuid
@@ -14,21 +15,31 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import settings
 from backend.core.enums import DocumentCategory, DocumentReviewStatus, DocumentStatus, LegalStatus
-from backend.core.gemini_client import embed_documents
+from backend.core.gemini_client import embed_documents, is_gemini_quota_error
 from backend.core.minio_client import ensure_bucket, get_minio_client
 from backend.core.sparse_embedding import SparseEmbeddingError, embed_documents_sparse
 from backend.models.document import Document
+from backend.models.project import Project
 from backend.repositories.conflict_flag import create_conflict
 from backend.repositories.document import (
     get_document,
+    is_document_eligible_after_classification_approval,
     list_completed_siblings,
     update_document_classification_suggestion,
     update_document_status,
     update_document_storage_path,
 )
 from backend.services.chunking_service import chunk_sections
-from backend.services.document_classification_service import classify_document
+from backend.services.document_classification_service import (
+    DocumentClassification,
+    DocumentClassificationError,
+    classify_document,
+)
 from backend.services.parser_service import ParsedSection, parse_document
+from backend.services.project_metadata_service import (
+    classification_project_catalog,
+    resolve_classified_project,
+)
 from backend.services.vector_store_service import (
     delete_document_vectors,
     index_document_chunks,
@@ -46,6 +57,19 @@ class PromptInjectionError(ValueError):
 
 class DocumentIngestionError(RuntimeError):
     """Failure while parsing, storing, embedding or indexing a document."""
+
+
+AI_SERVICE_QUOTA_PUBLIC_MESSAGE = (
+    "Dịch vụ AI tạm thời đã đạt giới hạn sử dụng. Tài liệu đang được cách ly khỏi "
+    "kết quả trả lời. Vui lòng thử lại sau; nếu lỗi tiếp diễn, hãy kiểm tra hạn mức dịch vụ AI."
+)
+
+
+class DocumentAIQuotaExceededError(DocumentIngestionError):
+    """A safe, retryable document failure caused by upstream AI quota exhaustion."""
+
+    def __init__(self) -> None:
+        super().__init__(AI_SERVICE_QUOTA_PUBLIC_MESSAGE)
 
 
 @dataclass(frozen=True)
@@ -130,15 +154,49 @@ def ingest_uploaded_document(
         ]
         raw_text = sanitize_and_scan("\n\n".join(section.text for section in sections))
 
-        classification = classify_document(filename, raw_text)
+        project_catalog = classification_project_catalog(db)
+        classification = _classify_document_with_catalog(filename, raw_text, project_catalog)
+        project_resolution = resolve_classified_project(
+            selected_project_id=document.project_id,
+            suggested_project_id=classification.project_id,
+            subdivision_names=classification.subdivision_names,
+            catalog=project_catalog,
+        )
+        classification = classification.model_copy(
+            update={
+                "project_id": project_resolution.project_id,
+                "requires_admin_review": (
+                    classification.requires_admin_review or project_resolution.requires_admin_review
+                ),
+                "reason": (
+                    f"{classification.reason} {project_resolution.note}".strip()
+                    if project_resolution.note
+                    else classification.reason
+                ),
+            }
+        )
+        auto_approve = (
+            not classification.requires_admin_review
+            and classification.confidence >= settings.classification_auto_approve_threshold
+        )
         document = update_document_classification_suggestion(
             db,
             document_id=document.id,
             classification=classification,
-            # Always: there is no approval step. The duplicate check further down still
-            # marks its own rejections, and a conflict still clears `is_current`.
-            auto_approve=True,
+            auto_approve=auto_approve,
         )
+
+        if not auto_approve:
+            logger.info(
+                "Document classification is waiting for Admin review.",
+                extra={
+                    "event": "document.classification.review_required",
+                    "document_id": document.id,
+                    "confidence": classification.confidence,
+                    "threshold": settings.classification_auto_approve_threshold,
+                    "model_requested_review": classification.requires_admin_review,
+                },
+            )
 
         object_key = _store_original_file(
             document_id=document.id,
@@ -173,6 +231,7 @@ def ingest_uploaded_document(
             document.is_current = (
                 not scan.conflict_ids
                 and not has_duplicate
+                and document.review_status == DocumentReviewStatus.APPROVED
                 and document.legal_status
                 not in {
                     LegalStatus.NOT_YET_EFFECTIVE,
@@ -269,10 +328,35 @@ def ingest_uploaded_document(
                     extra={"event": "document.vector_quarantine.failed", "document_id": failed.id},
                 )
 
+        if isinstance(exc, DocumentAIQuotaExceededError):
+            raise
+
+        if is_gemini_quota_error(exc):
+            raise DocumentAIQuotaExceededError() from exc
+
         if isinstance(exc, DocumentIngestionError):
             raise
 
+        if isinstance(exc, DocumentClassificationError):
+            raise DocumentIngestionError(f"Could not classify document {document.id} with the LLM.") from exc
+
         raise DocumentIngestionError(f"Could not ingest document {document.id}.") from exc
+
+
+def _classify_document_with_catalog(
+    filename: str,
+    raw_text: str,
+    project_catalog: list[dict[str, object]],
+) -> DocumentClassification:
+    """Pass live project choices in production while tolerating narrow test doubles."""
+
+    signature = inspect.signature(classify_document)
+    accepts_catalog = "project_catalog" in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
+    )
+    if accepts_catalog:
+        return classify_document(filename, raw_text, project_catalog=project_catalog)
+    return classify_document(filename, raw_text)
 
 
 def _embed_and_index(document: Document, chunks: list, *, is_current: bool | None = None) -> None:
@@ -350,9 +434,13 @@ def reindex_document(db: Session, *, document_id: int) -> Document:
 
         delete_document_vectors(document.id)
         _embed_and_index(document, chunks)
+    except DocumentAIQuotaExceededError:
+        raise
     except DocumentIngestionError:
         raise
     except Exception as exc:
+        if is_gemini_quota_error(exc):
+            raise DocumentAIQuotaExceededError() from exc
         raise DocumentIngestionError(f"Could not re-index document {document_id}.") from exc
 
     logger.info(
@@ -363,10 +451,17 @@ def reindex_document(db: Session, *, document_id: int) -> Document:
     return document
 
 
-def reclassify_document(db: Session, *, document_id: int, category: str, reviewed_by: int) -> Document:
-    """Move a document to a different category, doing the three things that makes necessary.
+def reclassify_document(
+    db: Session,
+    *,
+    document_id: int,
+    category: str,
+    reviewed_by: int,
+    metadata_updates: dict[str, object] | None = None,
+) -> Document:
+    """Safely correct classification and conflict-scope metadata.
 
-    `update_document_classification` refuses a category change outright, because the
+    `update_document_classification` refuses category/project/scope changes outright, because the
     category is not just a label: `chunk_sections` splits legal documents by Article/Clause
     and price lists by table rows, `scan_conflicts_for` compares price lists differently
     from everything else, and retrieval filters on the category in the Qdrant payload. A
@@ -374,7 +469,10 @@ def reclassify_document(db: Session, *, document_id: int, category: str, reviewe
 
     Without this, a misclassified upload (anything the classifier could not identify lands
     in `other`, which no retrieval category matches) could only be fixed by deleting the
-    document, renaming the file and uploading it again.
+    document, renaming the file and uploading it again. Project changes also require a
+    re-index because ``project_id`` is stored in every Qdrant payload. Subdivision,
+    building and unit corrections do not change vector contents, but still require the
+    same quarantine and conflict re-scan before publication.
 
     Ordered fail-closed throughout: the document stops being retrievable before anything
     changes, and only becomes retrievable again once the new chunks and a fresh conflict
@@ -388,10 +486,56 @@ def reclassify_document(db: Session, *, document_id: int, category: str, reviewe
         raise DocumentIngestionError(f"Document {document_id} is not ready to be reclassified (status={document.status}).")
     if not document.file_path:
         raise DocumentIngestionError(f"Document {document_id} has no stored original file to re-index.")
-    if category == document.category:
-        raise DocumentIngestionError(f"Document {document_id} is already categorised as {category}.")
 
     previous_category = document.category
+    previous_project_id = document.project_id
+    updates = dict(metadata_updates or {})
+    allowed_fields = {
+        "project_id",
+        "subcategory",
+        "subdivision_names",
+        "building_codes",
+        "unit_types",
+        "applicable_area",
+        "document_summary",
+        "version_label",
+        "issued_date",
+        "effective_date",
+        "expiry_date",
+        "applicable_period",
+        "legal_document_type",
+        "legal_document_number",
+        "legal_issuer",
+        "legal_domain",
+        "legal_status",
+    }
+    unexpected_fields = set(updates) - allowed_fields
+    if unexpected_fields:
+        raise DocumentIngestionError(
+            "Unsupported controlled metadata correction fields: " + ", ".join(sorted(unexpected_fields)) + "."
+        )
+
+    target_project_id = updates.get("project_id", document.project_id)
+    if target_project_id is not None and not isinstance(target_project_id, str):
+        raise DocumentIngestionError("project_id must be a project catalogue id or null.")
+    if target_project_id and db.get(Project, target_project_id) is None:
+        # Validate before the Qdrant quarantine so a stale UI selection is a harmless
+        # client error, not a half-started correction that takes a healthy document down.
+        raise DocumentIngestionError(f"project_id '{target_project_id}' does not exist in the project catalogue.")
+
+    category_changed = category != document.category
+    project_changed = target_project_id != document.project_id
+    changed_fields = {
+        field_name
+        for field_name, value in updates.items()
+        if value != getattr(document, field_name)
+    }
+    if not category_changed and not changed_fields:
+        raise DocumentIngestionError(
+            f"Document {document_id} is already categorised as {category} and has no metadata corrections."
+        )
+    requires_reindex = category_changed or project_changed
+    previous_update_values = {field_name: getattr(document, field_name) for field_name in updates}
 
     # Step 1: stop answering from the old chunks before anything else moves.
     update_document_vector_metadata(
@@ -405,48 +549,89 @@ def reclassify_document(db: Session, *, document_id: int, category: str, reviewe
     document.is_current = False
     db.commit()
 
+    chunks: list = []
     try:
-        # Step 2: rebuild the chunks under the new category, from the original file.
-        file_bytes = _read_original_file(document.file_path)
-        sections = parse_document(document.title, file_bytes)
-        chunks = chunk_sections(sections, document_category=category)
-        if not chunks:
-            raise DocumentIngestionError("No chunks were produced for the new category.")
+        # Parse/chunk before changing persistent metadata. If the source is corrupt, the
+        # phase-1 quarantine remains committed but category/project stay retryable.
+        if requires_reindex:
+            file_bytes = _read_original_file(document.file_path)
+            sections = parse_document(document.title, file_bytes)
+            chunks = chunk_sections(sections, document_category=category)
+            if not chunks:
+                raise DocumentIngestionError("No chunks were produced for the corrected classification.")
 
-        document.category = category
-        document.review_status = DocumentReviewStatus.APPROVED
-        document.reviewed_by = reviewed_by
-        document.reviewed_at = utcnow()
-        db.commit()
+        # Step 2: serialize against ingestion in the corrected target scope. The lock's
+        # MySQL setup intentionally rolls back/refreshes the Session, so apply metadata
+        # only after entering it and re-locking the row.
+        with _conflict_scope_lock(db, document, scope=(target_project_id, str(category))):
+            refreshed = get_document(db, document_id, for_update=True)
+            if refreshed is None:  # pragma: no cover - deletion also requires this row lock
+                raise DocumentIngestionError(f"Document {document_id} no longer exists.")
+            if refreshed.status != DocumentStatus.COMPLETED:
+                raise DocumentIngestionError(
+                    f"Document {document_id} is no longer ready to be corrected (status={refreshed.status})."
+                )
+            if (
+                refreshed.category != previous_category
+                or refreshed.project_id != previous_project_id
+                or any(
+                    getattr(refreshed, field_name) != previous_value
+                    for field_name, previous_value in previous_update_values.items()
+                )
+            ):
+                raise DocumentIngestionError(
+                    f"Document {document_id} changed while the correction was running; reload it and retry."
+                )
 
-        delete_document_vectors(document.id)
-        _embed_and_index(document, chunks, is_current=False)
+            document = refreshed
+            document.category = category
+            for field_name, value in updates.items():
+                setattr(document, field_name, value)
+            document.review_status = DocumentReviewStatus.APPROVED
+            document.reviewed_by = reviewed_by
+            document.reviewed_at = utcnow()
+            db.flush()
 
-        # Step 3: the comparison set changed with the category, so the old scan's verdict
-        # says nothing about this document any more.
-        with _conflict_scope_lock(db, document):
+            if requires_reindex:
+                delete_document_vectors(document.id)
+                _embed_and_index(document, chunks, is_current=False)
+
+            # Step 3: the comparison set changed, so the old scan's verdict says
+            # nothing about this corrected scope any more.
             scan = scan_conflicts_for(db, document, commit=False)
             document.is_current = (
                 not scan.conflict_ids
                 and not scan.duplicate_document_ids
-                and document.legal_status
-                not in {
-                    LegalStatus.NOT_YET_EFFECTIVE,
-                    LegalStatus.EXPIRED,
-                    LegalStatus.REPEALED,
-                    LegalStatus.REPLACED,
-                }
+                and is_document_eligible_after_classification_approval(db, document)
             )
             db.commit()
 
+            # The commit above makes corrected metadata/conflict flags authoritative,
+            # but also releases the row lock. Re-lock and refresh before publishing.
+            # A concurrent conflict resolution, visibility change or other quarantine
+            # that won the race can no longer be overwritten with stale ``true``.
+            refreshed = get_document(db, document_id, for_update=True)
+            if refreshed is None:  # pragma: no cover - deletion also requires this row lock
+                raise DocumentIngestionError(f"Document {document_id} no longer exists.")
+            document = refreshed
+            publication_current = bool(
+                document.is_current
+                and document.status == DocumentStatus.COMPLETED
+                and document.review_status == DocumentReviewStatus.APPROVED
+                and is_document_eligible_after_classification_approval(db, document)
+            )
+            if document.is_current != publication_current:
+                document.is_current = publication_current
+                db.flush()
             update_document_vector_metadata(
                 document.id,
                 review_status=document.review_status,
                 legal_status=document.legal_status,
                 category=document.category,
                 visibility=document.visibility,
-                is_current=document.is_current,
+                is_current=publication_current,
             )
+            db.commit()
     except Exception as exc:
         db.rollback()
         logger.exception(
@@ -457,8 +642,14 @@ def reclassify_document(db: Session, *, document_id: int, category: str, reviewe
                 "document_id": document_id,
                 "from_category": previous_category,
                 "to_category": category,
+                "from_project_id": previous_project_id,
+                "to_project_id": target_project_id,
             },
         )
+        if isinstance(exc, DocumentAIQuotaExceededError):
+            raise
+        if is_gemini_quota_error(exc):
+            raise DocumentAIQuotaExceededError() from exc
         if isinstance(exc, DocumentIngestionError):
             raise
         raise DocumentIngestionError(f"Could not reclassify document {document_id}.") from exc
@@ -471,6 +662,8 @@ def reclassify_document(db: Session, *, document_id: int, category: str, reviewe
             "document_id": document_id,
             "from_category": previous_category,
             "to_category": category,
+            "from_project_id": previous_project_id,
+            "to_project_id": target_project_id,
             "chunk_count": len(chunks),
             "is_current": document.is_current,
         },
@@ -625,7 +818,12 @@ def scan_conflicts_for(
 
 
 @contextmanager
-def _conflict_scope_lock(db: Session, document: Document) -> Iterator[None]:
+def _conflict_scope_lock(
+    db: Session,
+    document: Document,
+    *,
+    scope: tuple[str | None, str] | None = None,
+) -> Iterator[None]:
     """Use a MySQL advisory lock to serialize conflict scans for one scope.
 
     SQLite is used by unit tests and has no cross-connection advisory lock. Production
@@ -638,8 +836,9 @@ def _conflict_scope_lock(db: Session, document: Document) -> Iterator[None]:
         yield
         return
 
-    scope = f"{document.project_id or '__global__'}:{document.category}"
-    digest = hashlib.sha256(scope.encode("utf-8")).hexdigest()[:40]
+    scope_project_id, scope_category = scope or (document.project_id, str(document.category))
+    scope_key = f"{scope_project_id or '__global__'}:{scope_category}"
+    digest = hashlib.sha256(scope_key.encode("utf-8")).hexdigest()[:40]
     lock_name = f"salesmate-ingest:{digest}"
 
     # Every preceding ingestion write is committed at this point. End any read

@@ -6,22 +6,22 @@ Endpoint upload xử lý theo thứ tự:
 
 1. Tạo row `documents` ở trạng thái `pending`, sau đó chuyển sang `processing`.
 2. Kiểm tra magic bytes rồi parse PDF/DOCX thành các section có page; loại byte NUL, bỏ section rỗng và quét prompt injection.
-3. Classification dùng filename và phần mở đầu nội dung. Filename là tín hiệu ưu tiên, nhưng tiêu đề nội dung mâu thuẫn đủ mạnh có thể override.
-4. System chỉ auto-approve khi đồng thời `requires_admin_review=false` và `confidence >= classification_auto_approve_threshold`. Body-only, filename không được body xác nhận và filename/body mâu thuẫn đều chờ Admin, kể cả khi cấu hình hạ confidence threshold.
+3. Gửi filename và toàn bộ text đã parse sang Gemini bằng structured output schema. LLM chọn primary category và trả đầy đủ metadata hiện có (`subcategory`, scope, unit type, summary, version, dates, legal metadata, confidence, reason, `requires_admin_review`). Không còn keyword/regex classifier hoặc local fallback.
+4. Pydantic kiểm tra enum, kiểu ngày, confidence 0-1, danh sách và thứ tự ngày. API lỗi, response rỗng hoặc sai schema làm ingestion `failed` trước khi tạo vector. Response hợp lệ hiện được ingestion tự approve; `requires_admin_review` được lưu làm tín hiệu nhưng chưa chặn publish.
 5. Lưu metadata gợi ý vào MySQL và file gốc vào MinIO.
 6. Chunk theo category: legal, table (`price_list`, `inventory_snapshot`, `payment_schedule`) hoặc general.
 7. Embed theo batch và upsert Qdrant với `is_current=false`.
 8. Giữ MySQL advisory lock theo `project_id + category`, kết thúc snapshot đọc cũ rồi scan conflict/duplicate với các document `completed` cùng scope.
 9. Commit quyết định MySQL khi Qdrant vẫn bị quarantine. Chỉ document sạch, legal-active mới được publish `is_current=true`. Nếu publish mất ACK, MySQL vẫn giữ quyết định đã commit; audit sẽ phát hiện/retry drift thay vì đổi document thành `failed` và tạo trạng thái fail-open.
 
-RAG chỉ lấy point đồng thời thỏa `review_status=approved`, `is_current=true`, visibility và project filter.
+RAG lấy point đồng thời thỏa `is_current=true`, visibility và project filter. `review_status` hiện không nằm trong retrieval filter.
 
-## Classification và visibility do Admin duyệt
+## Chỉnh metadata sau ingestion và visibility
 
-- Classification chỉ được duyệt một lần khi document đang `completed` và `review_status=pending`.
+- Trang metadata liệt kê các document `completed` để Admin sửa thông tin LLM sau ingestion; đây không phải hàng đợi approval.
 - PATCH giữ nguyên các field không được gửi lên.
 - Đổi `category` trả `409` vì cần quarantine, conflict rescan và controlled re-index. Đổi `subdivision_names`, `building_codes` hoặc `unit_types` cũng trả `409` vì cần conflict rescan. UI hiện khóa các field này thay vì cho phép một payload-only correction không an toàn.
-- Approval chạy hai pha: pha 1 ghi metadata approved vào Qdrant với `is_current=false` trong khi giữ row lock, rồi commit MySQL; pha 2 lock/đọc lại row mới nhất và chỉ publish `is_current` thực tế. Lỗi pha 2 để document đã duyệt ở trạng thái quarantine an toàn.
+- Metadata update chạy hai pha: pha 1 ghi metadata vào Qdrant với `is_current=false` trong khi giữ row lock, rồi commit MySQL; pha 2 lock/đọc lại row mới nhất và chỉ publish `is_current` thực tế. Lỗi pha 2 để document ở trạng thái quarantine an toàn.
 - Legal status `not_yet_effective`, `expired`, `repealed` hoặc `replaced` luôn giữ `is_current=false`.
 - Visibility chỉ được đổi khi ingestion đã `completed`. `internal → public` quarantine trước, commit MySQL rồi publish từ row mới đọc lại. `public → internal` ghi mức hạn chế hơn vào Qdrant trước MySQL commit.
 

@@ -7,6 +7,7 @@ from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
 
+from backend.core import tracing
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,34 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 _client: genai.Client | None = None
 
 
+def is_gemini_quota_error(exc: BaseException) -> bool:
+    """Return whether ``exc`` (or one of its causes) is Gemini quota exhaustion.
+
+    Service layers deliberately wrap SDK exceptions before they cross their boundary.
+    Walking the exception chain here lets those layers retain a useful, provider-neutral
+    error for Admins without copying SDK response parsing throughout the application.
+    Only actual google-genai API errors qualify, so an unrelated service returning HTTP
+    429 cannot accidentally be reported as an AI quota problem.
+    """
+
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if isinstance(current, genai_errors.APIError):
+            if getattr(current, "code", None) == 429:
+                return True
+
+            body = getattr(current, "details", None)
+            error = body.get("error") if isinstance(body, dict) else None
+            if isinstance(error, dict) and error.get("status") == "RESOURCE_EXHAUSTED":
+                return True
+
+        current = current.__cause__ or current.__context__
+
+    return False
+
+
 def get_gemini_client() -> genai.Client:
     global _client
     if _client is None:
@@ -59,6 +88,8 @@ def generate_json(
     prompt: str,
     schema: type[ModelT],
     system_instruction: str | None = None,
+    *,
+    temperature: float | None = None,
 ) -> ModelT | None:
     """Generate a response constrained to `schema`, returning a parsed model instance.
 
@@ -73,6 +104,7 @@ def generate_json(
         system_instruction=system_instruction,
         response_mime_type="application/json",
         response_schema=schema,
+        temperature=temperature,
     )
 
     response = client_models_generate(prompt, config)
@@ -92,11 +124,23 @@ def client_models_generate(prompt: str, config):
     drift between the plain-text and schema-constrained paths."""
     for attempt in range(1, _GENERATE_MAX_ATTEMPTS + 1):
         try:
-            return get_gemini_client().models.generate_content(
+            response = get_gemini_client().models.generate_content(
                 model=settings.GEMINI_MODEL,
                 contents=prompt,
                 config=config,
             )
+            usage = getattr(response, "usage_metadata", None)
+            if usage is not None:
+                input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+                output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+                tracing.step(
+                    "llm.usage",
+                    model=settings.GEMINI_MODEL,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=int(getattr(usage, "total_token_count", 0) or input_tokens + output_tokens),
+                )
+            return response
         except genai_errors.APIError as exc:
             if exc.code not in _GENERATE_RETRY_STATUS_CODES or attempt == _GENERATE_MAX_ATTEMPTS:
                 raise

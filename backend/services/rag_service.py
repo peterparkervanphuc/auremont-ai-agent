@@ -33,7 +33,7 @@ from qdrant_client import models
 from backend.core.cohere_client import CohereRerankError
 from backend.core.cohere_client import rerank as cohere_rerank
 from backend.core.config import settings
-from backend.core.enums import DocumentVisibility
+from backend.core.enums import DocumentReviewStatus, DocumentVisibility
 from backend.core.gemini_client import GeminiEmbeddingError, embed_query
 from backend.core.qdrant_client import get_qdrant_client
 from backend.core.sparse_embedding import SparseEmbeddingError, embed_query_sparse
@@ -110,13 +110,15 @@ def retrieve(
                 extra={"event": "retrieval.sparse_embed.failed", "project_id": project_id},
             )
 
-    # No review_status condition: an uploaded document answers immediately. Everything that
-    # must stay out of retrieval for correctness — a duplicate, a document flagged as
-    # contradicting another, one whose legal status expired — has `is_current` cleared
-    # instead, so that single condition carries all of it (see ingestion_service, where
-    # is_current is computed from exactly those three).
+    # Defense in depth: ingestion also keeps pending suggestions at is_current=false, but
+    # requiring approval here prevents a stale/corrupt vector payload with is_current=true
+    # from grounding an answer before an Admin reviews a weak classification.
     conditions: list[models.Condition] = [
         _visibility_condition(visibility),
+        models.FieldCondition(
+            key="review_status",
+            match=models.MatchValue(value=DocumentReviewStatus.APPROVED),
+        ),
         models.FieldCondition(
             key="is_current",
             match=models.MatchValue(value=True),

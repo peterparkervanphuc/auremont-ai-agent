@@ -1,6 +1,10 @@
 import { extractErrorMessage } from "./errorMessage";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
+export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
+
+const apiUrl = new URL(API_BASE_URL, window.location.origin);
+apiUrl.pathname = apiUrl.pathname.replace(/\/api\/v1\/?$/, "");
+export const API_SERVER_URL = apiUrl.toString().replace(/\/$/, "");
 
 export class ApiError extends Error {
   status: number;

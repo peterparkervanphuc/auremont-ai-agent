@@ -20,7 +20,11 @@ from backend.models.user import User
 from backend.repositories.document import create_document
 from backend.routers import documents as documents_router
 from backend.schemas.document import DocumentCreate
-from backend.services.ingestion_service import DocumentIngestionError
+from backend.services.ingestion_service import (
+    AI_SERVICE_QUOTA_PUBLIC_MESSAGE,
+    DocumentAIQuotaExceededError,
+    DocumentIngestionError,
+)
 
 
 @pytest.fixture
@@ -148,7 +152,9 @@ def test_reclassifying_clears_the_answer_cache(client, monkeypatch, document):
 
     client.post(f"/api/v1/documents/{document.id}/reclassify", json={"category": "price_list"})
 
-    assert cleared == [True]
+    # Clear once before quarantine so old cached answers cannot bypass it, then again
+    # after the slow re-index in case a request repopulated the cache meanwhile.
+    assert cleared == [True, True]
 
 
 def test_an_unknown_category_is_rejected_before_any_work_starts(client, monkeypatch, document):
@@ -177,6 +183,24 @@ def test_a_failed_reclassify_reports_a_conflict(client, monkeypatch, document):
 
     assert response.status_code == 409
     assert "no stored original" in response.json()["detail"]
+
+
+def test_ai_quota_during_reclassification_is_safe_and_actionable(client, monkeypatch, document):
+    def _quota_exhausted(db, **kwargs):
+        try:
+            raise RuntimeError("provider payload with secret-key-value")
+        except RuntimeError as exc:
+            raise DocumentAIQuotaExceededError() from exc
+
+    monkeypatch.setattr(documents_router, "reclassify_document", _quota_exhausted)
+
+    response = client.post(f"/api/v1/documents/{document.id}/reclassify", json={"category": "price_list"})
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "60"
+    assert response.json()["detail"] == AI_SERVICE_QUOTA_PUBLIC_MESSAGE
+    assert "secret-key-value" not in response.text
+    assert "Gemini" not in response.text
 
 
 def test_a_sale_cannot_reclassify(db_session, sale, document):

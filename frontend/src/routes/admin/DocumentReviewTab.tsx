@@ -3,8 +3,10 @@ import { api } from "../../api/client";
 import type {
   DocumentCategory,
   DocumentClassificationUpdate,
+  DocumentReclassificationUpdate,
   DocumentResponse,
   LegalStatus,
+  ProjectResponse,
 } from "../../types";
 import { CheckIcon, InboxIcon, LoaderIcon } from "../../components/Icons";
 
@@ -27,8 +29,49 @@ function asText(values: string[] | null): string {
   return values?.join(", ") ?? "";
 }
 
-function payloadFrom(document: DocumentResponse): DocumentClassificationUpdate {
+type ScopeField = "subdivision_names" | "building_codes" | "unit_types";
+
+type ScopeText = Record<ScopeField, string>;
+type ProjectCatalogItem = Pick<ProjectResponse, "id" | "name" | "location">;
+
+function scopeTextFrom(document: DocumentResponse): ScopeText {
   return {
+    subdivision_names: asText(document.subdivision_names),
+    building_codes: asText(document.building_codes),
+    unit_types: asText(document.unit_types),
+  };
+}
+
+function asList(value: string): string[] | null {
+  const values = [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+  return values.length > 0 ? values : null;
+}
+
+function sameList(left: string[] | null, right: string[] | null): boolean {
+  return (left ?? []).join("\u0000") === (right ?? []).join("\u0000");
+}
+
+function hasStructuralChanges(
+  document: DocumentResponse,
+  draft: DocumentReclassificationUpdate,
+): boolean {
+  return document.category !== draft.category
+    || document.project_id !== draft.project_id
+    || !sameList(document.subdivision_names, draft.subdivision_names)
+    || !sameList(document.building_codes, draft.building_codes)
+    || !sameList(document.unit_types, draft.unit_types);
+}
+
+function withoutProjectId({
+  project_id: _projectId,
+  ...payload
+}: DocumentReclassificationUpdate): DocumentClassificationUpdate {
+  return payload;
+}
+
+function payloadFrom(document: DocumentResponse): DocumentReclassificationUpdate {
+  return {
+    project_id: document.project_id,
     category: document.category,
     subcategory: document.subcategory,
     subdivision_names: document.subdivision_names,
@@ -51,8 +94,14 @@ function payloadFrom(document: DocumentResponse): DocumentClassificationUpdate {
 
 export function DocumentReviewTab() {
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
+  const [projects, setProjects] = useState<ProjectCatalogItem[]>([]);
   const [selected, setSelected] = useState<DocumentResponse | null>(null);
-  const [draft, setDraft] = useState<DocumentClassificationUpdate | null>(null);
+  const [draft, setDraft] = useState<DocumentReclassificationUpdate | null>(null);
+  const [scopeText, setScopeText] = useState<ScopeText>({
+    subdivision_names: "",
+    building_codes: "",
+    unit_types: "",
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,8 +109,12 @@ export function DocumentReviewTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await api.get<DocumentResponse[]>("/documents/metadata-editable");
+      const [list, projectList] = await Promise.all([
+        api.get<DocumentResponse[]>("/documents/metadata-editable"),
+        api.get<ProjectCatalogItem[]>("/documents/project-catalog"),
+      ]);
       setDocuments(list);
+      setProjects(projectList);
       setSelected((current) => list.find((item) => item.id === current?.id) ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được danh sách tài liệu.");
@@ -75,11 +128,17 @@ export function DocumentReviewTab() {
   const select = (document: DocumentResponse) => {
     setSelected(document);
     setDraft(payloadFrom(document));
+    setScopeText(scopeTextFrom(document));
     setError(null);
   };
 
-  const update = <K extends keyof DocumentClassificationUpdate>(key: K, value: DocumentClassificationUpdate[K]) => {
+  const update = <K extends keyof DocumentReclassificationUpdate>(key: K, value: DocumentReclassificationUpdate[K]) => {
     setDraft((current) => current ? { ...current, [key]: value } : current);
+  };
+
+  const updateScope = (key: ScopeField, value: string) => {
+    setScopeText((current) => ({ ...current, [key]: value }));
+    update(key, asList(value));
   };
 
   const save = async () => {
@@ -87,7 +146,14 @@ export function DocumentReviewTab() {
     setSaving(true);
     setError(null);
     try {
-      await api.patch<DocumentResponse>(`/documents/${selected.id}/classification`, draft);
+      if (hasStructuralChanges(selected, draft)) {
+        await api.post<DocumentResponse>(`/documents/${selected.id}/reclassify`, draft);
+      } else {
+        await api.patch<DocumentResponse>(
+          `/documents/${selected.id}/classification`,
+          withoutProjectId(draft),
+        );
+      }
       setDocuments((current) => current.filter((item) => item.id !== selected.id));
       setSelected(null);
       setDraft(null);
@@ -101,7 +167,7 @@ export function DocumentReviewTab() {
   return (
     <div className="page">
       <h2 className="page-title">Metadata tài liệu</h2>
-      <p className="page-sub">Tài liệu trả lời được ngay sau khi upload — không cần duyệt. Trang này để sửa lại metadata nếu hệ thống nhận diện chưa đúng. Riêng <strong>Trạng thái pháp lý</strong> có tác dụng thật: đặt Hết hiệu lực / Bị bãi bỏ / Bị thay thế sẽ đưa tài liệu ra khỏi phạm vi AI dùng để trả lời.</p>
+      <p className="page-sub">Kết quả LLM đủ tin cậy được duyệt tự động. Tài liệu có bằng chứng mơ hồ hoặc điểm tin cậy thấp sẽ được cách ly tại đây và chỉ được AI sử dụng sau khi Admin xác nhận. Riêng <strong>Trạng thái pháp lý</strong> hết hiệu lực / bị bãi bỏ / bị thay thế luôn đưa tài liệu ra khỏi phạm vi trả lời.</p>
 
       {error && <div className="alert alert-danger" style={{ marginTop: 16 }}>{error}</div>}
 
@@ -115,7 +181,9 @@ export function DocumentReviewTab() {
             {documents.map((document) => (
               <button className={`review-item ${selected?.id === document.id ? "review-item--active" : ""}`} type="button" key={document.id} onClick={() => select(document)}>
                 <span className="data-row-title">{document.title}</span>
-                <span className="data-row-meta">{CATEGORIES.find(([key]) => key === document.category)?.[1] ?? "Khác"} · {document.classification_confidence ? `${Math.round(document.classification_confidence * 100)}%` : "Chưa rõ"}</span>
+                <span className="data-row-meta">
+                  {CATEGORIES.find(([key]) => key === document.category)?.[1] ?? "Khác"} · {document.classification_confidence !== null ? `${Math.round(document.classification_confidence * 100)}%` : "Chưa rõ"} · {document.review_status === "pending" ? "Cần duyệt" : "Đã duyệt"}
+                </span>
               </button>
             ))}
           </div>
@@ -123,18 +191,28 @@ export function DocumentReviewTab() {
           {selected && draft && (
             <section className="review-form">
               <h3 className="section-title">{selected.title}</h3>
+              <p className="review-reason">
+                Project: <strong>{selected.project_id ?? "Chưa xác định"}</strong> · Bộ phân loại: <strong>{selected.classification_version ?? "Legacy"}</strong>
+                {selected.classification_requires_admin_review ? " · LLM yêu cầu Admin kiểm tra" : ""}
+              </p>
               {selected.classification_reason && <p className="review-reason">Đề xuất hệ thống: {selected.classification_reason}</p>}
               <p className="review-reason">
-                Loại tài liệu và phạm vi conflict không sửa được ở đây vì chúng quyết định cách cắt nội dung
-                và cách đối chiếu mâu thuẫn. Muốn đổi loại tài liệu, dùng ô chọn loại ở tab Kho tài liệu —
-                thao tác đó sẽ cắt lại nội dung và quét mâu thuẫn lại.
+                Thay đổi dự án, loại tài liệu hoặc phạm vi conflict sẽ chạy lại luồng xử lý an toàn:
+                cách ly tài liệu, lập chỉ mục lại khi cần và quét mâu thuẫn trước khi cho AI sử dụng.
               </p>
               <div className="review-grid">
-                <label>Loại tài liệu<select value={draft.category} disabled>{CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                <label>Dự án<select value={draft.project_id ?? ""} onChange={(event) => update("project_id", event.target.value || null)}>
+                  <option value="">Không gắn dự án</option>
+                  {draft.project_id && !projects.some((project) => project.id === draft.project_id) && (
+                    <option value={draft.project_id}>{draft.project_id}</option>
+                  )}
+                  {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+                </select></label>
+                <label>Loại tài liệu<select value={draft.category} onChange={(event) => update("category", event.target.value as DocumentCategory)}>{CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                 <label>Phân loại phụ<input value={draft.subcategory ?? ""} onChange={(event) => update("subcategory", event.target.value || null)} /></label>
-                <label>Phân khu<input value={asText(draft.subdivision_names)} readOnly /></label>
-                <label>Tòa / block<input value={asText(draft.building_codes)} readOnly /></label>
-                <label>Loại căn<input value={asText(draft.unit_types)} readOnly /></label>
+                <label>Phân khu<input value={scopeText.subdivision_names} placeholder="Phân cách bằng dấu phẩy" onChange={(event) => updateScope("subdivision_names", event.target.value)} /></label>
+                <label>Tòa / block<input value={scopeText.building_codes} placeholder="Phân cách bằng dấu phẩy" onChange={(event) => updateScope("building_codes", event.target.value)} /></label>
+                <label>Loại căn<input value={scopeText.unit_types} placeholder="Phân cách bằng dấu phẩy" onChange={(event) => updateScope("unit_types", event.target.value)} /></label>
                 <label>Phạm vi áp dụng<input value={draft.applicable_area ?? ""} onChange={(event) => update("applicable_area", event.target.value || null)} /></label>
                 <label>Hiệu lực từ<input type="date" value={draft.effective_date ?? ""} onChange={(event) => update("effective_date", event.target.value || null)} /></label>
                 <label>Hết hiệu lực<input type="date" value={draft.expiry_date ?? ""} onChange={(event) => update("expiry_date", event.target.value || null)} /></label>
@@ -151,7 +229,7 @@ export function DocumentReviewTab() {
               </div>}
 
               <label className="review-summary">Tóm tắt<textarea value={draft.document_summary ?? ""} onChange={(event) => update("document_summary", event.target.value || null)} rows={4} /></label>
-              <button className="btn btn-primary" type="button" onClick={() => void save()} disabled={saving}>{saving ? <LoaderIcon size={16} className="icon-spin" /> : <CheckIcon size={16} />} {["expired", "repealed", "replaced"].includes(draft.legal_status) ? "Lưu và đưa ra khỏi phạm vi AI" : "Lưu thay đổi"}</button>
+              <button className="btn btn-primary" type="button" onClick={() => void save()} disabled={saving}>{saving ? <LoaderIcon size={16} className="icon-spin" /> : <CheckIcon size={16} />} {["expired", "repealed", "replaced"].includes(draft.legal_status) ? "Lưu và đưa ra khỏi phạm vi AI" : selected.review_status === "pending" ? "Xác nhận và cho phép AI sử dụng" : "Lưu thay đổi"}</button>
             </section>
           )}
         </div>

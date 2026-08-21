@@ -8,6 +8,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
@@ -19,7 +20,6 @@ from backend.core.audit import log_event
 from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import (
-    DocumentCategory,
     DocumentReviewStatus,
     DocumentStatus,
     DocumentVisibility,
@@ -34,25 +34,50 @@ from backend.repositories.document import (
     create_document,
     delete_document,
     get_document,
+    is_document_eligible_after_classification_approval,
     list_documents,
     list_documents_for_metadata_edit,
     update_document_classification,
     update_document_visibility,
 )
+from backend.repositories.project import get_project
 from backend.schemas.document import (
     DocumentClassificationUpdate,
     DocumentCreate,
     DocumentResponse,
 )
+from backend.schemas.document_reclassification import (
+    LegacyReclassificationCandidate,
+    ReclassificationApplyRequest,
+    ReclassificationApplyResponse,
+    ReclassificationApplyResult,
+    ReclassificationPreviewRequest,
+    ReclassificationPreviewResponse,
+)
 from backend.services.cache_service import clear_cache
+from backend.services.document_coverage_service import (
+    document_matches_project_scope,
+    project_scope_aliases,
+)
 from backend.services.ingestion_service import (
+    AI_SERVICE_QUOTA_PUBLIC_MESSAGE,
+    DocumentAIQuotaExceededError,
     DocumentIngestionError,
     PromptInjectionError,
+    _conflict_scope_lock,
     ingest_uploaded_document,
     reclassify_document,
     reindex_document,
     sanitize_and_scan,
 )
+from backend.services.legacy_reclassification_service import (
+    InvalidConfirmationToken,
+    LegacyReclassificationError,
+    apply_document_reclassification,
+    list_reclassification_candidates,
+    preview_document_reclassification,
+)
+from backend.services.project_metadata_service import classification_project_catalog
 from backend.services.vector_store_service import (
     VectorStoreError,
     delete_document_vectors,
@@ -68,6 +93,7 @@ router = APIRouter(
 )
 
 ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".docx"}
+_AI_QUOTA_RETRY_AFTER_SECONDS = 60
 
 # Leading bytes each accepted format must start with. The extension is attacker-chosen —
 # renaming an HTML or script file to .pdf passes an extension check — so the content is
@@ -84,6 +110,28 @@ def _content_matches_extension(suffix: str, file_bytes: bytes) -> bool:
     if not signatures:
         return False
     return any(file_bytes.startswith(signature) for signature in signatures)
+
+
+def _ai_quota_http_exception() -> HTTPException:
+    """Translate provider quota exhaustion without exposing provider response details."""
+
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=AI_SERVICE_QUOTA_PUBLIC_MESSAGE,
+        headers={"Retry-After": str(_AI_QUOTA_RETRY_AFTER_SECONDS)},
+    )
+
+
+def _validate_project_id(db: Session, project_id: str | None) -> str | None:
+    """Reject a stale/invented project selection before creating a document row."""
+
+    normalised_project_id = project_id.strip() if project_id else None
+    if normalised_project_id and get_project(db, normalised_project_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"project_id '{normalised_project_id}' does not exist in the project catalogue.",
+        )
+    return normalised_project_id
 
 
 class IngestRequest(BaseModel):
@@ -105,11 +153,132 @@ class VisibilityUpdateRequest(BaseModel):
     visibility: DocumentVisibility
 
 
-class ReclassifyRequest(BaseModel):
-    """The corrected category. Validated against the enum so a typo cannot create a
-    category nothing retrieves under."""
+class ReclassifyRequest(DocumentClassificationUpdate):
+    """A complete Admin correction that may change retrieval/conflict scope safely.
 
-    category: DocumentCategory
+    Category comes from ``DocumentClassificationUpdate`` and remains required. Project
+    is deliberately available only on this controlled quarantine/rescan endpoint, never
+    on the ordinary metadata PATCH.
+    """
+
+    project_id: str | None = None
+
+
+class ProjectCatalogItem(BaseModel):
+    id: str
+    name: str
+    location: str | None = None
+
+
+@router.get("/project-catalog", response_model=list[ProjectCatalogItem])
+def get_document_project_catalog(db: Session = Depends(get_db)) -> list[dict[str, str | None]]:
+    """Complete live catalogue used by both LLM resolution and Admin correction.
+
+    The public ``/projects`` catalogue intentionally hides rows without marketing
+    details. Those rows are still valid document foreign keys, so the review UI needs
+    this Admin-only list to avoid presenting a narrower choice set than the classifier.
+    """
+
+    return classification_project_catalog(db)
+
+
+@router.get(
+    "/llm-reclassification/candidates",
+    response_model=list[LegacyReclassificationCandidate],
+)
+def get_llm_reclassification_candidates(
+    legacy_only: bool = Query(default=True),
+    limit: int = Query(default=100, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> list[LegacyReclassificationCandidate]:
+    """List legacy stored originals that an Admin may explicitly preview.
+
+    This endpoint is read-only and never calls the LLM. ``legacy_only=true`` selects
+    rows whose persisted classifier version is null, rather than guessing from prose in
+    the old classification reason.
+    """
+
+    return list_reclassification_candidates(db, legacy_only=legacy_only, limit=limit)
+
+
+@router.post(
+    "/llm-reclassification/preview",
+    response_model=ReclassificationPreviewResponse,
+)
+def preview_llm_reclassification(
+    payload: ReclassificationPreviewRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
+) -> ReclassificationPreviewResponse:
+    """Run the current LLM on stored originals without changing MySQL or Qdrant."""
+
+    started = time.perf_counter()
+    items = [
+        preview_document_reclassification(db, document_id=document_id, admin_id=admin.id)
+        for document_id in payload.document_ids
+    ]
+    failed = sum(item.error is not None for item in items)
+    log_event(
+        "document.legacy_reclassification.preview",
+        admin_id=admin.id,
+        requested=len(payload.document_ids),
+        previewed=len(items) - failed,
+        failed=failed,
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
+    return ReclassificationPreviewResponse(items=items, previewed=len(items) - failed, failed=failed)
+
+
+@router.post(
+    "/llm-reclassification/apply",
+    response_model=ReclassificationApplyResponse,
+)
+def apply_llm_reclassification(
+    payload: ReclassificationApplyRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
+) -> ReclassificationApplyResponse:
+    """Apply only short-lived signed previews explicitly confirmed by an Admin."""
+
+    started = time.perf_counter()
+    results: list[ReclassificationApplyResult] = []
+    for item in payload.items:
+        # An apply can quarantine Qdrant and then fail before it reaches the normal
+        # success path. Clear before every attempt so a cached answer cannot bypass that
+        # quarantine. `clear_cache` is best-effort and never masks the apply result.
+        _clear_answer_cache()
+        try:
+            result = apply_document_reclassification(db, item=item, admin_id=admin.id)
+        except (InvalidConfirmationToken, LegacyReclassificationError, DocumentIngestionError) as exc:
+            db.rollback()
+            result = ReclassificationApplyResult(status="failed", error=str(exc))
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "Unexpected failure applying a legacy reclassification preview.",
+                extra={"event": "document.legacy_reclassification.unexpected_apply_failure", "admin_id": admin.id},
+            )
+            result = ReclassificationApplyResult(
+                status="failed",
+                error="Could not apply the reclassification. The document remains quarantined; check server logs.",
+            )
+        results.append(result)
+
+    failed = sum(item.error is not None for item in results)
+    applied = len(results) - failed
+    # A question may have repopulated the cache while a slow re-index was running.
+    # Clear again regardless of outcome because even a failed apply may have committed
+    # its fail-closed `is_current=false` transition.
+    _clear_answer_cache()
+    log_event(
+        "document.legacy_reclassification.apply",
+        admin_id=admin.id,
+        requested=len(payload.items),
+        applied=applied,
+        failed=failed,
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
+    return ReclassificationApplyResponse(items=results, applied=applied, failed=failed)
 
 
 @router.post(
@@ -168,6 +337,8 @@ async def upload_document(
             detail=(f"File exceeds the maximum allowed size of {settings.upload_max_bytes} bytes."),
         )
 
+    project_id = _validate_project_id(db, project_id)
+
     document = create_document(
         db,
         DocumentCreate(
@@ -212,6 +383,15 @@ async def upload_document(
             status=DocumentStatus.BLOCKED,
             message="Document blocked due to suspicious content.",
         )
+    except DocumentAIQuotaExceededError as exc:
+        log_event(
+            "document.ingest.failure",
+            document_id=document.id,
+            status=DocumentStatus.FAILED,
+            reason="ai_quota_exhausted",
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        raise _ai_quota_http_exception() from exc
     except DocumentIngestionError as exc:
         # ingestion_service has already moved the document to FAILED.
         log_event(
@@ -240,7 +420,11 @@ async def upload_document(
         message=(
             "Document was quarantined because identical content already exists."
             if duplicate_quarantined
-            else "Document uploaded and indexed successfully."
+            else (
+                "Document was classified and indexed, but is waiting for Admin metadata approval."
+                if document.review_status != DocumentReviewStatus.APPROVED
+                else "Document uploaded and indexed successfully."
+            )
         ),
     )
 
@@ -260,16 +444,18 @@ async def ingest_document(
         sanitize_and_scan(payload.raw_text)
     except PromptInjectionError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Chặn file: phát hiện rủi ro",
         ) from exc
+
+    project_id = _validate_project_id(db, payload.project_id)
 
     document = create_document(
         db,
         DocumentCreate(
             title=payload.title,
             file_path=payload.file_path,
-            project_id=payload.project_id,
+            project_id=project_id,
         ),
         uploaded_by=admin.id,
     )
@@ -296,6 +482,15 @@ async def reindex_document_endpoint(
     started = time.perf_counter()
     try:
         document = reindex_document(db, document_id=document_id)
+    except DocumentAIQuotaExceededError as exc:
+        log_event(
+            "document.reindex.failure",
+            document_id=document_id,
+            admin_id=admin.id,
+            reason="ai_quota_exhausted",
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        raise _ai_quota_http_exception() from exc
     except DocumentIngestionError as exc:
         log_event(
             "document.reindex.failure",
@@ -328,7 +523,7 @@ async def reclassify_document_endpoint(
     db: Session = Depends(get_db),
     admin: User = Depends(require_role(UserRole.ADMIN)),
 ) -> Document:
-    """Correct a document's category, re-chunking and re-scanning it for conflicts.
+    """Correct category/project/scope under quarantine, then re-scan conflicts.
 
     The classification-review endpoint deliberately refuses category changes, since the
     category decides how the file is chunked and how conflicts are compared. This is the
@@ -336,18 +531,44 @@ async def reclassify_document_endpoint(
     document was to delete it, rename the file and upload it again.
     """
     started = time.perf_counter()
+    updates = payload.model_dump(exclude_unset=True)
+    category = updates.pop("category")
+    if "project_id" in updates:
+        updates["project_id"] = _validate_project_id(db, updates.get("project_id"))
+    # A partial failure can leave the document safely quarantined. Clear before starting
+    # so a semantic-cache hit cannot continue serving an answer from its old scope.
+    _clear_answer_cache()
     try:
+        reclassification_kwargs: dict[str, object] = {
+            "document_id": document_id,
+            "category": category,
+            "reviewed_by": admin.id,
+        }
+        # Keep the original category-only call contract for existing integrations;
+        # controlled metadata is passed only when the Admin actually supplied it.
+        if updates:
+            reclassification_kwargs["metadata_updates"] = updates
         document = reclassify_document(
             db,
-            document_id=document_id,
-            category=payload.category,
-            reviewed_by=admin.id,
+            **reclassification_kwargs,
         )
+    except DocumentAIQuotaExceededError as exc:
+        log_event(
+            "document.reclassify.failure",
+            document_id=document_id,
+            to_category=category,
+            to_project_id=updates.get("project_id"),
+            admin_id=admin.id,
+            reason="ai_quota_exhausted",
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        raise _ai_quota_http_exception() from exc
     except DocumentIngestionError as exc:
         log_event(
             "document.reclassify.failure",
             document_id=document_id,
-            to_category=payload.category,
+            to_category=category,
+            to_project_id=updates.get("project_id"),
             admin_id=admin.id,
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
@@ -360,7 +581,8 @@ async def reclassify_document_endpoint(
     log_event(
         "document.reclassify.success",
         document_id=document.id,
-        to_category=payload.category,
+        to_category=category,
+        to_project_id=document.project_id,
         is_current=document.is_current,
         admin_id=admin.id,
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
@@ -372,9 +594,25 @@ async def reclassify_document_endpoint(
 
 @router.get("", response_model=list[DocumentResponse])
 async def get_documents(
+    coverage_scope: str | None = Query(default=None, min_length=1),
     db: Session = Depends(get_db),
 ) -> list[Document]:
-    return list_documents(db)
+    documents = list_documents(db)
+    if coverage_scope is None:
+        return documents
+
+    project = get_project(db, coverage_scope)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Coverage project not found.",
+        )
+    aliases = project_scope_aliases(project)
+    return [
+        document
+        for document in documents
+        if document_matches_project_scope(document, project, aliases)
+    ]
 
 
 @router.get("/{document_id}/view-url")
@@ -563,8 +801,8 @@ async def get_documents_for_metadata_edit(
 ) -> list[Document]:
     """Ingested documents whose metadata an Admin can still correct.
 
-    Not an approval queue — nothing waits for review to become answerable. This exists so
-    legal status, effective dates and version labels can be fixed after ingestion.
+    Includes the pending-review queue as well as previously approved documents whose
+    metadata an Admin may need to correct later.
     """
 
     return list_documents_for_metadata_edit(db)
@@ -582,9 +820,9 @@ async def update_document_metadata(
 ) -> DocumentResponse:
     """Correct a document's metadata after ingestion.
 
-    Not an approval step — the document already answers. This matters because some of the
-    metadata is load-bearing: `legal_status` decides whether the document stays retrievable
-    at all, so setting it to expired/repealed here takes it out of retrieval.
+    For a pending LLM suggestion this is the approval step. For an approved document it is
+    a metadata correction. `legal_status` remains load-bearing: setting it to
+    expired/repealed takes the document out of retrieval.
     """
 
     # Phase 1 writes the new metadata with the document quarantined, while holding its row
@@ -594,6 +832,7 @@ async def update_document_metadata(
         existing = get_document(db, document_id, for_update=True)
         if existing is None:
             raise ValueError(f"Document with id={document_id} not found.")
+        was_pending_review = existing.review_status == DocumentReviewStatus.PENDING
         document = update_document_classification(
             db,
             document_id=document_id,
@@ -640,25 +879,45 @@ async def update_document_metadata(
     # quarantined the document between phases; publishing the fresh is_current value
     # cannot undo that newer decision.
     try:
-        refreshed = get_document(db, document_id, for_update=True)
-        if refreshed is None:  # pragma: no cover - deletion also requires the row lock
-            raise ValueError(f"Document with id={document_id} not found.")
-        document = refreshed
-        update_document_vector_metadata(
-            document.id,
-            review_status=document.review_status,
-            legal_status=document.legal_status,
-            category=document.category,
-            visibility=document.visibility,
-            is_current=_safe_vector_current(document),
-        )
-        db.commit()
-        db.refresh(document)
+        with _conflict_scope_lock(db, document):
+            refreshed = get_document(db, document_id, for_update=True)
+            if refreshed is None:  # pragma: no cover - deletion also requires the row lock
+                raise ValueError(f"Document with id={document_id} not found.")
+            document = refreshed
+            if was_pending_review:
+                # Re-evaluate under the same scope lock used by ingestion. An OPEN
+                # conflict/relation created after phase 1 can no longer race this publish.
+                document.is_current = is_document_eligible_after_classification_approval(db, document)
+
+            # MySQL becomes authoritative before Qdrant is activated. The commit releases
+            # the row lock, so acquire it again immediately afterwards; a concurrent
+            # quarantine that wins this small race must be reflected in publication.
+            db.commit()
+            refreshed = get_document(db, document_id, for_update=True)
+            if refreshed is None:  # pragma: no cover - deletion also requires this row lock
+                raise ValueError(f"Document with id={document_id} not found.")
+            document = refreshed
+            publication_current = bool(
+                _safe_vector_current(document)
+                and is_document_eligible_after_classification_approval(db, document)
+            )
+            if document.is_current != publication_current:
+                document.is_current = publication_current
+                db.flush()
+            update_document_vector_metadata(
+                document.id,
+                review_status=document.review_status,
+                legal_status=document.legal_status,
+                category=document.category,
+                visibility=document.visibility,
+                is_current=publication_current,
+            )
+            db.commit()
         # Approval is what makes a document retrievable, so questions answered "we have no
         # information on that" before now must not keep serving from the cache.
         _clear_answer_cache()
         return document
-    except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
+    except (DocumentIngestionError, VectorStoreError, SQLAlchemyError, ValueError) as exc:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -696,7 +955,7 @@ def _safe_vector_current(document: Document) -> bool:
     return bool(
         document.is_current
         and document.status == DocumentStatus.COMPLETED
-        and document.review_status != DocumentReviewStatus.REJECTED
+        and document.review_status == DocumentReviewStatus.APPROVED
         and document.legal_status
         not in {
             LegalStatus.NOT_YET_EFFECTIVE,

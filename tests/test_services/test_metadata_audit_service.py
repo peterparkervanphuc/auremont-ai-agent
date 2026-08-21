@@ -200,7 +200,11 @@ def test_payload_sync_never_activates_an_endpoint_of_unsafe_open_conflict():
 
 def test_report_detects_exact_source_duplicates_without_repeating_parsed_duplicate():
     documents = [_document(1), _document(2)]
-    classification = DocumentClassification(category=DocumentCategory.PRICE_LIST, legal_status=LegalStatus.UNKNOWN)
+    classification = DocumentClassification(
+        category=DocumentCategory.PRICE_LIST,
+        legal_status=LegalStatus.UNKNOWN,
+        requires_admin_review=False,
+    )
     probes = {
         1: ContentProbe(
             document_id=1,
@@ -256,6 +260,7 @@ def test_report_marks_reclassification_as_suggestion_only():
             category=DocumentCategory.PRICE_LIST,
             confidence=0.93,
             reason="filename: bang gia",
+            requires_admin_review=False,
         ),
     )
     scan = VectorScan(collection_exists=True, point_count=1, documents={1: _vector_snapshot(document)})

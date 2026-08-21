@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_port: int = Field(default=8000, ge=1, le=65535)
     app_host: str = "0.0.0.0"
+    # Business dashboards group UTC-naive database timestamps by the team's
+    # local calendar day. Keep this configurable for deployments in other regions.
+    business_timezone: str = "Asia/Bangkok"
     log_level: str = "INFO"
     # None = auto-select: JSON in production/staging (machine-readable), plain
     # text in dev (human-readable). Set LOG_JSON=true/false to force one mode
@@ -51,6 +54,10 @@ class Settings(BaseSettings):
     # Gemini
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    # A classification is published without human review only when the model both
+    # declines to request review and reaches this confidence.  Keep the threshold in
+    # configuration so deployments can tighten it after evaluating their own corpus.
+    classification_auto_approve_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
 
     # CORS
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
@@ -98,6 +105,12 @@ class Settings(BaseSettings):
     # in production; turn it on while gathering runs to build an eval set from.
     tracing_enabled: bool = False
     trace_file: str = "eval/runs.jsonl"
+    # Used only by the Admin observability dashboard. Defaults to zero instead of
+    # baking a provider price into the app: model pricing changes and deployments
+    # can have negotiated rates. Configure both values to enable cost estimates.
+    token_input_cost_per_million_usd: float = Field(default=0.0, ge=0)
+    token_output_cost_per_million_usd: float = Field(default=0.0, ge=0)
+    admin_presence_window_minutes: int = Field(default=15, ge=1, le=1440)
 
     # Long-term memory (Redis). Ho so ghi nho theo tung nguoi dung — KHONG phai
     # nguon su that: Redis chet thi pipeline van tra loi day du, chi mat ca nhan hoa.
