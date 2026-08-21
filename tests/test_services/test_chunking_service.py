@@ -214,3 +214,84 @@ def test_chunk_sections_table_chunks_do_not_exceed_chunk_chars():
     chunks = chunk_sections(sections, chunk_chars=100, overlap_chars=20)
 
     assert all(len(chunk.text) <= 100 for chunk in chunks)
+
+
+def test_legal_chunking_preserves_article_clause_and_point_breadcrumbs():
+    sections = [
+        ParsedSection(
+            text=(
+                "CHƯƠNG II QUYỀN VÀ NGHĨA VỤ\n"
+                "Điều 12. Nghĩa vụ cung cấp thông tin\n"
+                "1. Chủ đầu tư phải công khai thông tin dự án.\n"
+                "a) Thông tin về giá bán và tiến độ thanh toán.\n"
+                "b) Thông tin về tình trạng pháp lý của dự án.\n"
+                "2. Thông tin phải chính xác và đầy đủ.\n"
+                "Điều 13. Hiệu lực áp dụng\n"
+                "1. Điều này có hiệu lực từ ngày 01/08/2026."
+            ),
+            page=4,
+        )
+    ]
+
+    chunks = chunk_sections(
+        sections,
+        chunk_chars=260,
+        overlap_chars=30,
+        document_category="legal_document",
+    )
+
+    assert all(chunk.page == 4 for chunk in chunks)
+    assert any("Điều 12" in chunk.text and "Khoản 1" in chunk.text and "Điểm a" in chunk.text for chunk in chunks)
+    assert any("Điều 12" in chunk.text and "Khoản 2" in chunk.text for chunk in chunks)
+    assert any("Điều 13" in chunk.text and "Khoản 1" in chunk.text for chunk in chunks)
+    assert not any("Điều 12" in chunk.text and "Điều 13" in chunk.text for chunk in chunks)
+
+
+def test_price_table_repeats_header_and_never_splits_a_row():
+    header = "| Mã căn | Loại căn | Diện tích | Giá bán |"
+    separator = "| --- | --- | --- | --- |"
+    rows = [f"| BE1-{number:02d} | 2PN | 68 m2 | {3.2 + number / 10:.1f} tỷ |" for number in range(8)]
+    sections = [
+        ParsedSection(
+            text="\n".join([header, separator, *rows]),
+            page=7,
+        )
+    ]
+
+    chunks = chunk_sections(
+        sections,
+        chunk_chars=150,
+        overlap_chars=20,
+        document_category="price_list",
+    )
+
+    assert len(chunks) > 1
+    assert all(header in chunk.text for chunk in chunks)
+    assert all(separator in chunk.text for chunk in chunks)
+    for row in rows:
+        assert sum(row in chunk.text for chunk in chunks) == 1
+
+
+def test_price_table_recognises_pdf_rows_separated_by_multiple_spaces():
+    sections = [
+        ParsedSection(
+            text=(
+                "Mã căn    Loại căn    Diện tích    Giá bán\n"
+                "A-101     2PN          68 m2         3.5 tỷ\n"
+                "A-102     3PN          92 m2         4.8 tỷ"
+            ),
+            page=9,
+        )
+    ]
+
+    chunks = chunk_sections(
+        sections,
+        chunk_chars=100,
+        overlap_chars=10,
+        document_category="price_list",
+    )
+
+    assert len(chunks) == 2
+    assert all("Mã căn" in chunk.text for chunk in chunks)
+    assert any("A-101" in chunk.text and "3.5 tỷ" in chunk.text for chunk in chunks)
+    assert any("A-102" in chunk.text and "4.8 tỷ" in chunk.text for chunk in chunks)

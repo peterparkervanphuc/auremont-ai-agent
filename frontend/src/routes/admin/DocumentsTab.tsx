@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type {
   DocumentResponse,
@@ -59,14 +60,20 @@ interface UploadQueueItem {
 }
 
 export function DocumentsTab() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
   const [queue, setQueue] = useState<UploadQueueItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   // Which project the uploaded document belongs to. Retrieval filters on this, and
   // conflict detection only compares documents within the same project.
-  const [projectId, setProjectId] = useState<string>("");
+  const [projectId, setProjectId] = useState<string>(() => searchParams.get("project_id") ?? "");
+  const categoryFilter = searchParams.get("category") ?? "";
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const filteredDocuments = documents.filter((document) =>
+    (!searchParams.get("project_id") || document.project_id === searchParams.get("project_id")) &&
+    (!categoryFilter || document.category === categoryFilter)
+  );
 
   const uploading = queue.some((item) => item.status === "pending" || item.status === "uploading");
 
@@ -221,7 +228,8 @@ export function DocumentsTab() {
         </select>
         {!projectId && (
           <span className="upload-project-hint">
-            Nên chọn dự án để lọc tài liệu khi tư vấn và phát hiện mâu thuẫn.
+            Để trống nghĩa là tài liệu áp dụng chung: Sale không lọc được theo dự án, và hệ thống chỉ đối
+            chiếu mâu thuẫn với các tài liệu cũng không gắn dự án và cùng phân khu / tòa / loại căn.
           </span>
         )}
       </div>
@@ -305,7 +313,9 @@ export function DocumentsTab() {
       <div style={{ marginTop: 32 }}>
         <h3 className="section-title">Danh sách tài liệu</h3>
 
-        {documents.length === 0 ? (
+        {(searchParams.get("project_id") || categoryFilter) && <div className="document-filter-notice"><span>Đang xem tài liệu được chọn từ dashboard.</span><button type="button" onClick={() => setSearchParams({})}>Xóa bộ lọc</button></div>}
+
+        {filteredDocuments.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">
               <InboxIcon size={26} />
@@ -314,7 +324,7 @@ export function DocumentsTab() {
           </div>
         ) : (
           <div className="data-list">
-            {documents.map((document) => {
+            {filteredDocuments.map((document) => {
               const displayStatus =
                 STATUS_LABEL[document.status] ?? {
                   text: document.status,

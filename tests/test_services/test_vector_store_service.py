@@ -329,6 +329,8 @@ def test_update_document_vector_metadata_updates_only_one_document(qdrant):
         review_status="approved",
         legal_status="effective",
         category="legal_document",
+        visibility="internal",
+        is_current=False,
     )
 
     assert len(qdrant.set_payload_calls) == 1
@@ -338,6 +340,7 @@ def test_update_document_vector_metadata_updates_only_one_document(qdrant):
         "review_status": "approved",
         "legal_status": "effective",
         "category": "legal_document",
-        "is_current": True,
+        "visibility": "internal",
+        "is_current": False,
     }
     assert call["wait"] is True

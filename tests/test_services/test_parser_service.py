@@ -121,6 +121,59 @@ def test_parse_docx_returns_text_without_page(tmp_path):
     assert "Chinh sach ban hang" in sections[0].text
 
 
+def test_parse_docx_reads_tables_in_document_order(tmp_path):
+    """Bảng chiết khấu/tiến độ trong file Word phải vào được kho tri thức.
+
+    `document.paragraphs` bỏ qua bảng, nên trước đây file ingest "thành công" mà
+    toàn bộ con số biến mất — không có cảnh báo nào cho Admin.
+    """
+    path = tmp_path / "csbh.docx"
+
+    document = Document()
+    document.add_paragraph("II. CHINH SACH CHIET KHAU")
+    table = document.add_table(rows=3, cols=3)
+    for row_index, cells in enumerate(
+        [
+            ("Loai can", "Chiet khau", "Dieu kien"),
+            ("2PN", "5%", "Thanh toan som 95%"),
+            ("3PN", "7%", "Thanh toan som 95%"),
+        ]
+    ):
+        for column_index, value in enumerate(cells):
+            table.cell(row_index, column_index).text = value
+    document.add_paragraph("Uu dai khong cong don voi chuong trinh khac.")
+    document.save(path)
+
+    sections = parse_document(path.name, path.read_bytes())
+    text = sections[0].text
+
+    assert "2PN" in text and "5%" in text
+    assert "3PN" in text and "7%" in text
+    # Thứ tự đọc phải giữ: tiêu đề trước bảng, ghi chú sau bảng.
+    assert text.index("CHINH SACH CHIET KHAU") < text.index("2PN") < text.index("khong cong don")
+    # Dạng pipe + dòng phân cách để chunking_service nhận ra là bảng và lặp header.
+    assert "| Loai can | Chiet khau | Dieu kien |" in text
+    assert "| --- | --- | --- |" in text
+
+
+def test_parse_docx_with_only_a_table_is_not_treated_as_empty(tmp_path):
+    """Bảng giá thuần (không có đoạn văn nào) trước đây bị coi là file rỗng."""
+    path = tmp_path / "bang-gia.docx"
+
+    document = Document()
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Ma can"
+    table.cell(0, 1).text = "Gia"
+    table.cell(1, 0).text = "BE1-1201"
+    table.cell(1, 1).text = "3.5 ty"
+    document.save(path)
+
+    sections = parse_document(path.name, path.read_bytes())
+
+    assert "BE1-1201" in sections[0].text
+    assert "3.5 ty" in sections[0].text
+
+
 def test_parse_rejects_unsupported_extension():
     with pytest.raises(UnsupportedDocumentTypeError):
         parse_document("bang-gia.xlsx", b"not relevant")

@@ -7,9 +7,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.core.deps import get_current_user
-from backend.core.enums import DocumentReviewStatus, LegalStatus, UserRole
+from backend.core.enums import DocumentReviewStatus, DocumentStatus, LegalStatus, UserRole
 from backend.core.mysql_client import Base, get_db
 from backend.main import app
+from backend.models.document_relation import DocumentRelation
 from backend.models.user import User
 from backend.repositories.document import create_document, get_document
 from backend.routers import document_relations as relations_router
@@ -54,6 +55,8 @@ def test_approved_replacement_retires_the_old_document(client, db_session):
     new = create_document(db_session, DocumentCreate(title="CSBH tháng 08"))
     old.review_status = DocumentReviewStatus.APPROVED
     new.review_status = DocumentReviewStatus.APPROVED
+    old.status = DocumentStatus.COMPLETED
+    new.status = DocumentStatus.COMPLETED
     db_session.commit()
 
     created = client.post(
@@ -74,6 +77,7 @@ def test_approved_replacement_retires_the_old_document(client, db_session):
     assert response.status_code == 200, response.text
     assert response.json()["review_status"] == "approved"
     assert get_document(db_session, old.id).is_current is False
+    assert get_document(db_session, old.id).status == DocumentStatus.BLOCKED
     assert get_document(db_session, new.id).is_current is True
 
 
@@ -81,6 +85,10 @@ def test_approved_repeal_marks_legal_document_repealed(client, db_session):
     old = create_document(db_session, DocumentCreate(title="Nghị định cũ"))
     new = create_document(db_session, DocumentCreate(title="Nghị định mới"))
     old.legal_status = LegalStatus.EFFECTIVE
+    old.status = DocumentStatus.COMPLETED
+    old.review_status = DocumentReviewStatus.APPROVED
+    new.status = DocumentStatus.COMPLETED
+    new.review_status = DocumentReviewStatus.APPROVED
     db_session.commit()
 
     created = client.post(
@@ -113,3 +121,164 @@ def test_relation_cannot_link_a_document_to_itself(client, db_session):
         },
     )
     assert response.status_code == 400
+
+
+def test_vector_failure_rolls_back_relation_review(client, db_session, monkeypatch):
+    old = create_document(db_session, DocumentCreate(title="CSBH cũ"))
+    new = create_document(db_session, DocumentCreate(title="CSBH mới"))
+    old.status = DocumentStatus.COMPLETED
+    old.review_status = DocumentReviewStatus.APPROVED
+    new.status = DocumentStatus.COMPLETED
+    new.review_status = DocumentReviewStatus.APPROVED
+    db_session.commit()
+    created = client.post(
+        "/api/v1/document-relations",
+        json={
+            "source_document_id": new.id,
+            "target_document_id": old.id,
+            "relation_type": "replaces",
+        },
+    )
+
+    def fail_sync(*_args, **_kwargs):
+        raise relations_router.VectorStoreError("Qdrant unavailable")
+
+    monkeypatch.setattr(relations_router, "update_document_vector_metadata", fail_sync)
+
+    response = client.post(
+        f"/api/v1/document-relations/{created.json()['id']}/review",
+        json={"approve": True},
+    )
+
+    assert response.status_code == 503
+    db_session.expire_all()
+    relation = db_session.get(DocumentRelation, created.json()["id"])
+    assert relation.review_status == DocumentReviewStatus.PENDING
+    assert get_document(db_session, old.id).is_current is True
+
+
+def test_ineligible_source_cannot_retire_a_current_document(client, db_session):
+    target = create_document(db_session, DocumentCreate(title="Tài liệu đang dùng"))
+    source = create_document(db_session, DocumentCreate(title="Tài liệu upload lỗi"))
+    target.status = DocumentStatus.COMPLETED
+    target.review_status = DocumentReviewStatus.APPROVED
+    source.status = DocumentStatus.FAILED
+    source.review_status = DocumentReviewStatus.REJECTED
+    db_session.commit()
+    created = client.post(
+        "/api/v1/document-relations",
+        json={
+            "source_document_id": source.id,
+            "target_document_id": target.id,
+            "relation_type": "replaces",
+        },
+    )
+
+    response = client.post(
+        f"/api/v1/document-relations/{created.json()['id']}/review",
+        json={"approve": True},
+    )
+
+    assert response.status_code == 400
+    db_session.expire_all()
+    assert get_document(db_session, target.id).is_current is True
+
+
+def test_not_yet_effective_source_cannot_retire_current_document(client, db_session):
+    target = create_document(db_session, DocumentCreate(title="Tài liệu đang dùng"))
+    source = create_document(db_session, DocumentCreate(title="Văn bản chưa hiệu lực"))
+    for document in (target, source):
+        document.status = DocumentStatus.COMPLETED
+        document.review_status = DocumentReviewStatus.APPROVED
+    source.legal_status = LegalStatus.NOT_YET_EFFECTIVE
+    source.is_current = False
+    db_session.commit()
+    created = client.post(
+        "/api/v1/document-relations",
+        json={
+            "source_document_id": source.id,
+            "target_document_id": target.id,
+            "relation_type": "replaces",
+        },
+    )
+
+    response = client.post(
+        f"/api/v1/document-relations/{created.json()['id']}/review",
+        json={"approve": True},
+    )
+
+    assert response.status_code == 400
+    db_session.expire_all()
+    assert get_document(db_session, target.id).is_current is True
+
+
+def test_processing_target_cannot_be_retired_during_ingestion(client, db_session):
+    target = create_document(db_session, DocumentCreate(title="Tài liệu đang ingest"))
+    source = create_document(db_session, DocumentCreate(title="Tài liệu thay thế"))
+    target.status = DocumentStatus.PROCESSING
+    target.review_status = DocumentReviewStatus.APPROVED
+    source.status = DocumentStatus.COMPLETED
+    source.review_status = DocumentReviewStatus.APPROVED
+    db_session.commit()
+    created = client.post(
+        "/api/v1/document-relations",
+        json={
+            "source_document_id": source.id,
+            "target_document_id": target.id,
+            "relation_type": "replaces",
+        },
+    )
+
+    response = client.post(
+        f"/api/v1/document-relations/{created.json()['id']}/review",
+        json={"approve": True},
+    )
+
+    assert response.status_code == 400
+    db_session.expire_all()
+    assert get_document(db_session, target.id).status == DocumentStatus.PROCESSING
+
+
+def test_unknown_relation_commit_outcome_keeps_target_quarantined(
+    client,
+    db_session,
+    monkeypatch,
+):
+    target = create_document(db_session, DocumentCreate(title="Tài liệu cũ"))
+    source = create_document(db_session, DocumentCreate(title="Tài liệu mới"))
+    for document in (target, source):
+        document.status = DocumentStatus.COMPLETED
+        document.review_status = DocumentReviewStatus.APPROVED
+    db_session.commit()
+    created = client.post(
+        "/api/v1/document-relations",
+        json={
+            "source_document_id": source.id,
+            "target_document_id": target.id,
+            "relation_type": "replaces",
+        },
+    )
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        relations_router,
+        "update_document_vector_metadata",
+        lambda _document_id, **metadata: calls.append(metadata["is_current"]),
+    )
+    real_commit = db_session.commit
+
+    def commit_then_lose_ack():
+        real_commit()
+        raise relations_router.SQLAlchemyError("lost commit acknowledgement")
+
+    db_session.commit = commit_then_lose_ack
+
+    response = client.post(
+        f"/api/v1/document-relations/{created.json()['id']}/review",
+        json={"approve": True},
+    )
+
+    assert response.status_code == 503
+    db_session.expire_all()
+    assert db_session.get(DocumentRelation, created.json()["id"]).review_status == DocumentReviewStatus.APPROVED
+    assert get_document(db_session, target.id).is_current is False
+    assert calls == [False]

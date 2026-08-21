@@ -10,6 +10,7 @@ from backend.core.deps import get_current_user
 from backend.core.enums import (
     DocumentCategory,
     DocumentReviewStatus,
+    DocumentStatus,
     LegalStatus,
     UserRole,
 )
@@ -78,16 +79,16 @@ def client(db_session, admin):
     app.dependency_overrides[get_current_user] = lambda: admin
     # API tests exercise the DB contract; Qdrant is tested independently.
     original_metadata_sync = documents_router.update_document_vector_metadata
-    original_visibility_sync = documents_router.update_document_vector_visibility
     original_clear_cache = documents_router.clear_cache
-    documents_router.update_document_vector_metadata = lambda *_args, **_kwargs: None
-    documents_router.update_document_vector_visibility = lambda *_args, **_kwargs: None
+    vector_sync_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    documents_router.update_document_vector_metadata = lambda *args, **kwargs: vector_sync_calls.append((args, kwargs))
     documents_router.clear_cache = lambda: None
 
-    yield TestClient(app)
+    test_client = TestClient(app)
+    test_client.vector_sync_calls = vector_sync_calls
+    yield test_client
 
     documents_router.update_document_vector_metadata = original_metadata_sync
-    documents_router.update_document_vector_visibility = original_visibility_sync
     documents_router.clear_cache = original_clear_cache
     app.dependency_overrides.clear()
 
@@ -99,16 +100,24 @@ def test_pending_review_returns_only_unapproved_documents(
 ):
     pending = create_document(
         db_session,
-        DocumentCreate(title="CSBH The Beverly T8.pdf"),
+        DocumentCreate(title="CSBH The Beverly T8.pdf", category=DocumentCategory.SALES_POLICY),
         uploaded_by=admin.id,
     )
+    pending.status = DocumentStatus.COMPLETED
 
     approved = create_document(
         db_session,
         DocumentCreate(title="Bang gia The Beverly T8.pdf"),
         uploaded_by=admin.id,
     )
+    approved.status = DocumentStatus.COMPLETED
     approved.review_status = DocumentReviewStatus.APPROVED
+    processing = create_document(
+        db_session,
+        DocumentCreate(title="Dang ingest.pdf"),
+        uploaded_by=admin.id,
+    )
+    processing.status = DocumentStatus.PROCESSING
     db_session.commit()
 
     response = client.get("/api/v1/documents/pending-review")
@@ -118,6 +127,7 @@ def test_pending_review_returns_only_unapproved_documents(
     document_ids = [item["id"] for item in response.json()]
     assert pending.id in document_ids
     assert approved.id not in document_ids
+    assert processing.id not in document_ids
 
 
 def test_admin_can_approve_project_document_classification(
@@ -127,9 +137,17 @@ def test_admin_can_approve_project_document_classification(
 ):
     document = create_document(
         db_session,
-        DocumentCreate(title="CSBH The Beverly T8.pdf"),
+        DocumentCreate(
+            title="CSBH The Beverly T8.pdf",
+            category=DocumentCategory.SALES_POLICY,
+            subdivision_names=["The Beverly"],
+            building_codes=["BE1", "BE2"],
+            unit_types=["1PN+", "2PN", "3PN"],
+        ),
         uploaded_by=admin.id,
     )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
 
     response = client.patch(
         f"/api/v1/documents/{document.id}/classification",
@@ -162,6 +180,357 @@ def test_admin_can_approve_project_document_classification(
     assert body["reviewed_at"] is not None
 
 
+def test_classification_approval_preserves_conflict_quarantine(
+    client,
+    db_session,
+    admin,
+):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="CSBH can Admin chon.pdf", category=DocumentCategory.SALES_POLICY),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    document.is_current = False
+    db_session.commit()
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/classification",
+        json={"category": "sales_policy", "legal_status": "unknown"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert client.vector_sync_calls[-1][1]["is_current"] is False
+
+
+def test_classification_cannot_be_reviewed_twice(client, db_session, admin):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="CSBH da duyet.pdf", category=DocumentCategory.SALES_POLICY),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+    payload = {"category": "sales_policy", "legal_status": "unknown"}
+
+    first = client.patch(f"/api/v1/documents/{document.id}/classification", json=payload)
+    second = client.patch(f"/api/v1/documents/{document.id}/classification", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+
+
+def test_processing_document_cannot_be_approved_or_activated(client, db_session, admin):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="CSBH dang xu ly.pdf", category=DocumentCategory.SALES_POLICY),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.PROCESSING
+    db_session.commit()
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/classification",
+        json={"category": "sales_policy"},
+    )
+
+    assert response.status_code == 409
+    assert client.vector_sync_calls == []
+
+
+@pytest.mark.parametrize(
+    ("initial", "payload"),
+    [
+        (
+            DocumentCreate(title="Sai category.pdf", category=DocumentCategory.OTHER),
+            {"category": "price_list"},
+        ),
+        (
+            DocumentCreate(
+                title="Sai scope.pdf",
+                category=DocumentCategory.PRICE_LIST,
+                building_codes=["BE1"],
+            ),
+            {"category": "price_list", "building_codes": ["ZU1"]},
+        ),
+    ],
+)
+def test_structural_classification_changes_require_controlled_reindex_or_rescan(
+    client,
+    db_session,
+    admin,
+    initial,
+    payload,
+):
+    document = create_document(db_session, initial, uploaded_by=admin.id)
+    document.status = DocumentStatus.COMPLETED
+    document.is_current = False
+    db_session.commit()
+
+    response = client.patch(f"/api/v1/documents/{document.id}/classification", json=payload)
+
+    assert response.status_code == 409
+    db_session.expire_all()
+    stored = db_session.get(type(document), document.id)
+    assert stored.review_status == DocumentReviewStatus.PENDING
+    assert client.vector_sync_calls == []
+
+
+def test_classification_patch_preserves_omitted_suggested_metadata(client, db_session, admin):
+    document = create_document(
+        db_session,
+        DocumentCreate(
+            title="CSBH giu metadata.pdf",
+            category=DocumentCategory.SALES_POLICY,
+            building_codes=["BE1"],
+            version_label="V2",
+        ),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/classification",
+        json={"category": "sales_policy"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["building_codes"] == ["BE1"]
+    assert response.json()["version_label"] == "V2"
+
+
+def test_classification_quarantine_failure_rolls_back_without_activating(
+    client,
+    db_session,
+    admin,
+):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="CSBH rollback.pdf", category=DocumentCategory.SALES_POLICY),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+    calls: list[dict[str, object]] = []
+
+    def fail_quarantine(_document_id, **metadata):
+        calls.append(metadata)
+        raise documents_router.VectorStoreError("Qdrant unavailable")
+
+    documents_router.update_document_vector_metadata = fail_quarantine
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/classification",
+        json={"category": "sales_policy"},
+    )
+
+    assert response.status_code == 503
+    db_session.expire_all()
+    stored = db_session.get(type(document), document.id)
+    assert stored.review_status == DocumentReviewStatus.PENDING
+    assert len(calls) == 1
+    assert calls[0]["review_status"] == DocumentReviewStatus.APPROVED
+    assert calls[0]["is_current"] is False
+
+
+def test_classification_activation_failure_leaves_approved_document_quarantined(
+    client,
+    db_session,
+    admin,
+):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="CSBH activation fail.pdf", category=DocumentCategory.SALES_POLICY),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+    calls: list[bool] = []
+
+    def fail_activation(_document_id, **metadata):
+        calls.append(metadata["is_current"])
+        if metadata["is_current"]:
+            raise documents_router.VectorStoreError("Qdrant unavailable")
+
+    documents_router.update_document_vector_metadata = fail_activation
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/classification",
+        json={"category": "sales_policy"},
+    )
+
+    assert response.status_code == 503
+    db_session.expire_all()
+    stored = db_session.get(type(document), document.id)
+    assert stored.review_status == DocumentReviewStatus.APPROVED
+    assert calls == [False, True]
+
+
+def test_tightening_visibility_updates_qdrant_before_mysql(
+    client,
+    db_session,
+    admin,
+):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Tai lieu cong khai.pdf", visibility="public"),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+    events: list[str] = []
+    original_commit = db_session.commit
+
+    def record_commit():
+        events.append("mysql_commit")
+        original_commit()
+
+    def record_sync(_document_id, **kwargs):
+        events.append("qdrant_sync")
+        client.vector_sync_calls.append(((_document_id,), kwargs))
+
+    db_session.commit = record_commit
+    documents_router.update_document_vector_metadata = record_sync
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/visibility",
+        json={"visibility": "internal"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert events == ["qdrant_sync", "mysql_commit"]
+    assert client.vector_sync_calls[-1][1]["visibility"] == "internal"
+    assert response.json()["visibility"] == "internal"
+
+
+def test_tightening_visibility_rolls_back_mysql_when_qdrant_fails(
+    client,
+    db_session,
+    admin,
+):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Tai lieu cong khai.pdf", visibility="public"),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+
+    def fail_sync(*_args, **_kwargs):
+        raise documents_router.VectorStoreError("Qdrant unavailable")
+
+    documents_router.update_document_vector_metadata = fail_sync
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/visibility",
+        json={"visibility": "internal"},
+    )
+
+    assert response.status_code == 503
+    db_session.expire_all()
+    assert db_session.get(type(document), document.id).visibility == "public"
+
+
+def test_loosening_visibility_quarantines_then_publishes_fresh_state(
+    client,
+    db_session,
+    admin,
+):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Tai lieu noi bo.pdf", visibility="internal"),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+    calls: list[dict[str, object]] = []
+    documents_router.update_document_vector_metadata = lambda _document_id, **metadata: calls.append(metadata)
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/visibility",
+        json={"visibility": "public"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert [(call["visibility"], call["is_current"]) for call in calls] == [
+        ("internal", False),
+        ("public", True),
+    ]
+
+
+def test_loosening_visibility_does_not_reactivate_document_blocked_between_phases(
+    client,
+    db_session,
+    admin,
+):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Tai lieu can block.pdf", visibility="internal"),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+    calls: list[bool] = []
+    documents_router.update_document_vector_metadata = lambda _document_id, **metadata: calls.append(
+        metadata["is_current"]
+    )
+    original_commit = db_session.commit
+    commit_count = 0
+
+    def commit_then_simulate_conflict():
+        nonlocal commit_count
+        original_commit()
+        commit_count += 1
+        if commit_count == 1:
+            current = db_session.get(type(document), document.id)
+            current.is_current = False
+            original_commit()
+
+    db_session.commit = commit_then_simulate_conflict
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/visibility",
+        json={"visibility": "public"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert calls == [False, False]
+    assert response.json()["is_current"] is False
+
+
+def test_visibility_change_is_rejected_while_ingestion_is_processing(client, db_session, admin):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Dang xu ly visibility.pdf"),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.PROCESSING
+    db_session.commit()
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/visibility",
+        json={"visibility": "public"},
+    )
+
+    assert response.status_code == 409
+
+
+def test_visibility_change_is_rejected_before_ingestion_starts(client, db_session, admin):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Chua ingest visibility.pdf"),
+        uploaded_by=admin.id,
+    )
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/visibility",
+        json={"visibility": "public"},
+    )
+
+    assert response.status_code == 409
+
+
 def test_admin_can_approve_legal_document_classification(
     client,
     db_session,
@@ -169,9 +538,11 @@ def test_admin_can_approve_legal_document_classification(
 ):
     document = create_document(
         db_session,
-        DocumentCreate(title="Nghi dinh 96 2024 ND CP.pdf"),
+        DocumentCreate(title="Nghi dinh 96 2024 ND CP.pdf", category=DocumentCategory.LEGAL_DOCUMENT),
         uploaded_by=admin.id,
     )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
 
     response = client.patch(
         f"/api/v1/documents/{document.id}/classification",
@@ -194,6 +565,32 @@ def test_admin_can_approve_legal_document_classification(
     assert body["review_status"] == DocumentReviewStatus.APPROVED
 
 
+def test_approving_not_yet_effective_legal_document_keeps_it_quarantined(
+    client,
+    db_session,
+    admin,
+):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Nghi dinh tuong lai.pdf", category=DocumentCategory.LEGAL_DOCUMENT),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+
+    response = client.patch(
+        f"/api/v1/documents/{document.id}/classification",
+        json={
+            "category": "legal_document",
+            "legal_status": "not_yet_effective",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["is_current"] is False
+    assert [metadata["is_current"] for _args, metadata in client.vector_sync_calls] == [False, False]
+
+
 def test_sale_cannot_approve_document_classification(
     client,
     db_session,
@@ -202,9 +599,11 @@ def test_sale_cannot_approve_document_classification(
 ):
     document = create_document(
         db_session,
-        DocumentCreate(title="Tai lieu noi bo.pdf"),
+        DocumentCreate(title="Tai lieu noi bo.pdf", category=DocumentCategory.INTERNAL_GUIDE),
         uploaded_by=admin.id,
     )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
 
     # Đổi user hiện tại trong dependency override thành Sale.
     app.dependency_overrides[get_current_user] = lambda: sale
@@ -237,25 +636,6 @@ def test_classifying_an_unknown_document_returns_404(client):
 # dropdown in DocumentsTab.tsx silently has no effect on what customers can retrieve. ---
 
 
-def test_changing_visibility_syncs_the_vector_store(client, db_session, admin):
-    document = create_document(
-        db_session,
-        DocumentCreate(title="Zurich_VHOP_ThongTinDuAn_Full.pdf"),
-        uploaded_by=admin.id,
-    )
-    calls = []
-    documents_router.update_document_vector_visibility = lambda doc_id, visibility: calls.append((doc_id, visibility))
-
-    response = client.patch(
-        f"/api/v1/documents/{document.id}/visibility",
-        json={"visibility": "public"},
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["visibility"] == "public"
-    assert calls == [(document.id, "public")]
-
-
 def test_changing_visibility_clears_the_semantic_cache(client, db_session, admin):
     """Otherwise a question cached while this document was still internal keeps serving
     that stale answer forever after it goes public — the cache has no idea anything about
@@ -265,6 +645,8 @@ def test_changing_visibility_clears_the_semantic_cache(client, db_session, admin
         DocumentCreate(title="Zurich_VHOP_ThongTinDuAn_Full.pdf"),
         uploaded_by=admin.id,
     )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
     calls = []
     documents_router.clear_cache = lambda: calls.append("cleared")
 
@@ -275,33 +657,6 @@ def test_changing_visibility_clears_the_semantic_cache(client, db_session, admin
 
     assert response.status_code == 200, response.text
     assert calls == ["cleared"]
-
-
-def test_visibility_sync_failure_returns_503(client, db_session, admin):
-    from backend.services.vector_store_service import VectorStoreError
-
-    document = create_document(
-        db_session,
-        DocumentCreate(title="Zurich_VHOP_ThongTinDuAn_Full.pdf"),
-        uploaded_by=admin.id,
-    )
-
-    def _boom(*_args, **_kwargs):
-        raise VectorStoreError("Qdrant unreachable")
-
-    documents_router.update_document_vector_visibility = _boom
-
-    response = client.patch(
-        f"/api/v1/documents/{document.id}/visibility",
-        json={"visibility": "public"},
-    )
-
-    assert response.status_code == 503
-    # The DB write is not rolled back — retrieval still uses the pre-change value
-    # (visibility stays "internal" in Qdrant too), so nothing is served inconsistently;
-    # only the Admin needs to know the toggle didn't fully take effect.
-    db_session.refresh(document)
-    assert document.visibility == "public"
 
 
 def test_changing_visibility_for_an_unknown_document_returns_404(client):
