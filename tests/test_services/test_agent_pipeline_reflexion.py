@@ -43,11 +43,11 @@ def _run(monkeypatch, *, verdicts: list[VerifierResult]) -> list[str]:
     monkeypatch.setattr(agent_pipeline, "query_needs_inventory", lambda query: False)
     monkeypatch.setattr(agent_pipeline.risk_service, "detect_commitment_risk", lambda answer: False)
 
-    def _generate_text(prompt, system_instruction=None):
+    def _generate_json(prompt, schema, system_instruction=None):
         prompts_seen.append(prompt)
-        return "- Can 2PN tu 3,6 ty dong."
+        return schema(text="- Can 2PN tu 3,6 ty dong.")
 
-    monkeypatch.setattr(agent_pipeline, "generate_text", _generate_text)
+    monkeypatch.setattr(agent_pipeline, "generate_json", _generate_json)
     monkeypatch.setattr(
         agent_pipeline.verifier_service,
         "score_answer",
@@ -116,7 +116,7 @@ def test_all_three_scores_travel_out_of_the_pipeline(monkeypatch):
     monkeypatch.setattr(agent_pipeline, "_store_cache", lambda *a, **k: None)
     monkeypatch.setattr(agent_pipeline, "query_needs_inventory", lambda query: False)
     monkeypatch.setattr(agent_pipeline.risk_service, "detect_commitment_risk", lambda answer: False)
-    monkeypatch.setattr(agent_pipeline, "generate_text", lambda *a, **k: "- Can 2PN tu 3,6 ty dong.")
+    monkeypatch.setattr(agent_pipeline, "generate_json", lambda _p, schema, **k: schema(text="- Can 2PN tu 3,6 ty dong."))
     monkeypatch.setattr(
         agent_pipeline.verifier_service,
         "score_answer",
@@ -152,7 +152,7 @@ def test_declined_answer_still_reports_why(monkeypatch):
     monkeypatch.setattr(agent_pipeline, "_store_cache", lambda *a, **k: None)
     monkeypatch.setattr(agent_pipeline, "query_needs_inventory", lambda query: False)
     monkeypatch.setattr(agent_pipeline.risk_service, "detect_commitment_risk", lambda answer: False)
-    monkeypatch.setattr(agent_pipeline, "generate_text", lambda *a, **k: "- Can 2PN tu 3,6 ty dong.")
+    monkeypatch.setattr(agent_pipeline, "generate_json", lambda _p, schema, **k: schema(text="- Can 2PN tu 3,6 ty dong."))
     monkeypatch.setattr(
         agent_pipeline.verifier_service,
         "score_answer",

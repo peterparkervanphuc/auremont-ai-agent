@@ -8,10 +8,6 @@ would add both a failure mode and a round trip to every question.
 
 from backend.utils.text import strip_diacritics
 
-# Signals that a question needs the real-time inventory table rather than static docs.
-# Deliberately keyed on *inventory intent* instead of merely spotting a unit type
-# ("2PN"): "giá căn 2PN?" mentions a unit type, but its answer lives in the ingested
-# price list.
 _REALTIME_INTENT_KEYWORDS = (
     "còn căn",
     "còn bao nhiêu",
@@ -83,6 +79,56 @@ def names_specific_document_topic(query: str) -> bool:
     """
     normalized = strip_diacritics(query)
     return any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
+
+
+# Questions ABOUT the conversation itself rather than about a project ("tôi vừa hỏi gì",
+# "bạn vừa nói gì", "tóm tắt lại"). The answer lives in the session transcript, which the
+# model already receives via prompts.build_prompt's history block — no document can ever
+# ground it. Without this, such a question reaches the Verifier, which scores faithfulness
+# against retrieved documents that say nothing about what was asked two turns ago, scores
+# 0.0 and replaces a perfectly correct answer with "Không đủ thông tin, liên hệ Admin."
+# — see agent_pipeline._route_after_generate.
+_CONVERSATION_META_KEYWORDS = (
+    "vua hoi",
+    "vua noi",
+    "vua bao",
+    "vua nhac",
+    "hoi gi",
+    "noi gi",
+    "cau hoi truoc",
+    "cau truoc",
+    "luc nay",
+    "ban nay",
+    "phia tren",
+    "o tren",
+    "tom tat lai",
+    "tom tat cuoc",
+    "tom tat hoi thoai",
+    "nhac lai",
+    "lap lai",
+    "noi lai",
+    "da hoi",
+    "da noi",
+    "dang noi ve",
+    "dang hoi ve",
+    "chung ta noi",
+    "chung ta dang",
+)
+
+
+def is_conversation_meta_query(query: str) -> bool:
+    """`True` when the question is about the conversation so far, not about a project.
+
+    These are answerable only from the session transcript, so the Verifier's
+    document-grounded faithfulness check is meaningless for them — see
+    `_CONVERSATION_META_KEYWORDS` above and `agent_pipeline._route_after_generate`.
+
+    Keyword matching on the diacritic-stripped query, same rationale as the rest of this
+    module: deterministic, auditable, no extra round trip. The keyword list is already
+    stored unaccented since every comparison runs on the stripped form.
+    """
+    normalized = strip_diacritics(query)
+    return any(keyword in normalized for keyword in _CONVERSATION_META_KEYWORDS)
 
 
 # Signals that an anonymous visitor is past general curiosity and into a sales-closing

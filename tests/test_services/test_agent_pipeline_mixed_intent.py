@@ -120,3 +120,36 @@ def test_prompt_keeps_unavailable_notice_when_lookup_cannot_resolve_a_project(mo
 
     assert result["inventory_failed"] is True
     assert "LIVE INVENTORY STATUS: unavailable" in prompt
+
+
+def test_internal_prompt_requires_every_requested_subject_to_be_answered():
+    prompt = prompts.build_prompt(
+        "Cho tôi giá và diện tích căn 2PN.",
+        [_policy_hit()],
+        [],
+        False,
+        False,
+    )
+
+    assert "phải trả lời đủ từng ý" in prompt
+    assert "rà soát toàn bộ các đoạn và bảng" in prompt
+
+
+def test_prompt_explains_pn_br_alias_when_source_uses_english_label():
+    doc = {
+        **_policy_hit(),
+        "content": "|2BR|64,3-69,9|5,774-7,273|\n|2BR+|69,8-76,2|6,743-7,916|",
+    }
+
+    prompt = prompts.build_prompt("Giá căn 2PN và 2PN+1?", [doc], [], False, False)
+
+    assert "2PN = 2BR" in prompt
+    assert "2PN+1 = 2BR+" in prompt
+    assert "|2BR (2PN)|" in prompt
+    assert "|2BR+ (2PN+1)|" in prompt
+
+
+def test_prompt_omits_bedroom_alias_note_when_it_is_irrelevant():
+    prompt = prompts.build_prompt("Tiến độ bàn giao?", [_policy_hit()], [], False, False)
+
+    assert "QUY ƯỚC KÝ HIỆU" not in prompt

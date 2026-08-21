@@ -181,6 +181,28 @@ def test_retrieval_query_ignores_ai_statement_that_is_not_a_question():
     assert agent_pipeline._retrieval_query("Giá bao nhiêu?", history) == "Có căn 2PN nào không? Giá bao nhiêu?"
 
 
+def test_retrieve_separates_history_expansion_from_current_turn_constraints(monkeypatch):
+    seen = {}
+
+    def fake_retrieve(query, visibility, project_id, top_k, *, focus_query=None):
+        seen.update(query=query, focus_query=focus_query)
+        return []
+
+    monkeypatch.setattr(agent_pipeline, "retrieve", fake_retrieve)
+    state = {
+        "query": "Còn 3PN thì sao?",
+        "history": [{"sender": MessageSender.CUSTOMER, "content": "Cho tôi xem căn 2PN"}],
+        "project_id": "the-palma",
+        "clearance": DocumentVisibility.INTERNAL,
+    }
+
+    agent_pipeline._retrieve(state)
+
+    assert "2PN" in seen["query"]
+    assert seen["query"].endswith("Còn 3PN thì sao?")
+    assert seen["focus_query"] == "Còn 3PN thì sao?"
+
+
 # --- agent_pipeline._verify judges against the same history-expanded query -----------
 
 

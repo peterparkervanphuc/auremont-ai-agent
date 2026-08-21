@@ -1547,6 +1547,48 @@
   transform: none;
 }
 
+/* ── Follow-up question pills (ChatWindow.tsx, CustomerChatPage.tsx, ChatWidget.tsx) ──
+   Deliberately quieter than the quick-reply pills above, and the difference carries
+   meaning: a quick reply ANSWERS the question the assistant just asked, so it is the
+   primary action and gets the tinted accent fill. These start a NEW question the asker
+   had not committed to, so they read as an offer — neutral outline, no fill — and must
+   not compete with either the answer above them or a quick reply. The two are never
+   rendered together (see showSuggestedQuestions in each component). ── */
+.chat-suggested-questions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.chat-suggested-question {
+  padding: 7px 14px;
+  border-radius: 100px;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast),
+    color var(--t-fast);
+}
+
+.chat-suggested-question:hover {
+  background: var(--bg-glass-h);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chat-suggested-question:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .chat-topbar-actions {
   display: flex;
   align-items: center;

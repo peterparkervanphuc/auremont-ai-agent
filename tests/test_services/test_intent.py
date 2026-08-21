@@ -1,6 +1,11 @@
 """Keyword classifiers behind the customer-chat gates and the AI→Sale handoff trigger."""
 
-from backend.ai.intent import needs_human_handoff, needs_registration_gate, wants_human_agent
+from backend.ai.intent import (
+    is_conversation_meta_query,
+    needs_human_handoff,
+    needs_registration_gate,
+    wants_human_agent,
+)
 
 
 def test_needs_registration_gate_matches_closing_questions():
@@ -37,3 +42,19 @@ def test_needs_human_handoff_covers_frustration():
 
 def test_needs_human_handoff_ignores_general_questions():
     assert not needs_human_handoff("Dự án có những tiện ích gì?")
+
+
+def test_conversation_meta_query_matches_questions_about_the_transcript():
+    """These are answerable only from the session history, so the pipeline must route them
+    past the Verifier — see agent_pipeline._route_after_generate."""
+    assert is_conversation_meta_query("tôi vừa hỏi về phân khu nào")
+    assert is_conversation_meta_query("bạn vừa nói gì vậy")
+    assert is_conversation_meta_query("tóm tắt lại cuộc trò chuyện giúp tôi")
+    assert is_conversation_meta_query("toi vua hoi ve phan khu nao")  # no diacritics
+
+
+def test_conversation_meta_query_ignores_project_questions():
+    """The costly direction to get wrong: a real project question skipping verification."""
+    assert not is_conversation_meta_query("The Zenpark ở đâu")
+    assert not is_conversation_meta_query("Giá căn 2PN bao nhiêu")
+    assert not is_conversation_meta_query("Chính sách bán hàng thế nào")

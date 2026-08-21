@@ -124,6 +124,7 @@ export function ChatWidget() {
       hitl_confirmed: false,
       emotion: null,
       quick_replies: null,
+      suggested_questions: null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
@@ -160,6 +161,7 @@ export function ChatWidget() {
           hitl_confirmed: false,
           emotion: null,
           quick_replies: null,
+      suggested_questions: null,
           created_at: new Date().toISOString(),
         },
       ]);
@@ -254,6 +256,15 @@ export function ChatWidget() {
                     const isLastMessage = index === messages.length - 1;
                     const showQuickReplies =
                       !isSale && isLastMessage && sessionStatus === "bot_handling" && !!m.quick_replies?.length;
+                    // Follow-ups are offered on both surfaces, but never alongside quick
+                    // replies: those answer the question the assistant just asked, and
+                    // showing both at once asks the reader to choose between answering and
+                    // changing the subject in one undifferentiated row of pills.
+                    const showSuggestedQuestions =
+                      isLastMessage &&
+                      sessionStatus === "bot_handling" &&
+                      !showQuickReplies &&
+                      !!m.suggested_questions?.length;
 
                     // A price/commitment answer must not be readable — let alone copyable —
                     // from this widget: the mandatory confirm-and-copy gate lives only in the
@@ -290,6 +301,21 @@ export function ChatWidget() {
                                 onClick={() => sendMessage(option)}
                               >
                                 {option}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {showSuggestedQuestions && (
+                          <div className="chat-suggested-questions">
+                            {m.suggested_questions?.map((question) => (
+                              <button
+                                key={question}
+                                type="button"
+                                className="chat-suggested-question"
+                                disabled={loading}
+                                onClick={() => sendMessage(question)}
+                              >
+                                {question}
                               </button>
                             ))}
                           </div>

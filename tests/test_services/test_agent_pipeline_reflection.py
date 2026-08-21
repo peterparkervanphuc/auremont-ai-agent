@@ -63,11 +63,11 @@ def _run(monkeypatch, query: str, *, verdicts: list[VerifierResult]) -> list[str
     monkeypatch.setattr(agent_pipeline, "query_needs_inventory", lambda query: False)
     monkeypatch.setattr(agent_pipeline.risk_service, "detect_commitment_risk", lambda answer: False)
 
-    def _generate_text(prompt, system_instruction=None):
+    def _generate_json(prompt, schema, system_instruction=None):
         seen.append(prompt)
-        return "- Chinh sach thanh toan chia 5 dot."
+        return schema(text="- Chinh sach thanh toan chia 5 dot.")
 
-    monkeypatch.setattr(agent_pipeline, "generate_text", _generate_text)
+    monkeypatch.setattr(agent_pipeline, "generate_json", _generate_json)
     monkeypatch.setattr(
         agent_pipeline.verifier_service,
         "score_answer",

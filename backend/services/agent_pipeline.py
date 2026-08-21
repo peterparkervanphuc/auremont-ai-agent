@@ -26,6 +26,7 @@ Two principles govern this whole file:
 """
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
@@ -36,12 +37,12 @@ from sqlalchemy.orm import Session
 from backend.ai import prompts
 from backend.ai.answer_cleanup import drop_image_denials
 from backend.ai.citations import build_citations
-from backend.ai.intent import names_specific_document_topic
+from backend.ai.intent import is_conversation_meta_query, names_specific_document_topic
 from backend.ai.intent import needs_document_retrieval as query_needs_documents
 from backend.ai.intent import needs_inventory as query_needs_inventory
 from backend.core import tracing
 from backend.core.enums import DocumentVisibility, MessageEmotion, MessageSender
-from backend.core.gemini_client import generate_json, generate_text
+from backend.core.gemini_client import generate_json
 from backend.services import (
     answer_images_service,
     cache_service,
@@ -56,7 +57,7 @@ from backend.services.inventory_service import (
     lookup_inventory,
 )
 from backend.services.rag_service import RetrievalError, retrieve
-from backend.utils.text import strip_markdown
+from backend.utils.text import strip_diacritics, strip_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -168,9 +169,13 @@ class PipelineResult:
     # never reach the pipeline at all, set it directly rather than through this field).
     emotion: str | None = None
     # Short reply options the customer can tap — only ever non-empty on a PUBLIC-clearance
-    # answer (see prompts.ConsultAnswer); Sale/INTERNAL answers keep this empty, they're
-    # generated as plain text.
+    # answer (see prompts.ConsultAnswer); Sale/INTERNAL answers keep this empty (see
+    # prompts.SaleAnswer).
     quick_replies: list[str] = field(default_factory=list)
+    # Plausible NEXT questions about the topic already on the table, for both audiences.
+    # Distinct from `quick_replies`, which answer a question the assistant just asked —
+    # see prompts.ConsultAnswer.
+    suggested_questions: list[str] = field(default_factory=list)
 
 
 class PipelineState(TypedDict, total=False):
@@ -201,6 +206,7 @@ class PipelineState(TypedDict, total=False):
     draft_answer: str
     citations: list[dict]
     quick_replies: list[str]
+    suggested_questions: list[str]
     verifier_score: float
     faithfulness: float
     answer_relevancy: float
@@ -386,6 +392,10 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
                 clearance,
                 state.get("project_id"),
                 RETRIEVAL_TOP_K,
+                # Embedding/reranking needs history to resolve a follow-up, but exact
+                # identifier constraints must come from the current turn. Otherwise a
+                # previous "2PN" contaminates "còn 3PN thì sao?" and both look required.
+                focus_query=query,
             )
         except RetrievalError:
             logger.exception(
@@ -512,18 +522,20 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         lessons=state.get("reflection_lessons") or "",
     )
     quick_replies: list[str] = []
+    suggested_questions: list[str] = []
     attempt = state.get("retry_count", 0) + 1
     started = time.perf_counter()
 
+    parsed: prompts.ConsultAnswer | prompts.SaleAnswer | None
     try:
+        # Structured output on the SAME call (schema-constrained decoding), not a second
+        # LLM call — see prompts.ConsultAnswer/SaleAnswer. Both audiences are structured
+        # now: INTERNAL moved off plain generate_text once it gained follow-up suggestions
+        # to render, and it carries no quick_replies (see SaleAnswer for why).
         if is_public:
-            # Structured output on the SAME call (schema-constrained decoding), not a
-            # second LLM call — see prompts.ConsultAnswer. Sale/INTERNAL has no quick-reply
-            # UI to feed, so it stays on the simpler plain-text generate_text.
             parsed = generate_json(prompt, prompts.ConsultAnswer, system_instruction=prompts.SYSTEM_INSTRUCTION_PUBLIC)
         else:
-            parsed = None
-            answer = generate_text(prompt, system_instruction=prompts.SYSTEM_INSTRUCTION)
+            parsed = generate_json(prompt, prompts.SaleAnswer, system_instruction=prompts.SYSTEM_INSTRUCTION)
     except Exception:
         logger.exception(
             "Answer generation failed.",
@@ -537,16 +549,19 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         tracing.step("generate", attempt=attempt, ok=False)
         return {"notice": GENERATION_ERROR_MESSAGE}
 
-    if is_public:
-        if parsed is None:
-            # Same fail-closed posture as verifier_service: a judge/consult call that
-            # returns nothing parseable is a generation failure, not an empty answer.
-            logger.warning(
-                "Consult LLM returned no parseable answer.",
-                extra={"event": "pipeline.generate.unparseable", "project_id": state.get("project_id")},
-            )
-            return {"notice": GENERATION_ERROR_MESSAGE}
-        answer, quick_replies = parsed.text, parsed.quick_replies
+    if parsed is None:
+        # Same fail-closed posture as verifier_service: a consult call that returns
+        # nothing parseable is a generation failure, not an empty answer.
+        logger.warning(
+            "Consult LLM returned no parseable answer.",
+            extra={"event": "pipeline.generate.unparseable", "project_id": state.get("project_id")},
+        )
+        return {"notice": GENERATION_ERROR_MESSAGE}
+
+    answer = parsed.text
+    suggested_questions = parsed.suggested_questions
+    # Only the customer-facing schema carries these; SaleAnswer has no such field.
+    quick_replies = getattr(parsed, "quick_replies", [])
 
     # Strip before checking for emptiness: an answer made up of only Markdown characters
     # renders as blank on screen, so it must fall into the error branch instead of
@@ -574,10 +589,18 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         with_lessons=bool(state.get("reflection_lessons")),
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
     )
-    return {"draft_answer": answer, "citations": _citations_for(docs), "quick_replies": quick_replies}
+    return {
+        "draft_answer": answer,
+        "citations": _citations_for(docs, answer=answer),
+        "quick_replies": quick_replies,
+        "suggested_questions": suggested_questions,
+    }
 
 
-def _citations_for(docs: list[dict]) -> list[dict]:
+_CITATION_TOKEN_PATTERN = re.compile(r"\d+(?:[.,]\d+)*|[^\W\d_]+(?:\+\d+)?", re.UNICODE)
+
+
+def _citations_for(docs: list[dict], *, answer: str = "") -> list[dict]:
     """Citations are only worth showing when they point at one coherent source.
 
     An unscoped search (no `project_id` on the session/query) can return top hits from
@@ -591,7 +614,39 @@ def _citations_for(docs: list[dict]) -> list[dict]:
     project_ids = {doc.get("project_id") for doc in docs if doc.get("project_id")}
     if len(project_ids) > 1:
         return []
-    return build_citations(docs)
+    return build_citations(_rank_citation_evidence(docs, answer))
+
+
+def _rank_citation_evidence(docs: list[dict], answer: str) -> list[dict]:
+    """Put the passage that best supports the generated claims first per document.
+
+    ``build_citations`` intentionally emits one chip per source file. Retrieval order is
+    not sufficient for choosing that chip's page: a broad overview can rank first while
+    the answer's exact price or area came from a later table chunk. Shared numeric tokens
+    are weighted more heavily than prose because they are the facts for which a precise
+    page anchor matters most. Sorting is stable, so answers without useful overlap retain
+    retrieval order.
+    """
+    answer_tokens = _citation_tokens(answer)
+    if not answer_tokens:
+        return docs
+
+    def evidence_score(doc: dict) -> tuple[int, int, float]:
+        shared = answer_tokens & _citation_tokens(str(doc.get("content") or ""))
+        numeric = sum(any(character.isdigit() for character in token) for token in shared)
+        lexical = len(shared) - numeric
+        retrieval_score = doc.get("score")
+        return (
+            numeric,
+            lexical,
+            float(retrieval_score) if isinstance(retrieval_score, int | float) else 0.0,
+        )
+
+    return sorted(docs, key=evidence_score, reverse=True)
+
+
+def _citation_tokens(text: str) -> set[str]:
+    return set(_CITATION_TOKEN_PATTERN.findall(strip_diacritics(text)))
 
 
 def _verify(state: PipelineState) -> dict[str, Any]:
@@ -655,7 +710,11 @@ def _risk_check(state: PipelineState) -> dict[str, Any]:
 
 
 def _image_tool(state: PipelineState) -> dict[str, Any]:
-    """Fetch project photos, but only for a question that asked to see something.
+    """Fetch the project photos that belong under this answer.
+
+    Covers both routes in answer_images_service: photos a question explicitly asked to
+    see, and photos attached automatically to illustrate an answer that only asked to
+    know something. That service decides which applies and how strictly to filter.
 
     Runs *before* Generate, like the inventory tool: the model has to know the photos are
     coming. When this ran afterwards it read "the context contains no images" off its own
@@ -714,6 +773,19 @@ def _route_after_generate(state: PipelineState) -> str:
     # Faithfulness/relevancy stay None, so these answers are excluded from the Admin
     # dashboard averages exactly like cache hits are.
     if state.get("images") and answer_images_service.wants_images(state["query"]):
+        return "risk_check"
+
+    # A question about the conversation itself ("tôi vừa hỏi về phân khu nào") is answered
+    # from the history block in the prompt, never from a document. Verify would score
+    # faithfulness against retrieved documents that say nothing about what was asked two
+    # turns ago — always 0.0, however correct the answer — and bury it under
+    # "Không đủ thông tin, liên hệ Admin." Same reasoning as the images branch above:
+    # there is nothing here for Verify to check against.
+    #
+    # Only applies once there IS history: without it the model has nothing to recall, and
+    # whatever it produces should still face the normal checks rather than skip them.
+    if state.get("history") and is_conversation_meta_query(state["query"]):
+        tracing.step("route.after_generate", decision="skip_verify", reason="conversation_meta_query")
         return "risk_check"
 
     # No documents, no inventory units — the only way Generate is reached with both empty
@@ -930,6 +1002,7 @@ def _run_traced(
         draft_answer=state.get("draft_answer", ""),
         citations=state.get("citations") or [],
         quick_replies=state.get("quick_replies") or [],
+        suggested_questions=state.get("suggested_questions") or [],
         verifier_score=state.get("verifier_score", 0.0),
         requires_hitl=state.get("requires_hitl", False),
         used_cache=state.get("used_cache", False),
@@ -975,15 +1048,21 @@ def _store_cache(query: str, result: PipelineResult, project_id: str | None, cle
     Price-touching answers must re-run RiskCheck every time so the Sale always gets the
     HITL card — serving them from cache would skip that mandatory confirmation step.
 
-    Image requests are never cached either. The cache matches on meaning, and "cho xem
-    hình ảnh The Palma" and "cho xem mặt bằng The Palma" are close enough to collide —
-    which served the whole gallery to someone who asked only for floor plans. The photo
-    set is chosen per question, so it cannot be shared between two questions.
+    Answers carrying photos are never cached either. The cache matches on meaning, and
+    "cho xem hình ảnh The Palma" and "cho xem mặt bằng The Palma" are close enough to
+    collide — which served the whole gallery to someone who asked only for floor plans.
+    The photo set is chosen per question, so it cannot be shared between two questions.
+
+    Keyed off `result.images` rather than off `wants_images(query)`: photos now also ride
+    along automatically on questions that never asked for any (see
+    answer_images_service's automatic route), and those are just as topic-specific — the
+    amenity shots attached to "tiện ích có gì" must not be replayed under a cache-matched
+    "mặt bằng thế nào".
     """
     if result.requires_hitl or result.verifier_score < _threshold():
         return
 
-    if answer_images_service.wants_images(query):
+    if result.images:
         return
 
     cache_service.store_cache(
