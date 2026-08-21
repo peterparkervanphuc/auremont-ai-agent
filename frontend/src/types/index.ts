@@ -72,6 +72,10 @@ export interface MessageResponse {
   /** Short reply options to tap instead of typing — only ever set on a customer-facing
    * AGENT message asking a discovery question with a natural short list of answers. */
   quick_replies: string[] | null;
+  /** Follow-up questions the asker may want next, offered on both the Sale and customer
+   * surfaces. Distinct from `quick_replies`: those answer a question the assistant just
+   * asked, these start the asker's next one. */
+  suggested_questions: string[] | null;
   created_at: string;
 }
 

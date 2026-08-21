@@ -49,7 +49,7 @@ def _stub_pipeline(monkeypatch, *, verdicts, needs_inventory=False, units=None, 
     monkeypatch.setattr(agent_pipeline, "query_needs_inventory", lambda query: needs_inventory)
     monkeypatch.setattr(agent_pipeline, "query_needs_documents", lambda query: True)
     monkeypatch.setattr(agent_pipeline.risk_service, "detect_commitment_risk", lambda answer: False)
-    monkeypatch.setattr(agent_pipeline, "generate_text", lambda *a, **k: "- Can 2PN tu 3,6 ty.")
+    monkeypatch.setattr(agent_pipeline, "generate_json", lambda _p, schema, **k: schema(text="- Can 2PN tu 3,6 ty."))
     monkeypatch.setattr(
         agent_pipeline.verifier_service,
         "score_answer",

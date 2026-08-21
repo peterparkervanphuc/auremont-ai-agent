@@ -194,6 +194,7 @@ export function CustomerChatPage() {
         hitl_confirmed: false,
         emotion: null,
         quick_replies: null,
+      suggested_questions: null,
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, optimisticUser]);
@@ -426,6 +427,16 @@ export function CustomerChatPage() {
               index === messages.length - 1 &&
               sessionStatus === "bot_handling" &&
               !!m.quick_replies?.length;
+            // Same expiry rule as above, and never shown alongside quick replies: those
+            // answer the question the AI just asked, these start a new one, and one row of
+            // pills doing both at once is ambiguous.
+            const showSuggestedQuestions =
+              !isUser &&
+              !isSaleAgent &&
+              index === messages.length - 1 &&
+              sessionStatus === "bot_handling" &&
+              !showQuickReplies &&
+              !!m.suggested_questions?.length;
             return (
               <div key={m.id} className={`chat-message ${isUser ? "chat-message--user" : "chat-message--bot"}`}>
                 <div className={`chat-avatar ${isUser ? "chat-avatar--user" : "chat-avatar--bot"}`}>
@@ -461,6 +472,22 @@ export function CustomerChatPage() {
                           onClick={() => sendMessage(option)}
                         >
                           {option}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {showSuggestedQuestions && (
+                    <div className="chat-suggested-questions">
+                      {m.suggested_questions?.map((question) => (
+                        <button
+                          key={question}
+                          type="button"
+                          className="chat-suggested-question"
+                          disabled={loading}
+                          onClick={() => sendMessage(question)}
+                        >
+                          {question}
                         </button>
                       ))}
                     </div>

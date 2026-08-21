@@ -1,20 +1,25 @@
-"""Image tool: fetch project photos when a Sale actually asks to see something.
+"""Image tool: attach the project photos that illustrate an answer.
 
-The Agent calls this the way it calls the inventory API — only when the question calls
-for it. A Sale asking "giá căn 2PN bao nhiêu" wants a number, not a photo gallery; a Sale
-asking "cho xem mặt bằng The Palma" wants the floor plans and nothing else.
+Photos arrive by two different routes, and the distinction runs through this whole module:
 
-Two filters run in order, and both must pass before a photo is returned:
+**Requested** — the question asks to see something ("cho xem mặt bằng The Palma").
+`wants_images` is true, and the Sale gets every photo matching the topic they named, with
+no cap: each one is a photo they asked for. When the topic matches no filename the whole
+project gallery is returned rather than nothing, because refusing someone who explicitly
+asked to see something is the worse failure.
 
-1. **Intent** — the question has to ask for something visual ("hình ảnh", "mặt bằng",
-   "phối cảnh"). Without that the tool returns nothing at all.
-2. **Subject** — the project has to be named in the question or the answer, and the
-   photo's own filename has to match the topic asked about. Catalogue filenames carry
-   that topic (`mat-bang-phan-khu-...`, `phoi-canh-sao-bien-...`, `vi-tri-...`), which is
-   what makes per-image relevance possible rather than dumping the whole gallery.
+**Automatic** — the question asks to *know* something, and photos ride along to illustrate
+the answer ("tiện ích dự án có gì" gets the amenity photos alongside the text). Nobody
+asked, so the bar is higher and the posture inverts: capped at
+`_AUTO_ATTACH_MAX_IMAGES`, and when the topic matches no filename the answer goes out with
+no photos at all. An unasked-for photo of the wrong thing is worse than no photo, whereas
+an unasked-for photo of the right thing is the point of this route.
 
-There is deliberately no cap on how many images come back: once both filters have run,
-every remaining photo is one the Sale asked to see.
+Both routes then share the same subject filter: the project has to be named in the
+question or the answer, and each photo's filename has to match the topic. Catalogue
+filenames carry that topic (`mat-bang-phan-khu-...`, `phoi-canh-sao-bien-...`,
+`vi-tri-...`), which is what makes per-image relevance possible rather than dumping the
+whole gallery.
 """
 
 import logging
@@ -30,6 +35,17 @@ logger = logging.getLogger(__name__)
 # Below this, a "match" on a project name is almost certainly a coincidence: two- or
 # three-letter names would otherwise hit on ordinary words in the question.
 _MIN_NAME_LENGTH = 4
+
+# Cap for the automatic route only (see module docstring). Photos nobody asked for are
+# supporting material: a strip of three sits under an answer without displacing it, while
+# a dozen turns a text answer into a gallery the reader has to scroll past.
+_AUTO_ATTACH_MAX_IMAGES = 3
+
+# Filename tokens for "a photo of the project overall" — used on the automatic route when
+# the question names no visual topic of its own ("dự án này thế nào?"). These are the
+# establishing shots, the ones that illustrate any answer about the project without
+# claiming to depict a specific thing the asker did not mention.
+_OVERVIEW_TOKENS = ("phoi-canh", "tong-the", "toan-canh")
 
 # Asking for something visual. Two things are deliberately absent. "xem" on its own,
 # because "xem giá căn 2PN" is a text question. And bare "ảnh", because de-accented it is
@@ -63,7 +79,12 @@ _LOOK_VERBS = ("xem", "coi", "show")
 # de-accented filename, so the values here are already in slug form.
 _TOPIC_TOKENS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("mat bang", "layout", "so do", "ban ve", "mat cat"), ("mat-bang", "matbang")),
-    (("tien ich",), ("tien-ich", "tienich")),
+    # "phong-" covers catalogues that name amenity photos after the specific room
+    # ("phong-tap-gym-...", "phong-karaoke-...") rather than with the generic word. It is a
+    # FILENAME token only — deliberately not a question phrase, because "phòng" in a
+    # question is far more often "căn 2 phòng ngủ", and matching that would attach gym and
+    # pool photos to a price question.
+    (("tien ich",), ("tien-ich", "tienich", "phong-")),
     (("vi tri", "ket noi", "lien ket", "ban do"), ("vi-tri", "ket-noi", "lien-ket", "vitri")),
     (("phoi canh", "toan canh", "tong the"), ("phoi-canh", "tong-the", "toan-canh")),
     (("biet thu",), ("biet-thu", "bietthu")),
@@ -97,7 +118,12 @@ def wants_images(query: str) -> bool:
 
 
 def collect_images(db: Session, query: str, answer: str) -> list[dict]:
-    """Photos the question asked to see, or [] when it did not ask for any.
+    """Photos to show under this answer — those asked for, or those that illustrate it.
+
+    Takes whichever of the two routes in the module docstring applies. `wants_images`
+    decides which: an explicit request gets everything matching, uncapped, falling back to
+    the project gallery; anything else gets at most `_AUTO_ATTACH_MAX_IMAGES` and only when
+    they genuinely match the topic.
 
     Reads the project name from question *and* answer: a Sale often asks "cho xem mặt
     bằng" without naming the project, and the name only appears in the answer that
@@ -107,9 +133,6 @@ def collect_images(db: Session, query: str, answer: str) -> list[dict]:
     their answer.
     """
     try:
-        if not wants_images(query):
-            return []
-
         haystack = _normalize(f"{query}\n{answer}")
         if not haystack.strip():
             return []
@@ -124,7 +147,12 @@ def collect_images(db: Session, query: str, answer: str) -> list[dict]:
         if not gallery:
             return []
 
-        selected = _filter_by_topic(gallery, _normalize(query))
+        normalized_query = _normalize(query)
+        if wants_images(query):
+            selected = _filter_by_topic(gallery, normalized_query)
+        else:
+            selected = _auto_attach_images(gallery, normalized_query)
+
         return [{"url": url, "project_id": project.id, "project_name": project.name} for url in selected]
     except Exception:
         logger.exception(
@@ -172,6 +200,33 @@ def _filter_by_topic(gallery: list[str], normalized_query: str) -> list[str]:
 
     matched = [url for url in gallery if any(token in _normalize_filename(url) for token in tokens)]
     return matched or gallery
+
+
+def _auto_attach_images(gallery: list[str], normalized_query: str) -> list[str]:
+    """The automatic route's selection: matching photos only, capped.
+
+    Two deliberate differences from `_filter_by_topic`, both following from nobody having
+    asked for these (see module docstring):
+
+    * No fall back to the whole gallery. A topic the catalogue has no photo of yields no
+      photo — attaching an unrelated one to an answer that never mentioned pictures reads
+      as the system padding itself out.
+    * A question naming no visual topic at all ("chính sách thanh toán thế nào?") is not
+      treated as "anything goes" either. It gets the project's establishing shots, which
+      illustrate the project without claiming to depict a specific thing, and nothing when
+      the catalogue has none of those either.
+    """
+    # Keyed off the SUBJECT, not `_wanted_tokens`: that also returns bedroom qualifiers
+    # ("2pn"), and "giá căn 2 phòng ngủ" would then count as naming a visual topic it never
+    # named — yielding no photo at all instead of the overview shots, since no filename
+    # carries a bare bedroom count.
+    if _subject_tokens(normalized_query):
+        tokens = _wanted_tokens(normalized_query)
+    else:
+        tokens = list(_OVERVIEW_TOKENS)
+
+    matched = [url for url in gallery if any(token in _normalize_filename(url) for token in tokens)]
+    return matched[:_AUTO_ATTACH_MAX_IMAGES]
 
 
 def _subject_tokens(normalized_query: str) -> list[str]:

@@ -52,6 +52,9 @@ class MessageResponse(BaseModel):
     emotion: MessageEmotion | None = None
     # Short reply options the customer can tap instead of typing — see Message.quick_replies.
     quick_replies: list[str] | None = None
+    # Follow-up questions the asker may want next, for both Sale and customer — see
+    # Message.suggested_questions.
+    suggested_questions: list[str] | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

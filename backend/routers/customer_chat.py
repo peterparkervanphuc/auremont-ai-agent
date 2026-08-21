@@ -263,9 +263,12 @@ async def ask_in_customer_session(
     # here, let me connect you properly") — RESPECTFUL for all of them; only the real
     # pipeline branch can also land on HAPPY/REGRETFUL, from `result.emotion`.
     emotion: MessageEmotion | None = MessageEmotion.RESPECTFUL
-    # Only the real pipeline branch below ever fills this in — a gate/handoff message is
-    # fixed copy, never a discovery question with options to tap.
+    # Only the real pipeline branch below ever fills these in — a gate/handoff message is
+    # fixed copy, never a discovery question with options to tap, and a customer being
+    # walked to the registration form or a live Sale should not be invited to start a new
+    # question instead.
     quick_replies: list[str] = []
+    suggested_questions: list[str] = []
 
     if is_anonymous and needs_registration_gate(payload.content):
         gate = "closing_intent"
@@ -318,6 +321,7 @@ async def ask_in_customer_session(
             faithfulness, answer_relevancy = result.faithfulness, result.answer_relevancy
             emotion = MessageEmotion(result.emotion) if result.emotion else None
             quick_replies = result.quick_replies
+            suggested_questions = result.suggested_questions
 
     log_event(
         "customer.query",
@@ -347,6 +351,7 @@ async def ask_in_customer_session(
         answer_relevancy=answer_relevancy,
         emotion=emotion,
         quick_replies=quick_replies,
+        suggested_questions=suggested_questions,
     )
 
     response = CustomerAskResponse.model_validate(message)

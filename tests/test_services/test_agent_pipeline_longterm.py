@@ -98,11 +98,11 @@ def test_personalised_answers_are_never_written_to_the_cache(monkeypatch):
 def test_profile_reaches_the_generate_node(monkeypatch):
     seen: list[str] = []
 
-    def fake_generate(prompt, *_args, **_kwargs):
+    def fake_generate(prompt, schema, *_args, **_kwargs):
         seen.append(prompt)
-        return "- Can 3PN tu 5 ty dong."
+        return schema(text="- Can 3PN tu 5 ty dong.")
 
-    monkeypatch.setattr(agent_pipeline, "generate_text", fake_generate)
+    monkeypatch.setattr(agent_pipeline, "generate_json", fake_generate)
 
     agent_pipeline._generate({"query": "Gia can 3PN?", "memory_profile": PROFILE, "retrieved_docs": []})
 

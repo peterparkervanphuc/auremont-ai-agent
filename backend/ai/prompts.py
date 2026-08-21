@@ -8,12 +8,17 @@ SYSTEM_INSTRUCTION_VERSION is bumped whenever the wording changes meaningfully, 
 answer in the logs can be tied back to the instructions that produced it.
 """
 
+import re
+
 from pydantic import BaseModel, Field
 
 from backend.ai.answer_cleanup import wants_images_for_prompt
 from backend.services.inventory_service import InventoryUnit
 
-SYSTEM_INSTRUCTION_VERSION = "2026-08-20.11"
+SYSTEM_INSTRUCTION_VERSION = "2026-08-21.12"
+
+_BEDROOM_PN_PATTERN = re.compile(r"\b(?P<count>\d+)PN(?P<plus>\+1)?\b", re.IGNORECASE)
+_BEDROOM_BR_PATTERN = re.compile(r"\b(?P<count>\d+)BR(?P<plus>\+)?(?=\W|$)", re.IGNORECASE)
 
 # Block order is deliberate and should not be reshuffled: role -> length -> layout ->
 # required content -> format -> grounding constraints. A model reading "senior
@@ -312,10 +317,59 @@ class ConsultAnswer(BaseModel):
     arrive as data the UI can act on, not prose it would need to parse back apart. Always
     present; empty for an ordinary answer — see the QUICK_REPLIES block in
     SYSTEM_INSTRUCTION_PUBLIC for when the model is expected to fill it in.
+
+    `suggested_questions` is a different thing entirely and the two must not be conflated:
+    quick_replies ANSWER a question the assistant just asked ("Để ở" / "Đầu tư"), while
+    these are the asker's plausible NEXT questions about the topic already on the table
+    ("Giá căn 2PN bao nhiêu?"). Both can be empty; they are rarely both useful at once,
+    since a turn that ends in a survey question is not a turn that invites a new topic.
     """
 
     text: str
     quick_replies: list[str] = Field(default_factory=list)
+    suggested_questions: list[str] = Field(default_factory=list)
+
+
+class SaleAnswer(BaseModel):
+    """Structured output for SYSTEM_INSTRUCTION (Sale/INTERNAL), mirroring `ConsultAnswer`
+    minus `quick_replies`.
+
+    Sale/INTERNAL previously ran on plain `generate_text` because it had no structured UI
+    to feed. Follow-up suggestions are that UI, so the INTERNAL path moves to
+    schema-constrained decoding too — the same single call, no extra latency or spend, and
+    the answer text itself is unchanged in shape.
+
+    There is deliberately no `quick_replies` here: those exist to spare a customer typing
+    on a phone, whereas a Sale is at a keyboard mid-consultation and the survey-question
+    flow that produces them is a customer-chat behaviour (see SYSTEM_INSTRUCTION_PUBLIC).
+    """
+
+    text: str
+    suggested_questions: list[str] = Field(default_factory=list)
+
+
+# Shared by both audiences' instruction blocks — the rules are identical apart from who is
+# asking, and a follow-up suggestion that misleads is equally costly either way. `{asker}`
+# is filled in per audience.
+#
+# The hard rule is the grounding one: a suggestion is a promise that an answer exists. The
+# model knows plenty about real estate in general and will happily propose "Tiến độ xây
+# dựng thế nào?" for a project whose documents say nothing about it — the asker taps it and
+# gets "chưa có dữ liệu", which reads as the system leading them in circles. This is the
+# same failure the QUICK_REPLIES block above already guards against, stated again here
+# because it is the single easiest thing to get wrong about this field.
+_SUGGESTED_QUESTIONS_RULES = (
+    "- suggested_questions: 2-3 câu hỏi TIẾP THEO mà {asker} có thể muốn hỏi, viết đúng như "
+    "{asker} sẽ gõ (câu hỏi hoàn chỉnh, ngắn, có dấu hỏi — vd. 'Giá căn 2PN bao nhiêu?').\n"
+    "- CHỈ gợi ý câu hỏi mà NGỮ CẢNH ở trên thật sự có dữ liệu để trả lời, hoặc tra được từ "
+    "tồn kho real-time. TUYỆT ĐỐI không gợi ý chủ đề chỉ vì 'nghe hợp lý' theo kiến thức "
+    "chung về bất động sản — {asker} bấm vào rồi nhận 'chưa có dữ liệu' là trải nghiệm tệ.\n"
+    "- Bám đúng dự án / phân khu / loại căn đang nói tới, đi sâu thêm hoặc mở sang khía cạnh "
+    "liên quan (giá, diện tích, tiện ích, chính sách, pháp lý, tồn kho) — không hỏi lại điều "
+    "vừa được trả lời và không lặp lại câu đã có trong lịch sử hội thoại.\n"
+    "- Để trống suggested_questions khi ngữ cảnh không có dữ liệu (câu trả lời là 'chưa có "
+    "dữ liệu'), khi bạn đang hỏi khảo sát nhu cầu, hoặc khi không còn hướng nào đáng hỏi tiếp."
+)
 
 
 def build_prompt(
@@ -382,8 +436,17 @@ def build_prompt(
     sections.append(f"{header}:\n{query}")
 
     if docs:
-        context = "\n\n".join(_format_doc(index, doc) for index, doc in enumerate(docs, start=1))
+        bedroom_aliases = _bedroom_aliases_in_context(query, docs)
+        prompt_docs = [_annotate_bedroom_aliases(doc, bedroom_aliases) for doc in docs]
+        context = "\n\n".join(_format_doc(index, doc) for index, doc in enumerate(prompt_docs, start=1))
         sections.append(f"NGỮ CẢNH TỪ TÀI LIỆU DỰ ÁN:\n{context}")
+        if bedroom_aliases:
+            mappings = ", ".join(f"{pn} = {br}" for br, pn in bedroom_aliases.items())
+            sections.append(
+                f"QUY ƯỚC KÝ HIỆU TRONG NGỮ CẢNH: PN và BR đều chỉ số phòng ngủ; {mappings}. "
+                "Phải dùng các dòng BR tương ứng để trả lời "
+                "câu hỏi PN, không được coi là thiếu dữ liệu chỉ vì khác ký hiệu."
+            )
 
     if needs_inventory and not inventory_failed:
         sections.append(f"TỒN KHO REAL-TIME:\n{_format_units(units)}")
@@ -423,7 +486,8 @@ def build_prompt(
             "'nghe hợp lý' từ kiến thức nền chung rồi mời khách bấm vào, khách bấm vào không có "
             "dữ liệu để trả lời là trải nghiệm tệ.\n"
             "- Nếu câu bạn vừa hỏi có vài lựa chọn ngắn, rõ ràng, điền vào quick_replies đúng "
-            "như khách sẽ gõ (2-4 lựa chọn); nếu không thì để quick_replies trống."
+            "như khách sẽ gõ (2-4 lựa chọn); nếu không thì để quick_replies trống.\n"
+            + _SUGGESTED_QUESTIONS_RULES.format(asker="khách")
         )
     else:
         sections.append(
@@ -432,13 +496,17 @@ def build_prompt(
             "Markdown nào (không dấu sao, không thăng).\n"
             "- Trình bày bằng gạch đầu dòng, mỗi dòng bắt đầu bằng '- '. Tối đa 6 dòng.\n"
             "- Dòng đầu tiên trả lời thẳng điều Sale hỏi, kèm con số chính.\n"
+            "- Nếu Sale hỏi nhiều ý trong cùng một câu (ví dụ giá VÀ diện tích), phải trả lời đủ từng ý "
+            "được hỏi. Trước khi nói một ý là chưa có dữ liệu, rà soát toàn bộ các đoạn và bảng trong NGỮ CẢNH; "
+            "không được bỏ sót số liệu chỉ vì nó nằm ở một khối ngữ cảnh phía sau.\n"
             "- Bám đúng loại căn / phân khu / tòa mà câu hỏi nhắc tới, đừng trả lời chung chung "
             "cho cả dự án khi Sale đang hỏi một loại căn cụ thể.\n"
             "- Kèm điều kiện áp dụng của con số (VAT, diện tích tính theo, mốc thời gian) ngay "
             "trong dòng nêu con số đó, thay vì tách thành dòng riêng.\n"
             "- Không viết tên tài liệu, số trang hay số thứ tự khối ngữ cảnh ([1], [2]) vào câu "
             "trả lời — giao diện đã hiện phần nguồn riêng bên dưới.\n"
-            "- Nếu ngữ cảnh chưa có dữ liệu cho phần nào, nói thẳng trong một dòng thay vì suy đoán."
+            "- Nếu ngữ cảnh chưa có dữ liệu cho phần nào, nói thẳng trong một dòng thay vì suy đoán.\n"
+            + _SUGGESTED_QUESTIONS_RULES.format(asker="Sale")
         )
 
     if images:
@@ -447,13 +515,28 @@ def build_prompt(
         # to go find pictures elsewhere — printed directly above a strip of those pictures.
         project_name = images[0].get("project_name") or "dự án"
         who = "khách hàng" if is_public else "Sale"
-        sections.append(
+        shared_rule = (
             f"ẢNH ĐÃ ĐÍNH KÈM: {len(images)} ảnh {project_name} ĐANG hiển thị trên màn hình của "
             f"{who}, ngay dưới câu trả lời này. CẤM tuyệt đối mọi câu phủ nhận điều đó — không "
             "viết 'không có hình ảnh', 'không có tệp ảnh', 'tài liệu không chứa ảnh', 'không "
-            f"hiển thị được ảnh', và không bảo {who} đi hỏi nơi khác xin ảnh. Không mô tả từng "
-            "ảnh. Phần chữ chỉ tóm tắt 2-3 câu về hạng mục được hỏi dựa trên ngữ cảnh."
+            f"hiển thị được ảnh', và không bảo {who} đi hỏi nơi khác xin ảnh. Không mô tả từng ảnh. "
         )
+        if wants_images_for_prompt(query):
+            # They asked to see something: the photos ARE the answer, and the text is a
+            # short caption for them.
+            sections.append(shared_rule + "Phần chữ chỉ tóm tắt 2-3 câu về hạng mục được hỏi dựa trên ngữ cảnh.")
+        else:
+            # Nobody asked for these — they ride along to illustrate a text answer (see
+            # answer_images_service's automatic route). The question still has to be
+            # answered on its own terms: without this the model reads "images attached" as
+            # an instruction to write about the images and drifts off a question that was
+            # never about them, e.g. answering "giá căn 2PN" with a description of the
+            # amenities pictured.
+            sections.append(
+                shared_rule + "Ảnh chỉ là minh hoạ kèm theo, KHÔNG phải nội dung được hỏi: trả lời "
+                "đúng trọng tâm câu hỏi như khi không có ảnh, không đổi chủ đề sang mô tả ảnh và "
+                "không bắt buộc phải nhắc tới ảnh."
+            )
     elif wants_images_for_prompt(query):
         sections.append(
             "ẢNH: catalogue không có ảnh nào khớp yêu cầu này. Nói ngắn gọn trong một dòng là "
@@ -491,6 +574,33 @@ def build_prompt(
         )
 
     return "\n\n".join(sections)
+
+
+def _bedroom_aliases_in_context(query: str, docs: list[dict]) -> dict[str, str]:
+    """Map only bedroom labels explicitly requested and actually present in context."""
+    requested = {
+        f"{match.group('count')}BR{'+' if match.group('plus') else ''}": match.group(0).upper()
+        for match in _BEDROOM_PN_PATTERN.finditer(query)
+    }
+    available = {
+        match.group(0).upper()
+        for doc in docs
+        for match in _BEDROOM_BR_PATTERN.finditer(str(doc.get("content") or ""))
+    }
+    return {br: pn for br, pn in requested.items() if br in available}
+
+
+def _annotate_bedroom_aliases(doc: dict, aliases: dict[str, str]) -> dict:
+    """Add the Vietnamese label beside matching English table rows in the LLM prompt."""
+    if not aliases:
+        return doc
+
+    def replace(match: re.Match[str]) -> str:
+        source = match.group(0)
+        target = aliases.get(source.upper())
+        return f"{source} ({target})" if target else source
+
+    return {**doc, "content": _BEDROOM_BR_PATTERN.sub(replace, str(doc.get("content") or ""))}
 
 
 def _format_history(history: list[dict] | None, is_public: bool) -> str | None:
