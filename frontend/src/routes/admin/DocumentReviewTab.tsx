@@ -60,11 +60,11 @@ export function DocumentReviewTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await api.get<DocumentResponse[]>("/documents/pending-review");
+      const list = await api.get<DocumentResponse[]>("/documents/metadata-editable");
       setDocuments(list);
       setSelected((current) => list.find((item) => item.id === current?.id) ?? null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không tải được danh sách chờ duyệt.");
+      setError(err instanceof Error ? err.message : "Không tải được danh sách tài liệu.");
     } finally {
       setLoading(false);
     }
@@ -82,7 +82,7 @@ export function DocumentReviewTab() {
     setDraft((current) => current ? { ...current, [key]: value } : current);
   };
 
-  const approve = async () => {
+  const save = async () => {
     if (!selected || !draft) return;
     setSaving(true);
     setError(null);
@@ -92,7 +92,7 @@ export function DocumentReviewTab() {
       setSelected(null);
       setDraft(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không thể duyệt tài liệu.");
+      setError(err instanceof Error ? err.message : "Không lưu được thay đổi.");
     } finally {
       setSaving(false);
     }
@@ -100,15 +100,15 @@ export function DocumentReviewTab() {
 
   return (
     <div className="page">
-      <h2 className="page-title">Chờ duyệt tài liệu</h2>
-      <p className="page-sub">Kiểm tra đề xuất phân loại trước khi tài liệu được AI dùng để trả lời.</p>
+      <h2 className="page-title">Metadata tài liệu</h2>
+      <p className="page-sub">Tài liệu trả lời được ngay sau khi upload — không cần duyệt. Trang này để sửa lại metadata nếu hệ thống nhận diện chưa đúng. Riêng <strong>Trạng thái pháp lý</strong> có tác dụng thật: đặt Hết hiệu lực / Bị bãi bỏ / Bị thay thế sẽ đưa tài liệu ra khỏi phạm vi AI dùng để trả lời.</p>
 
       {error && <div className="alert alert-danger" style={{ marginTop: 16 }}>{error}</div>}
 
       {loading ? (
         <div className="empty-state"><LoaderIcon size={24} className="icon-spin" /><p>Đang tải tài liệu…</p></div>
       ) : documents.length === 0 ? (
-        <div className="empty-state"><div className="empty-state-icon"><InboxIcon size={26} /></div><p>Không có tài liệu nào chờ duyệt.</p></div>
+        <div className="empty-state"><div className="empty-state-icon"><InboxIcon size={26} /></div><p>Chưa có tài liệu nào đã ingest xong.</p></div>
       ) : (
         <div className="review-layout">
           <div className="data-list review-list">
@@ -125,8 +125,9 @@ export function DocumentReviewTab() {
               <h3 className="section-title">{selected.title}</h3>
               {selected.classification_reason && <p className="review-reason">Đề xuất hệ thống: {selected.classification_reason}</p>}
               <p className="review-reason">
-                Loại tài liệu và phạm vi conflict được khóa ở bước duyệt. Nếu các trường này sai,
-                hãy giữ tài liệu trong quarantine và chạy quy trình re-index/rescan thay vì chỉ đổi metadata.
+                Loại tài liệu và phạm vi conflict không sửa được ở đây vì chúng quyết định cách cắt nội dung
+                và cách đối chiếu mâu thuẫn. Muốn đổi loại tài liệu, dùng ô chọn loại ở tab Kho tài liệu —
+                thao tác đó sẽ cắt lại nội dung và quét mâu thuẫn lại.
               </p>
               <div className="review-grid">
                 <label>Loại tài liệu<select value={draft.category} disabled>{CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -150,7 +151,7 @@ export function DocumentReviewTab() {
               </div>}
 
               <label className="review-summary">Tóm tắt<textarea value={draft.document_summary ?? ""} onChange={(event) => update("document_summary", event.target.value || null)} rows={4} /></label>
-              <button className="btn btn-primary" type="button" onClick={() => void approve()} disabled={saving}>{saving ? <LoaderIcon size={16} className="icon-spin" /> : <CheckIcon size={16} />} {draft.category === "legal_document" && ["expired", "repealed", "replaced"].includes(draft.legal_status) ? "Duyệt và giữ ngoài RAG" : "Duyệt và cho phép AI sử dụng"}</button>
+              <button className="btn btn-primary" type="button" onClick={() => void save()} disabled={saving}>{saving ? <LoaderIcon size={16} className="icon-spin" /> : <CheckIcon size={16} />} {["expired", "repealed", "replaced"].includes(draft.legal_status) ? "Lưu và đưa ra khỏi phạm vi AI" : "Lưu thay đổi"}</button>
             </section>
           )}
         </div>

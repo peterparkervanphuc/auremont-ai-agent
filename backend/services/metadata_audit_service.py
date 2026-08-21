@@ -91,7 +91,7 @@ class VectorDocumentSnapshot:
         if isinstance(content, str) and content.strip():
             raw_index = payload.get("chunk_index")
             try:
-                chunk_index = int(raw_index)
+                chunk_index = int(raw_index)  # type: ignore[arg-type]  # guarded by the except below
             except (TypeError, ValueError):
                 # A malformed/missing index must not make otherwise useful duplicate
                 # detection crash.  It sorts after every valid ingestion chunk.

@@ -1,4 +1,7 @@
-from sqlalchemy import JSON, Column, DateTime, String
+from datetime import datetime
+
+from sqlalchemy import JSON, DateTime, String
+from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.mysql_client import Base
 from backend.utils.time import utcnow
@@ -7,12 +10,12 @@ from backend.utils.time import utcnow
 class Project(Base):
     __tablename__ = "projects"
 
-    id = Column(String(36), primary_key=True, index=True)
-    name = Column(String(255), nullable=False)
-    location = Column(String(255), nullable=True)
-    description = Column(String(2000), nullable=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     # Full payload (pricing, amenities, highlights, contact, documents...) — richer
     # than the three structured columns above, used to render project detail views
     # without adding child tables.
-    details = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=utcnow, nullable=False)
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

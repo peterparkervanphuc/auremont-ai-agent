@@ -1,4 +1,5 @@
 from datetime import date, datetime, time, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
@@ -147,7 +148,7 @@ async def get_business_dashboard(
             unknown_project_count += 1
             continue
         project_counts[row.project_id] = project_counts.get(row.project_id, 0) + 1
-    top_projects = [
+    top_projects: list[dict[str, Any]] = [
         {"project_id": project_id, "name": project_names.get(project_id, project_id), "sessions": count}
         for project_id, count in sorted(project_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
     ]
@@ -166,7 +167,7 @@ async def get_business_dashboard(
             sale_counts[row.sale_id]["customers"] += 1
     session_sale = {row.id: row.sale_id for row in sessions}
     for row in sale_messages:
-        sale_id = session_sale.get(row.session_id)
+        sale_id = session_sale.get(row.session_id) if row.session_id is not None else None
         if sale_id in sale_counts:
             sale_counts[sale_id].setdefault("questions", 0)
             sale_counts[sale_id]["questions"] += 1
@@ -205,16 +206,16 @@ async def get_business_dashboard(
 
     coverage_categories = ["sales_policy", "price_list", "floor_plan", "legal_document", "payment_schedule"]
     documents = db.query(Document).filter(Document.project_id.isnot(None)).all()
-    document_coverage = []
+    document_coverage: list[dict[str, Any]] = []
     for project in projects:
         project_documents = [row for row in documents if row.project_id == project.id and row.is_current]
         categories = {}
         for category in coverage_categories:
             matching = [row for row in project_documents if row.category == category]
-            if any(row.status == "completed" and row.review_status == "approved" for row in matching):
+            # Completed is all it takes: there is no approval step between ingestion and
+            # answering, so a "pending review" state would never be reachable.
+            if any(row.status == "completed" for row in matching):
                 state = "ready"
-            elif any(row.status == "completed" for row in matching):
-                state = "pending_review"
             elif matching:
                 state = "unavailable"
             else:

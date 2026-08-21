@@ -33,15 +33,19 @@ function withPageAnchor(url: string, citation: Citation): string {
 // citations per file, because messages stored before that change still hold one entry
 // per chunk — five rows of the same PDF name — and reopening an old conversation
 // renders whatever was saved. Doing it at render time fixes the history too.
+//
+// Keyed on document_id rather than title, matching build_citations: those legacy per-chunk
+// entries all repeat the same document_id, so this still collapses them, while two
+// genuinely different files that share a name both survive instead of one being dropped
+// and the other left standing in for it.
 export function CitationList({ citations, className, label }: Props) {
   const [loadingId, setLoadingId] = useState<number | null>(null);
   const [preview, setPreview] = useState<{ title: string; url: string } | null>(null);
 
-  const seen = new Set<string>();
+  const seen = new Set<number>();
   const unique = citations.filter((c) => {
-    const key = c.title.trim().toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (seen.has(c.document_id)) return false;
+    seen.add(c.document_id);
     return true;
   });
 
@@ -76,7 +80,7 @@ export function CitationList({ citations, className, label }: Props) {
       <span className="chat-citations-label">{label}</span>
       {unique.map((c) => (
         <button
-          key={c.title}
+          key={c.document_id}
           type="button"
           className="chat-citation"
           onClick={() => openDocument(c)}
@@ -84,6 +88,9 @@ export function CitationList({ citations, className, label }: Props) {
         >
           <DocumentIcon size={12} />
           {c.title}
+          {/* Only present when another chip carries the same file name — without it the
+              Sale sees two identical chips and cannot tell which source is which. */}
+          {c.qualifier && <span className="chat-citation-qualifier">{c.qualifier}</span>}
         </button>
       ))}
 

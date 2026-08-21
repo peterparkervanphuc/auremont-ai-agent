@@ -1487,6 +1487,16 @@
   background: rgba(0, 80, 239, 0.15);
 }
 
+/* Shown only when two chips carry the same file name. Sits quieter than the name itself —
+   it is there to separate two sources, not to compete with them for attention. */
+.chat-citation-qualifier {
+  padding-left: 5px;
+  margin-left: 1px;
+  border-left: 1px solid rgba(0, 80, 239, 0.3);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
 .chat-citation:disabled {
   cursor: wait;
   opacity: 0.7;

@@ -15,7 +15,8 @@ export const saleLiveApi = {
   getMessages: (sessionId: number) => api.get<MessageResponse[]>(`/sale/live-inbox/${sessionId}/messages`),
   reply: (sessionId: number, content: string) =>
     api.post<MessageResponse>(`/sale/live-inbox/${sessionId}/reply`, { content }),
-  suggest: (sessionId: number) => api.post<{ draft: string }>(`/sale/live-inbox/${sessionId}/suggest`),
+  suggest: (sessionId: number) =>
+    api.post<{ draft: string; requires_hitl: boolean }>(`/sale/live-inbox/${sessionId}/suggest`),
   /** Hand the session back to the AI — the customer can go back to chatting with Auremont. */
   end: (sessionId: number) => api.post<MessageResponse>(`/sale/live-inbox/${sessionId}/end`),
 };

@@ -16,8 +16,8 @@ def test_single_project_keeps_citations():
     docs = [_doc(1, "bang-gia.pdf", "the-beverly"), _doc(2, "chinh-sach.docx", "the-beverly")]
 
     assert _citations_for(docs) == [
-        {"document_id": 1, "title": "bang-gia.pdf", "page": 1, "y_position": None},
-        {"document_id": 2, "title": "chinh-sach.docx", "page": 1, "y_position": None},
+        {"document_id": 1, "title": "bang-gia.pdf", "qualifier": None, "page": 1, "y_position": None},
+        {"document_id": 2, "title": "chinh-sach.docx", "qualifier": None, "page": 1, "y_position": None},
     ]
 
 
@@ -33,6 +33,6 @@ def test_missing_project_id_is_not_treated_as_ambiguous():
     docs = [_doc(1, "bang-gia.pdf", "the-beverly"), _doc(2, "quy-dinh-chung.pdf", None)]
 
     assert _citations_for(docs) == [
-        {"document_id": 1, "title": "bang-gia.pdf", "page": 1, "y_position": None},
-        {"document_id": 2, "title": "quy-dinh-chung.pdf", "page": 1, "y_position": None},
+        {"document_id": 1, "title": "bang-gia.pdf", "qualifier": None, "page": 1, "y_position": None},
+        {"document_id": 2, "title": "quy-dinh-chung.pdf", "qualifier": None, "page": 1, "y_position": None},
     ]

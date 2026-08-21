@@ -20,6 +20,7 @@ from dataclasses import dataclass, fields
 import httpx
 
 from backend.core.config import settings
+from backend.utils.text import sanitize_external_field
 
 logger = logging.getLogger(__name__)
 
@@ -236,15 +237,20 @@ def _parse_unit(item: object) -> InventoryUnit | None:
         )
         return None
 
+    # Every string below is interpolated into the Generate and Verifier prompts verbatim,
+    # and none of it originates in this system. Flatten them at the boundary so a crafted
+    # value cannot smuggle prompt structure in (see sanitize_external_field); the numeric
+    # fields are already parsed to floats and carry no such risk.
     unit_type = data.get("unit_type")
+    subdivision = data.get("subdivision")
     return InventoryUnit(
-        unit_code=str(data["unit_code"]),
-        project_id=str(data["project_id"]),
-        subdivision=str(data["subdivision"]) if data.get("subdivision") is not None else None,
-        unit_type=str(unit_type) if unit_type is not None else None,
+        unit_code=sanitize_external_field(str(data["unit_code"])),
+        project_id=sanitize_external_field(str(data["project_id"])),
+        subdivision=sanitize_external_field(str(subdivision)) if subdivision is not None else None,
+        unit_type=sanitize_external_field(str(unit_type)) if unit_type is not None else None,
         area_m2=_to_float(data.get("area_m2")),
         price=_to_float(data.get("price")),
-        status=str(data["status"]),
+        status=sanitize_external_field(str(data["status"])),
     )
 
 

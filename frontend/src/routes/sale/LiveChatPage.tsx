@@ -6,7 +6,15 @@ import { AnswerImageStrip } from "./AnswerImageStrip";
 import { parseServerDate } from "../../utils/datetime";
 import { AuremontAvatar } from "../../components/AuremontAvatar";
 import { CitationList } from "../../components/CitationList";
-import { ArrowLeftIcon, LoaderIcon, SendIcon, SparklesIcon, UserIcon, UsersIcon } from "../../components/Icons";
+import {
+  AlertTriangleIcon,
+  ArrowLeftIcon,
+  LoaderIcon,
+  SendIcon,
+  SparklesIcon,
+  UserIcon,
+  UsersIcon,
+} from "../../components/Icons";
 
 function formatTime(iso: string): string {
   const d = parseServerDate(iso);
@@ -27,6 +35,11 @@ export function LiveChatPage() {
   const [suggesting, setSuggesting] = useState(false);
   const [ending, setEnding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Holds an AI draft that tripped the price/commitment detector and has not been
+  // acknowledged yet. Replies here reach the customer directly, with none of the HITL card
+  // the AI-consult flow puts in the way, so an AI-authored commitment gets the same
+  // read-it-first obligation before it can be sent.
+  const [unacknowledgedDraft, setUnacknowledgedDraft] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -56,8 +69,12 @@ export function LiveChatPage() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
+  // Still the untouched risky draft: the acknowledgement banner shows and sending is
+  // blocked until the Sale either confirms it or edits it into their own words.
+  const awaitingAck = unacknowledgedDraft !== null && input.trim() === unacknowledgedDraft;
+
   const sendReply = useCallback(async () => {
-    if (!sessionId || !input.trim() || loading) return;
+    if (!sessionId || !input.trim() || loading || awaitingAck) return;
     const content = input.trim();
     setInput("");
     setLoading(true);
@@ -65,21 +82,24 @@ export function LiveChatPage() {
     try {
       const reply = await saleLiveApi.reply(Number(sessionId), content);
       setMessages((prev) => [...prev, reply]);
+      setUnacknowledgedDraft(null);
     } catch {
       setError("Không gửi được tin nhắn — vui lòng thử lại.");
     } finally {
       setLoading(false);
     }
-  }, [sessionId, input, loading]);
+  }, [sessionId, input, loading, awaitingAck]);
 
   const suggest = useCallback(async () => {
     if (!sessionId || suggesting) return;
     setSuggesting(true);
     setError(null);
     try {
-      const { draft } = await saleLiveApi.suggest(Number(sessionId));
-      if (draft) setInput(draft);
-      else setError("AI chưa có đủ ngữ cảnh để gợi ý câu trả lời.");
+      const { draft, requires_hitl } = await saleLiveApi.suggest(Number(sessionId));
+      if (draft) {
+        setInput(draft);
+        setUnacknowledgedDraft(requires_hitl ? draft : null);
+      } else setError("AI chưa có đủ ngữ cảnh để gợi ý câu trả lời.");
     } catch {
       setError("Không lấy được gợi ý — vui lòng thử lại.");
     } finally {
@@ -114,7 +134,7 @@ export function LiveChatPage() {
     }
   };
 
-  const ready = Boolean(input.trim()) && !loading;
+  const ready = Boolean(input.trim()) && !loading && !awaitingAck;
 
   return (
     <div className="chat-page chat-page--standalone">
@@ -182,6 +202,17 @@ export function LiveChatPage() {
       </div>
 
       <div className="chat-input-wrapper">
+        {awaitingAck && (
+          <div className="live-hitl-ack">
+            <AlertTriangleIcon size={16} />
+            <p>
+              Gợi ý này có thông tin giá/cam kết và sẽ gửi thẳng cho khách. Hãy đọc kỹ trước khi gửi.
+            </p>
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => setUnacknowledgedDraft(null)}>
+              Tôi đã đọc, cho phép gửi
+            </button>
+          </div>
+        )}
         <form className="chat-input-area" onSubmit={handleSubmit}>
           <div className={`chat-input-box ${input.trim() ? "chat-input-box--active" : ""}`}>
             <textarea

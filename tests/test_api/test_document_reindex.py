@@ -116,3 +116,76 @@ def test_a_sale_cannot_reindex(db_session, sale, document):
         app.dependency_overrides.clear()
 
     assert response.status_code == 403
+
+
+def test_admin_can_reclassify_a_document(client, monkeypatch, document):
+    """The review endpoint refuses category edits, so this is the only in-app way to fix a
+    document the classifier put in the wrong category."""
+    calls = []
+    monkeypatch.setattr(
+        documents_router,
+        "reclassify_document",
+        lambda db, *, document_id, category, reviewed_by: calls.append((document_id, category)) or document,
+    )
+    monkeypatch.setattr(documents_router, "clear_cache", lambda: None)
+
+    response = client.post(f"/api/v1/documents/{document.id}/reclassify", json={"category": "price_list"})
+
+    assert response.status_code == 200, response.text
+    assert calls == [(document.id, "price_list")]
+
+
+def test_reclassifying_clears_the_answer_cache(client, monkeypatch, document):
+    """Its chunks and category both changed, so answers cached from it now cite a shape of
+    the document that no longer exists."""
+    cleared = []
+    monkeypatch.setattr(
+        documents_router,
+        "reclassify_document",
+        lambda db, *, document_id, category, reviewed_by: document,
+    )
+    monkeypatch.setattr(documents_router, "clear_cache", lambda: cleared.append(True))
+
+    client.post(f"/api/v1/documents/{document.id}/reclassify", json={"category": "price_list"})
+
+    assert cleared == [True]
+
+
+def test_an_unknown_category_is_rejected_before_any_work_starts(client, monkeypatch, document):
+    called = []
+    monkeypatch.setattr(
+        documents_router,
+        "reclassify_document",
+        lambda db, **kwargs: called.append(kwargs) or document,
+    )
+
+    response = client.post(f"/api/v1/documents/{document.id}/reclassify", json={"category": "khong-ton-tai"})
+
+    assert response.status_code == 422
+    assert called == []
+
+
+def test_a_failed_reclassify_reports_a_conflict(client, monkeypatch, document):
+    """The document stays quarantined on failure, so the Admin can safely retry."""
+
+    def _boom(db, **kwargs):
+        raise DocumentIngestionError("Document 1 has no stored original file to re-index.")
+
+    monkeypatch.setattr(documents_router, "reclassify_document", _boom)
+
+    response = client.post(f"/api/v1/documents/{document.id}/reclassify", json={"category": "price_list"})
+
+    assert response.status_code == 409
+    assert "no stored original" in response.json()["detail"]
+
+
+def test_a_sale_cannot_reclassify(db_session, sale, document):
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_current_user] = lambda: sale
+    try:
+        response = TestClient(app).post(
+            f"/api/v1/documents/{document.id}/reclassify", json={"category": "price_list"}
+        )
+        assert response.status_code == 403
+    finally:
+        app.dependency_overrides.clear()

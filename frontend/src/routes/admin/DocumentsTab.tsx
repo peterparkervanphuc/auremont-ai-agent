@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type {
+  DocumentCategory,
   DocumentResponse,
   DocumentVisibility,
   ProjectResponse,
@@ -37,6 +38,24 @@ const STATUS_LABEL: Record<
   },
 };
 
+// Shown in the per-row category picker. Ordered by how often an Admin actually corrects to
+// them, with "other" last — it is where the classifier puts anything it could not identify,
+// and the value a correction is normally moving away from.
+const CATEGORY_LABEL: { value: DocumentCategory; text: string }[] = [
+  { value: "sales_policy", text: "Chính sách bán hàng" },
+  { value: "price_list", text: "Bảng giá" },
+  { value: "payment_schedule", text: "Tiến độ thanh toán" },
+  { value: "floor_plan", text: "Mặt bằng" },
+  { value: "legal_document", text: "Tài liệu pháp lý" },
+  { value: "inventory_snapshot", text: "Bảng hàng / tồn kho" },
+  { value: "promotion", text: "Ưu đãi / khuyến mãi" },
+  { value: "subdivision_info", text: "Thông tin phân khu" },
+  { value: "building_info", text: "Thông tin tòa" },
+  { value: "contract_template", text: "Hợp đồng mẫu" },
+  { value: "internal_guide", text: "Tài liệu nội bộ" },
+  { value: "other", text: "Khác — chưa phân loại" },
+];
+
 const ALLOWED_EXTENSIONS = [".pdf", ".docx"];
 
 interface UploadResponse {
@@ -64,10 +83,15 @@ export function DocumentsTab() {
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
   const [queue, setQueue] = useState<UploadQueueItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   // Which project the uploaded document belongs to. Retrieval filters on this, and
   // conflict detection only compares documents within the same project.
   const [projectId, setProjectId] = useState<string>(() => searchParams.get("project_id") ?? "");
+  // Chosen per upload rather than fixed: this used to be hardcoded to "internal", so every
+  // document had to be switched over one by one in the table below after the fact.
+  const [uploadVisibility, setUploadVisibility] = useState<DocumentVisibility>("internal");
+  const [reclassifyingId, setReclassifyingId] = useState<number | null>(null);
   const categoryFilter = searchParams.get("category") ?? "";
   const fileInputRef = useRef<HTMLInputElement>(null);
   const filteredDocuments = documents.filter((document) =>
@@ -123,7 +147,7 @@ export function DocumentsTab() {
         try {
           const formData = new FormData();
           formData.append("file", item.file);
-          formData.append("visibility", "internal");
+          formData.append("visibility", uploadVisibility);
           // Without a project the document cannot be filtered per project at retrieval
           // time, and conflict detection has nothing to compare it against.
           if (projectId) formData.append("project_id", projectId);
@@ -152,7 +176,7 @@ export function DocumentsTab() {
         loadDocuments();
       }
     },
-    [projectId, loadDocuments],
+    [projectId, uploadVisibility, loadDocuments],
   );
 
   const handleFiles = (files: FileList | null) => {
@@ -173,33 +197,67 @@ export function DocumentsTab() {
     setQueue((prev) => prev.filter((item) => item.status === "pending" || item.status === "uploading"));
   };
 
+  // These three all mutate server state. Without a catch, a rejected call threw into an
+  // unhandled promise and the Admin saw nothing at all — the row simply stayed as it was,
+  // indistinguishable from "nothing happened", while the local list quietly disagreed with
+  // the server. State is only updated after the call resolves, so the list stays truthful.
   const setVisibility = async (
     documentId: number,
     visibility: DocumentVisibility,
   ) => {
-    const updated = await api.patch<DocumentResponse>(
-      `/documents/${documentId}/visibility`,
-      { visibility },
-    );
+    setActionError(null);
+    try {
+      const updated = await api.patch<DocumentResponse>(
+        `/documents/${documentId}/visibility`,
+        { visibility },
+      );
 
-    setDocuments((previous) =>
-      previous.map((document) =>
-        document.id === documentId ? updated : document,
-      ),
-    );
+      setDocuments((previous) =>
+        previous.map((document) =>
+          document.id === documentId ? updated : document,
+        ),
+      );
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Không đổi được phân quyền tài liệu.");
+    }
+  };
+
+  // Re-chunks the document from its original file and re-scans it for conflicts, so it is
+  // markedly slower than the visibility toggle beside it — hence the per-row busy state.
+  const changeCategory = async (documentId: number, category: DocumentCategory) => {
+    setActionError(null);
+    setReclassifyingId(documentId);
+    try {
+      const updated = await api.post<DocumentResponse>(`/documents/${documentId}/reclassify`, { category });
+      setDocuments((previous) => previous.map((document) => (document.id === documentId ? updated : document)));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Không đổi được loại tài liệu.");
+    } finally {
+      setReclassifyingId(null);
+    }
   };
 
   const viewDocument = async (documentId: number) => {
-    const { url } = await api.get<{ url: string }>(`/documents/${documentId}/view-url`);
-    window.open(url, "_blank", "noopener,noreferrer");
+    setActionError(null);
+    try {
+      const { url } = await api.get<{ url: string }>(`/documents/${documentId}/view-url`);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Không mở được tài liệu.");
+    }
   };
 
   const removeDocument = async (documentId: number) => {
-    await api.delete(`/documents/${documentId}`);
+    setActionError(null);
+    try {
+      await api.delete(`/documents/${documentId}`);
 
-    setDocuments((previous) =>
-      previous.filter((document) => document.id !== documentId),
-    );
+      setDocuments((previous) =>
+        previous.filter((document) => document.id !== documentId),
+      );
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Không xóa được tài liệu.");
+    }
   };
 
   return (
@@ -208,6 +266,8 @@ export function DocumentsTab() {
       <p className="page-sub">
         Tải PDF/DOCX để hệ thống đọc hiểu và đưa vào kho tri thức, giúp AI trả lời khách chính xác hơn.
       </p>
+
+      {actionError && <div className="alert alert-danger">{actionError}</div>}
 
       <div className="upload-project-row">
         <label htmlFor="upload-project" className="upload-project-label">
@@ -232,6 +292,24 @@ export function DocumentsTab() {
             chiếu mâu thuẫn với các tài liệu cũng không gắn dự án và cùng phân khu / tòa / loại căn.
           </span>
         )}
+
+        <label htmlFor="upload-visibility" className="upload-project-label">
+          Phân quyền
+        </label>
+        <select
+          id="upload-visibility"
+          className="upload-project-select"
+          value={uploadVisibility}
+          onChange={(event) => setUploadVisibility(event.target.value as DocumentVisibility)}
+        >
+          <option value="internal">Nội bộ — chỉ Sale/Admin</option>
+          <option value="public">Public — khách xem được</option>
+        </select>
+        <span className="upload-project-hint">
+          {uploadVisibility === "internal"
+            ? "Chỉ Sale và Admin tra cứu được tài liệu này. Khách hỏi qua chat công khai sẽ không thấy."
+            : "Khách hỏi qua chat công khai cũng tra cứu được tài liệu này."}
+        </span>
       </div>
 
       <div
@@ -312,6 +390,11 @@ export function DocumentsTab() {
 
       <div style={{ marginTop: 32 }}>
         <h3 className="section-title">Danh sách tài liệu</h3>
+        <p className="page-sub">
+          Sale tra cứu được toàn bộ nội dung trong file, không phụ thuộc loại tài liệu chọn ở đây. Loại tài liệu
+          chỉ quyết định cách hệ thống cắt nội dung (bảng giá giữ nguyên hàng, văn bản luật cắt theo Điều/Khoản)
+          và cách đối chiếu mâu thuẫn. File gồm nhiều phần thì chọn phần chiếm chính, hoặc để &ldquo;Khác&rdquo;.
+        </p>
 
         {(searchParams.get("project_id") || categoryFilter) && <div className="document-filter-notice"><span>Đang xem tài liệu được chọn từ dashboard.</span><button type="button" onClick={() => setSearchParams({})}>Xóa bộ lọc</button></div>}
 
@@ -353,6 +436,26 @@ export function DocumentsTab() {
                   <span className={`badge ${displayStatus.badge}`}>
                     {displayStatus.text}
                   </span>
+
+
+                  {/* Correcting this re-chunks and re-scans the document — the review tab
+                      deliberately refuses category edits, so this is the only way to fix a
+                      misclassified upload without deleting and re-uploading it. */}
+                  <select
+                    className="doc-visibility-select"
+                    value={document.category}
+                    aria-label="Loại tài liệu"
+                    disabled={reclassifyingId !== null}
+                    onChange={(event) =>
+                      void changeCategory(document.id, event.target.value as DocumentCategory)
+                    }
+                  >
+                    {CATEGORY_LABEL.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.text}
+                      </option>
+                    ))}
+                  </select>
 
                   <select
                     className="doc-visibility-select"

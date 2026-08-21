@@ -19,6 +19,7 @@ from backend.core.audit import log_event
 from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import (
+    DocumentCategory,
     DocumentReviewStatus,
     DocumentStatus,
     DocumentVisibility,
@@ -34,7 +35,7 @@ from backend.repositories.document import (
     delete_document,
     get_document,
     list_documents,
-    list_documents_pending_review,
+    list_documents_for_metadata_edit,
     update_document_classification,
     update_document_visibility,
 )
@@ -48,6 +49,7 @@ from backend.services.ingestion_service import (
     DocumentIngestionError,
     PromptInjectionError,
     ingest_uploaded_document,
+    reclassify_document,
     reindex_document,
     sanitize_and_scan,
 )
@@ -101,6 +103,13 @@ class IngestResponse(BaseModel):
 
 class VisibilityUpdateRequest(BaseModel):
     visibility: DocumentVisibility
+
+
+class ReclassifyRequest(BaseModel):
+    """The corrected category. Validated against the enum so a typo cannot create a
+    category nothing retrieves under."""
+
+    category: DocumentCategory
 
 
 @router.post(
@@ -312,10 +321,59 @@ async def reindex_document_endpoint(
     )
 
 
+@router.post("/{document_id}/reclassify", response_model=DocumentResponse)
+async def reclassify_document_endpoint(
+    document_id: int,
+    payload: ReclassifyRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
+) -> Document:
+    """Correct a document's category, re-chunking and re-scanning it for conflicts.
+
+    The classification-review endpoint deliberately refuses category changes, since the
+    category decides how the file is chunked and how conflicts are compared. This is the
+    controlled path that does that work — previously the only way to fix a misclassified
+    document was to delete it, rename the file and upload it again.
+    """
+    started = time.perf_counter()
+    try:
+        document = reclassify_document(
+            db,
+            document_id=document_id,
+            category=payload.category,
+            reviewed_by=admin.id,
+        )
+    except DocumentIngestionError as exc:
+        log_event(
+            "document.reclassify.failure",
+            document_id=document_id,
+            to_category=payload.category,
+            admin_id=admin.id,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        # The document stays quarantined on every failure path, so this is safe to retry.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    log_event(
+        "document.reclassify.success",
+        document_id=document.id,
+        to_category=payload.category,
+        is_current=document.is_current,
+        admin_id=admin.id,
+        duration_ms=round((time.perf_counter() - started) * 1000, 2),
+    )
+    # The document's chunks and category both changed, so answers cached from it are stale.
+    _clear_answer_cache()
+    return document
+
+
 @router.get("", response_model=list[DocumentResponse])
 async def get_documents(
     db: Session = Depends(get_db),
-) -> list[DocumentResponse]:
+) -> list[Document]:
     return list_documents(db)
 
 
@@ -412,7 +470,7 @@ async def set_document_visibility(
             )
             db.commit()
             db.refresh(document)
-            _clear_cache_after_visibility_change()
+            _clear_answer_cache()
             return document
         except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
             # Do not reactivate from a stale snapshot. Qdrant remains quarantined (or
@@ -443,7 +501,7 @@ async def set_document_visibility(
         )
         db.commit()
         db.refresh(document)
-        _clear_cache_after_visibility_change()
+        _clear_answer_cache()
         return document
     except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
         db.rollback()
@@ -491,34 +549,47 @@ async def remove_document(
             detail=str(exc),
         ) from exc
 
+    # Otherwise the Agent keeps answering from this document out of the semantic cache
+    # long after the Admin deleted it, citing a document_id that no longer resolves.
+    _clear_answer_cache()
+
 
 @router.get(
-    "/pending-review",
+    "/metadata-editable",
     response_model=list[DocumentResponse],
 )
-async def get_pending_review_documents(
+async def get_documents_for_metadata_edit(
     db: Session = Depends(get_db),
-) -> list[DocumentResponse]:
-    """Files awaiting an Admin classification decision."""
+) -> list[Document]:
+    """Ingested documents whose metadata an Admin can still correct.
 
-    return list_documents_pending_review(db)
+    Not an approval queue — nothing waits for review to become answerable. This exists so
+    legal status, effective dates and version labels can be fixed after ingestion.
+    """
+
+    return list_documents_for_metadata_edit(db)
 
 
 @router.patch(
     "/{document_id}/classification",
     response_model=DocumentResponse,
 )
-async def approve_document_classification(
+async def update_document_metadata(
     document_id: int,
     payload: DocumentClassificationUpdate,
     db: Session = Depends(get_db),
     admin: User = Depends(require_role(UserRole.ADMIN)),
 ) -> DocumentResponse:
-    """Correct metadata and approve a file, which is what makes it retrievable by RAG."""
+    """Correct a document's metadata after ingestion.
 
-    # Phase 1 writes the approved metadata in a quarantined state while holding the
-    # document row lock. Even a provider timeout that actually applied the payload
-    # cannot make a not-yet-committed approval retrievable.
+    Not an approval step — the document already answers. This matters because some of the
+    metadata is load-bearing: `legal_status` decides whether the document stays retrievable
+    at all, so setting it to expired/repealed here takes it out of retrieval.
+    """
+
+    # Phase 1 writes the new metadata with the document quarantined, while holding its row
+    # lock. A provider timeout that actually applied the payload therefore cannot leave a
+    # half-written state answering.
     try:
         existing = get_document(db, document_id, for_update=True)
         if existing is None:
@@ -569,9 +640,10 @@ async def approve_document_classification(
     # quarantined the document between phases; publishing the fresh is_current value
     # cannot undo that newer decision.
     try:
-        document = get_document(db, document_id, for_update=True)
-        if document is None:  # pragma: no cover - deletion also requires the row lock
+        refreshed = get_document(db, document_id, for_update=True)
+        if refreshed is None:  # pragma: no cover - deletion also requires the row lock
             raise ValueError(f"Document with id={document_id} not found.")
+        document = refreshed
         update_document_vector_metadata(
             document.id,
             review_status=document.review_status,
@@ -582,6 +654,9 @@ async def approve_document_classification(
         )
         db.commit()
         db.refresh(document)
+        # Approval is what makes a document retrievable, so questions answered "we have no
+        # information on that" before now must not keep serving from the cache.
+        _clear_answer_cache()
         return document
     except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
         db.rollback()
@@ -591,12 +666,17 @@ async def approve_document_classification(
         ) from exc
 
 
-def _clear_cache_after_visibility_change() -> None:
-    """A question asked (and cached) while this document was still internal would otherwise
-    keep serving that stale "no data" answer forever after it goes public — the cache has
-    no way to know only THIS document changed, so it clears entirely. Best-effort: a
-    failure here never blocks the visibility change itself (see clear_cache's own
-    fail-silent contract).
+def _clear_answer_cache() -> None:
+    """Drop every cached answer after the document set behind them changes.
+
+    A question answered (and cached) before the change keeps serving that stale answer
+    forever otherwise — quoting a document that has since been deleted, retired by a
+    conflict, reclassified, or made public/internal. The cache is keyed by question
+    similarity and has no way to know which entries touched THIS document, so the only
+    correct move is clearing all of it.
+
+    Best-effort: a failure here never blocks the change that triggered it (see
+    clear_cache's own fail-silent contract).
     """
     clear_cache()
 

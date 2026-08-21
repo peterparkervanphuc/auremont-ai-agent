@@ -30,7 +30,7 @@ export function SessionList({ sessions, loading, onChange }: Props) {
   const [naming, setNaming] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [historyQuery, setHistoryQuery] = useState("");
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const filteredSessions = useMemo(() => {
     const q = historyQuery.trim().toLowerCase();
@@ -49,10 +49,19 @@ export function SessionList({ sessions, loading, onChange }: Props) {
   // retrieval searches across every project either way.
   const submitNewSession = async (e: FormEvent) => {
     e.preventDefault();
+    setActionError(null);
     const name = customerName.trim();
-    const session = await api.post<ChatSessionResponse>("/sale/sessions", {
-      customer_name: name || undefined,
-    });
+    let session: ChatSessionResponse;
+    try {
+      session = await api.post<ChatSessionResponse>("/sale/sessions", {
+        customer_name: name || undefined,
+      });
+    } catch {
+      // Same reasoning as removeSession below: without this the naming form just sat there
+      // after a failed create, giving the Sale nothing to act on.
+      setActionError("Không tạo được cuộc trò chuyện, vui lòng thử lại.");
+      return;
+    }
     onChange([session, ...sessions]);
     closeNaming();
     navigate(`/chat/sessions/${session.id}`);
@@ -68,11 +77,11 @@ export function SessionList({ sessions, loading, onChange }: Props) {
   const removeSession = async (e: React.MouseEvent, id: number) => {
     e.preventDefault();
     e.stopPropagation();
-    setDeleteError(null);
+    setActionError(null);
     try {
       await api.delete(`/sale/sessions/${id}`);
     } catch {
-      setDeleteError("Không xoá được cuộc trò chuyện, vui lòng thử lại.");
+      setActionError("Không xoá được cuộc trò chuyện, vui lòng thử lại.");
       return;
     }
     onChange(sessions.filter((s) => s.id !== id));
@@ -128,7 +137,7 @@ export function SessionList({ sessions, loading, onChange }: Props) {
         </div>
       </div>
 
-      {deleteError && <p className="chat-conv-empty chat-conv-error">{deleteError}</p>}
+      {actionError && <p className="chat-conv-empty chat-conv-error">{actionError}</p>}
 
       <div className="chat-conv-list">
         {loading ? (
@@ -147,15 +156,19 @@ export function SessionList({ sessions, loading, onChange }: Props) {
           <p className="chat-conv-empty">Không tìm thấy cuộc trò chuyện nào khớp &ldquo;{historyQuery}&rdquo;.</p>
         ) : (
           filteredSessions.map((s) => (
-            <Link
-              key={s.id}
-              to={`/chat/sessions/${s.id}`}
-              className={`chat-conv-item ${String(s.id) === sessionId ? "chat-conv-item--active" : ""}`}
-            >
-              <span className="chat-conv-title">
-                {s.customer_name ?? s.title ?? `Cuộc trò chuyện #${s.id}`}
-              </span>
-              <span className="chat-conv-time">{formatDate(s.created_at)}</span>
+            // The delete control is a sibling of the link, not a child: a <button> inside
+            // an <a> is invalid HTML, and browsers/screen readers disagree on the resulting
+            // focus order and on which handler a keyboard activation should fire.
+            <div key={s.id} className="chat-conv-row">
+              <Link
+                to={`/chat/sessions/${s.id}`}
+                className={`chat-conv-item ${String(s.id) === sessionId ? "chat-conv-item--active" : ""}`}
+              >
+                <span className="chat-conv-title">
+                  {s.customer_name ?? s.title ?? `Cuộc trò chuyện #${s.id}`}
+                </span>
+                <span className="chat-conv-time">{formatDate(s.created_at)}</span>
+              </Link>
               <button
                 className="chat-conv-delete"
                 onClick={(e) => removeSession(e, s.id)}
@@ -164,7 +177,7 @@ export function SessionList({ sessions, loading, onChange }: Props) {
               >
                 <TrashIcon size={14} />
               </button>
-            </Link>
+            </div>
           ))
         )}
       </div>

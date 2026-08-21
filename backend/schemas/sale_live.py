@@ -24,3 +24,7 @@ class SaleSuggestResponse(BaseModel):
     Sale actually sends it via POST /sale/live-inbox/{id}/reply."""
 
     draft: str
+    # True when the draft carries price/commitment risk. This reply path goes straight to a
+    # live customer with no HITL card in between, so the Sale UI uses this to demand an
+    # explicit acknowledgement before an AI-drafted commitment can be sent.
+    requires_hitl: bool = False

@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 
 import google.genai as genai
 from google.genai import errors as genai_errors
@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 _EMBED_MAX_ATTEMPTS = 4
 _EMBED_RETRY_STATUS_CODES = {429}
 
+# Generation (every answer, and every Verifier judgement) sits on the interactive path with
+# its sub-3-second field budget, so it gets a far tighter policy than the batch embedding
+# loop above: one retry, transient faults only, and a hard cap on the backoff — a 429's
+# suggested retryDelay can be tens of seconds, which is worse than failing fast here.
+# Without any retry a single blip failed the whole turn and reached the Admin dashboard
+# looking identical to an answer the Verifier genuinely rejected.
+_GENERATE_MAX_ATTEMPTS = 2
+_GENERATE_RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+_GENERATE_MAX_RETRY_DELAY_SECONDS = 1.0
+
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
 _client: genai.Client | None = None
@@ -34,7 +44,6 @@ def get_gemini_client() -> genai.Client:
 
 
 def generate_text(prompt: str, system_instruction: str | None = None) -> str:
-    client = get_gemini_client()
     config = (
         types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -43,12 +52,7 @@ def generate_text(prompt: str, system_instruction: str | None = None) -> str:
         else None
     )
 
-    response = client.models.generate_content(
-        model=settings.GEMINI_MODEL,
-        contents=prompt,
-        config=config,
-    )
-    return response.text or ""
+    return client_models_generate(prompt, config).text or ""
 
 
 def generate_json(
@@ -84,11 +88,34 @@ def generate_json(
 
 
 def client_models_generate(prompt: str, config):
-    return get_gemini_client().models.generate_content(
-        model=settings.GEMINI_MODEL,
-        contents=prompt,
-        config=config,
-    )
+    """The single entry point for every generation call, so the retry policy above cannot
+    drift between the plain-text and schema-constrained paths."""
+    for attempt in range(1, _GENERATE_MAX_ATTEMPTS + 1):
+        try:
+            return get_gemini_client().models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=prompt,
+                config=config,
+            )
+        except genai_errors.APIError as exc:
+            if exc.code not in _GENERATE_RETRY_STATUS_CODES or attempt == _GENERATE_MAX_ATTEMPTS:
+                raise
+
+            delay = min(_retry_delay_seconds(exc), _GENERATE_MAX_RETRY_DELAY_SECONDS)
+            logger.warning(
+                "Gemini generation hit a transient fault; retrying once.",
+                extra={
+                    "event": "gemini.generate.retry",
+                    "model": settings.GEMINI_MODEL,
+                    "status_code": exc.code,
+                    "attempt": attempt,
+                    "delay_seconds": delay,
+                },
+            )
+            time.sleep(delay)
+
+    # Unreachable: the loop either returns or raises on its final attempt.
+    raise RuntimeError("Gemini generation retry loop exited without a result.")
 
 
 class GeminiEmbeddingError(RuntimeError):
@@ -141,7 +168,7 @@ def _embed(
         try:
             response = get_gemini_client().models.embed_content(
                 model=settings.embedding_model,
-                contents=texts,
+                contents=cast(Any, texts),
                 config=types.EmbedContentConfig(**config_kwargs),
             )
             break
@@ -184,7 +211,14 @@ def _embed(
     if not response.embeddings:
         raise GeminiEmbeddingError("Gemini returned no embeddings.")
 
-    vectors = [embedding.values for embedding in response.embeddings]
+    # Built as a loop rather than a comprehension so the None check actually narrows the
+    # element type: `embedding.values` is optional in the SDK's own typing, and a None
+    # reaching Qdrant would fail far from here with nothing pointing back at this call.
+    vectors: list[list[float]] = []
+    for embedding in response.embeddings:
+        if embedding.values is None:
+            raise GeminiEmbeddingError("Gemini returned an empty embedding.")
+        vectors.append(embedding.values)
 
     if len(vectors) != len(texts):
         raise GeminiEmbeddingError("Gemini returned a different number of embeddings than inputs.")

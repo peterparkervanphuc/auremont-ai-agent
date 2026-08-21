@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.core.deps import require_role
 from backend.core.enums import UserRole
 from backend.core.mysql_client import get_db
+from backend.models.document_relation import DocumentRelation
 from backend.models.user import User
 from backend.repositories.document_relation import (
     create_document_relation,
@@ -33,7 +34,7 @@ router = APIRouter(
 async def get_document_relations(
     pending_only: bool = False,
     db: Session = Depends(get_db),
-) -> list[DocumentRelationResponse]:
+) -> list[DocumentRelation]:
     return list_document_relations(db, pending_only=pending_only)
 
 

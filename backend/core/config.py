@@ -108,8 +108,12 @@ class Settings(BaseSettings):
     # "Không đủ thông tin, liên hệ Admin" notice instead of the answer.
     verifier_threshold_sale: float = 0.7
 
-    # Documents at or above this classification confidence are auto-approved.
-    classification_auto_approve_threshold: float = Field(default=0.9, ge=0, le=1)
+    # There is deliberately no "documents must be approved before they answer" setting here.
+    # An uploaded document is retrievable straight away: what protects an answer is the
+    # visibility tier (a customer never sees an internal document), the Verifier's
+    # faithfulness score, and the HITL card in front of anything price- or
+    # commitment-related. Correctness exclusions (duplicate, conflicting, expired) run off
+    # `is_current`, not off review — see rag_service's retrieval filter.
 
     # Object storage (MinIO) — document originals
     minio_endpoint: str = "localhost:9000"
@@ -165,6 +169,13 @@ class Settings(BaseSettings):
     # creation, anonymous ask) — see backend/core/rate_limit.py.
     anonymous_rate_limit_per_window: int = 20
     anonymous_rate_limit_window_seconds: int = 300
+    # Number of reverse proxies in front of the app (Render, nginx, a load balancer). While
+    # this is 0 the throttle uses the socket peer address and ignores X-Forwarded-For, which
+    # any client can set — trusting that header unconditionally would let one visitor forge a
+    # fresh IP per request and bypass the limit entirely. Set it to the real hop count when
+    # deploying behind proxies, otherwise every visitor arrives as the proxy's address and
+    # they all share one bucket. See backend/core/rate_limit.py.
+    trusted_proxy_count: int = 0
 
     @property
     def is_production(self) -> bool:

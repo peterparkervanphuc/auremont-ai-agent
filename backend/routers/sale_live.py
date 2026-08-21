@@ -15,6 +15,7 @@ from backend.core.deps import require_role
 from backend.core.enums import DocumentVisibility, MessageSender, SessionStatus, UserRole
 from backend.core.mysql_client import get_db
 from backend.models.chat_session import ChatSession
+from backend.models.message import Message
 from backend.models.user import User
 from backend.repositories.chat_session import (
     claim_for_sale,
@@ -100,7 +101,7 @@ async def claim(
 @router.get("/{session_id}/messages", response_model=list[MessageResponse])
 async def get_live_messages(
     session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))
-) -> list[MessageResponse]:
+) -> list[Message]:
     """Full history, including everything the AI already said, so the Sale never has to ask
     the customer to repeat themselves."""
     _owned_live_session(db, session_id, user)
@@ -166,4 +167,4 @@ async def suggest(
         clearance=DocumentVisibility.INTERNAL,
         history=history,
     )
-    return SaleSuggestResponse(draft=result.draft_answer)
+    return SaleSuggestResponse(draft=result.draft_answer, requires_hitl=result.requires_hitl)

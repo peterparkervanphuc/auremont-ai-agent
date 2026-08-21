@@ -13,7 +13,7 @@ import type {
   MessageResponse,
   SessionStatus,
 } from "../types";
-import { ArrowRightIcon, LoaderIcon, SendIcon, UsersIcon, XIcon } from "./Icons";
+import { AlertTriangleIcon, ArrowRightIcon, LoaderIcon, SendIcon, UsersIcon, XIcon } from "./Icons";
 import { AuremontAvatar } from "./AuremontAvatar";
 import { RegisterGateModal } from "./RegisterGateModal";
 
@@ -254,6 +254,24 @@ export function ChatWidget() {
                     const isLastMessage = index === messages.length - 1;
                     const showQuickReplies =
                       !isSale && isLastMessage && sessionStatus === "bot_handling" && !!m.quick_replies?.length;
+
+                    // A price/commitment answer must not be readable — let alone copyable —
+                    // from this widget: the mandatory confirm-and-copy gate lives only in the
+                    // full chat window (routes/sale/ChatWindow.tsx). Rendering `m.content`
+                    // here would hand the Sale the exact figures with no confirmation step,
+                    // defeating the gate the backend flagged this message for.
+                    if (m.requires_hitl) {
+                      return (
+                        <div key={m.id} className="chat-widget-hitl">
+                          <AlertTriangleIcon size={20} />
+                          <p>Câu trả lời này có thông tin giá/cam kết, cần xác nhận trước khi gửi khách.</p>
+                          <Link to={fullChatHref} className="btn btn-primary chat-widget-name-submit">
+                            Mở chat đầy đủ để xác nhận
+                          </Link>
+                        </div>
+                      );
+                    }
+
                     return (
                       <div key={m.id}>
                         <div

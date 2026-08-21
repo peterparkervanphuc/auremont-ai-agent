@@ -21,6 +21,27 @@ def strip_diacritics(text: str) -> str:
     return "".join(char for char in decomposed if not unicodedata.combining(char))
 
 
+# Inventory records arrive from an API outside this codebase and their short label fields
+# (unit code, type, status) are interpolated straight into the Generate and Verifier
+# prompts. A line break in one of those values is enough to forge what looks like a new
+# prompt section, so they are flattened before they get near a prompt. 120 chars is far
+# more than any real unit code needs, while stopping one field from crowding out context.
+_EXTERNAL_FIELD_MAX_CHARS = 120
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def sanitize_external_field(value: str) -> str:
+    """Flatten a short free-text value from an external API before it reaches a prompt.
+
+    Uploaded documents get `ingestion_service.sanitize_and_scan`, which blocks the whole
+    file on a hit. That is the wrong trade here: one odd inventory row must not fail a
+    Sale's entire stock lookup. So this neutralises rather than rejects — injected wording
+    survives as inert words on a single line, unable to pose as prompt structure.
+    """
+    flattened = _CONTROL_CHARS.sub(" ", value)
+    return " ".join(flattened.split())[:_EXTERNAL_FIELD_MAX_CHARS]
+
+
 # Asterisks/underscores wrapping a span with no line break: **bold**, *italic*, __bold__.
 _MD_EMPHASIS = re.compile(r"(\*{1,3}|_{1,3})(?=\S)(.+?)(?<=\S)\1", re.DOTALL)
 # Leading bullet at any indent level: "  *   ", "- ", "+ " -> "- "

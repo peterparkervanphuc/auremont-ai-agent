@@ -27,6 +27,7 @@ Ba tinh chat bat buoc:
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from typing import BinaryIO, cast
 from urllib.parse import urljoin
 
 from backend.core.config import get_settings
@@ -113,11 +114,11 @@ def _download_archive_to_minio(archive_url: str) -> int:
                     continue
                 if name in existing:
                     continue
-                fh = tar.extractfile(member)
-                if fh is None:
+                member_stream = tar.extractfile(member)
+                if member_stream is None:
                     continue
                 try:
-                    client.put_object(bucket, name, fh, length=member.size)
+                    client.put_object(bucket, name, cast(BinaryIO, member_stream), length=member.size)
                     loaded += 1
                 except S3Error:
                     logger.warning("Nap anh '%s' vao MinIO that bai.", name, exc_info=True)

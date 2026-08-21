@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.core.deps import get_current_user, get_optional_current_user
-from backend.core.enums import SessionStatus, UserRole
+from backend.core.enums import MessageSender, SessionStatus, UserRole
 from backend.core.mysql_client import Base, get_db
 from backend.main import app
 from backend.models.user import User
@@ -19,6 +19,7 @@ from backend.repositories.chat_session import (
     enter_waiting_queue,
     list_sessions_for_sale,
 )
+from backend.repositories.message import create_message
 from backend.schemas.customer import CustomerChatSessionCreate
 from backend.services import agent_pipeline
 from backend.services.agent_pipeline import PipelineResult
@@ -290,3 +291,39 @@ def test_anonymous_visitor_asking_for_a_human_hits_the_registration_gate_not_the
         assert body["status"] == "bot_handling"
     finally:
         app.dependency_overrides.clear()
+
+
+def _claimed_live_session(db, sale, customer, question: str):
+    """A session a Sale has taken over, holding one customer question to answer."""
+    session = create_customer_session(db, customer_id=customer.id, schema=CustomerChatSessionCreate())
+    enter_waiting_queue(db, session)
+    claim_for_sale(db, session.id, sale_id=sale.id)
+    create_message(db, session.id, sender=MessageSender.CUSTOMER, content=question)
+    return session
+
+
+@pytest.mark.parametrize("risky", [True, False])
+def test_suggest_reports_whether_the_draft_carries_commitment_risk(
+    as_sale, sale, customer, db_session, monkeypatch, risky
+):
+    """Replies on this screen reach the customer directly, with no HITL card in between,
+    so the Sale UI needs to know when the co-pilot drafted a price/commitment answer.
+    Dropping the flag here left an AI-authored commitment one Enter away from the customer.
+    """
+    monkeypatch.setattr(
+        agent_pipeline,
+        "run_pipeline",
+        lambda query, project_id=None, db=None, clearance=None, history=None: PipelineResult(
+            draft_answer="Giá căn 2PN là 3,6 tỷ đồng.",
+            citations=[],
+            verifier_score=0.9,
+            requires_hitl=risky,
+        ),
+    )
+    session = _claimed_live_session(db_session, sale, customer, "Giá căn 2PN?")
+
+    response = as_sale(sale).post(f"/api/v1/sale/live-inbox/{session.id}/suggest")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["requires_hitl"] is risky
+    assert response.json()["draft"] == "Giá căn 2PN là 3,6 tỷ đồng."

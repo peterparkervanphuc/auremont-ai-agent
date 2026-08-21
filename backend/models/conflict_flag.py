@@ -1,4 +1,7 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.enums import ConflictStatus
 from backend.core.mysql_client import Base
@@ -10,15 +13,15 @@ class ConflictFlag(Base):
 
     __tablename__ = "conflict_flags"
 
-    id = Column(Integer, primary_key=True, index=True)
-    document_id_a = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
-    document_id_b = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    document_id_a: Mapped[int] = mapped_column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    document_id_b: Mapped[int] = mapped_column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
 
-    description = Column(Text, nullable=True)
-    status = Column(String(20), default=ConflictStatus.OPEN, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default=ConflictStatus.OPEN, nullable=False)
 
-    created_at = Column(DateTime, default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     # Who closed the flag, and when.
-    resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    resolved_at = Column(DateTime, nullable=True)
+    resolved_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

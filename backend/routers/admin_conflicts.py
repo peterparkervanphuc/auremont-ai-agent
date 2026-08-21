@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 from backend.core.deps import require_role
 from backend.core.enums import UserRole
 from backend.core.mysql_client import get_db
+from backend.models.conflict_flag import ConflictFlag
 from backend.models.user import User
 from backend.repositories.conflict_flag import list_open_conflicts, resolve_conflict
 from backend.repositories.document import get_document
 from backend.schemas.conflict_flag import ConflictFlagResponse, ConflictResolveRequest
+from backend.services.cache_service import clear_cache
 from backend.services.vector_store_service import VectorStoreError, update_document_vector_metadata
 
 logger = logging.getLogger(__name__)
@@ -21,7 +23,7 @@ router = APIRouter(
 
 
 @router.get("", response_model=list[ConflictFlagResponse])
-async def get_conflicts(db: Session = Depends(get_db)) -> list[ConflictFlagResponse]:
+async def get_conflicts(db: Session = Depends(get_db)) -> list[ConflictFlag]:
     """conflicting documents (e.g. two price-list versions of the same project)."""
     return list_open_conflicts(db)
 
@@ -107,9 +109,10 @@ async def resolve_conflict_flag(
     # conflict may have retired it between phases, so only this fresh committed state
     # is allowed to activate Qdrant.
     try:
-        kept = get_document(db, kept.id, for_update=True)
-        if kept is None:
+        refreshed_winner = get_document(db, kept.id, for_update=True)
+        if refreshed_winner is None:
             raise ValueError("The selected conflict winner no longer exists.")
+        kept = refreshed_winner
         update_document_vector_metadata(
             kept.id,
             review_status=kept.review_status,
@@ -129,6 +132,10 @@ async def resolve_conflict_flag(
         ) from exc
 
     db.refresh(conflict)
+    # The superseded document just stopped being retrievable. Without this, cached answers
+    # keep quoting the version the Admin has just ruled against — exactly the contradiction
+    # the conflict flag was raised to end.
+    clear_cache()
     return conflict
 
 

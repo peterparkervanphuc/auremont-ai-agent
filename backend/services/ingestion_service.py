@@ -9,6 +9,7 @@ from io import BytesIO
 from pathlib import PurePath
 
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from backend.core.config import settings
@@ -53,6 +54,29 @@ class ConflictScanOutcome:
 
     conflict_ids: tuple[int, ...] = ()
     duplicate_document_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class _VectorMetadata:
+    """The retrieval-visible state to publish to Qdrant once MySQL is authoritative.
+
+    Captured before `db.commit()` because committing expires the ORM attributes, and a
+    dataclass rather than a dict so each field still type-checks against the parameter it
+    is passed to.
+    """
+
+    review_status: str
+    legal_status: str
+    category: str
+    visibility: str
+    is_current: bool
+
+
+# Operators worth preserving through normalisation: "≤ 3 tỷ" and "< 3 tỷ" mean the same
+# thing and must compare equal, while dropping them entirely would make "≤ 3 tỷ" and
+# "≥ 3 tỷ" look identical. Typed wider than it looks because that is what str.maketrans
+# accepts.
+_OPERATOR_TRANSLATIONS: dict[str, str | int | None] = {"≤": "<=", "≥": ">=", "≠": "!="}
 
 
 SUSPICIOUS_PATTERNS = [
@@ -111,10 +135,9 @@ def ingest_uploaded_document(
             db,
             document_id=document.id,
             classification=classification,
-            auto_approve=(
-                not classification.requires_admin_review
-                and classification.confidence >= settings.classification_auto_approve_threshold
-            ),
+            # Always: there is no approval step. The duplicate check further down still
+            # marks its own rejections, and a conflict still clears `is_current`.
+            auto_approve=True,
         )
 
         object_key = _store_original_file(
@@ -173,16 +196,16 @@ def ingest_uploaded_document(
 
             document.status = DocumentStatus.BLOCKED if has_duplicate else DocumentStatus.COMPLETED
             document_id = document.id
-            final_vector_metadata = {
-                "review_status": document.review_status,
-                "legal_status": document.legal_status,
-                "category": document.category,
-                "visibility": document.visibility,
-                "is_current": document.is_current,
-            }
+            final_vector_metadata = _VectorMetadata(
+                review_status=document.review_status,
+                legal_status=document.legal_status,
+                category=document.category,
+                visibility=document.visibility,
+                is_current=document.is_current,
+            )
             db.commit()
 
-            if final_vector_metadata["is_current"] or has_duplicate:
+            if final_vector_metadata.is_current or has_duplicate:
                 # Commit the authoritative DB state while Qdrant is still quarantined,
                 # then publish the final retrieval metadata under the same scope lock.
                 # Duplicates need this sync too because their review status changed to
@@ -190,7 +213,11 @@ def ingest_uploaded_document(
                 try:
                     update_document_vector_metadata(
                         document_id,
-                        **final_vector_metadata,
+                        review_status=final_vector_metadata.review_status,
+                        legal_status=final_vector_metadata.legal_status,
+                        category=final_vector_metadata.category,
+                        visibility=final_vector_metadata.visibility,
+                        is_current=final_vector_metadata.is_current,
                     )
                 except Exception:
                     # The clean/duplicate decision is already committed. A timed-out
@@ -313,7 +340,11 @@ def reindex_document(db: Session, *, document_id: int) -> Document:
         file_bytes = _read_original_file(document.file_path)
         sections = parse_document(document.title, file_bytes)
 
-        chunks = chunk_sections(sections)
+        # Same category the first ingestion chunked with. Omitting it silently downgraded
+        # every re-indexed document to generic splitting: a legal document lost its
+        # Article/Clause breadcrumbs and a price list lost table_mode, so rows could be cut
+        # mid-table — precisely the documents whose structure retrieval depends on most.
+        chunks = chunk_sections(sections, document_category=document.category)
         if not chunks:
             raise DocumentIngestionError("No chunks were produced.")
 
@@ -329,6 +360,122 @@ def reindex_document(db: Session, *, document_id: int) -> Document:
         document.id,
         extra={"event": "document.reindex.success", "document_id": document.id, "chunk_count": len(chunks)},
     )
+    return document
+
+
+def reclassify_document(db: Session, *, document_id: int, category: str, reviewed_by: int) -> Document:
+    """Move a document to a different category, doing the three things that makes necessary.
+
+    `update_document_classification` refuses a category change outright, because the
+    category is not just a label: `chunk_sections` splits legal documents by Article/Clause
+    and price lists by table rows, `scan_conflicts_for` compares price lists differently
+    from everything else, and retrieval filters on the category in the Qdrant payload. A
+    plain UPDATE would leave chunks built for the old category answering under the new one.
+
+    Without this, a misclassified upload (anything the classifier could not identify lands
+    in `other`, which no retrieval category matches) could only be fixed by deleting the
+    document, renaming the file and uploading it again.
+
+    Ordered fail-closed throughout: the document stops being retrievable before anything
+    changes, and only becomes retrievable again once the new chunks and a fresh conflict
+    scan both succeed. Every failure leaves it quarantined rather than answering from a
+    half-applied state.
+    """
+    document = get_document(db, document_id, for_update=True)
+    if document is None:
+        raise DocumentIngestionError(f"Document {document_id} does not exist.")
+    if document.status != DocumentStatus.COMPLETED:
+        raise DocumentIngestionError(f"Document {document_id} is not ready to be reclassified (status={document.status}).")
+    if not document.file_path:
+        raise DocumentIngestionError(f"Document {document_id} has no stored original file to re-index.")
+    if category == document.category:
+        raise DocumentIngestionError(f"Document {document_id} is already categorised as {category}.")
+
+    previous_category = document.category
+
+    # Step 1: stop answering from the old chunks before anything else moves.
+    update_document_vector_metadata(
+        document.id,
+        review_status=document.review_status,
+        legal_status=document.legal_status,
+        category=previous_category,
+        visibility=document.visibility,
+        is_current=False,
+    )
+    document.is_current = False
+    db.commit()
+
+    try:
+        # Step 2: rebuild the chunks under the new category, from the original file.
+        file_bytes = _read_original_file(document.file_path)
+        sections = parse_document(document.title, file_bytes)
+        chunks = chunk_sections(sections, document_category=category)
+        if not chunks:
+            raise DocumentIngestionError("No chunks were produced for the new category.")
+
+        document.category = category
+        document.review_status = DocumentReviewStatus.APPROVED
+        document.reviewed_by = reviewed_by
+        document.reviewed_at = utcnow()
+        db.commit()
+
+        delete_document_vectors(document.id)
+        _embed_and_index(document, chunks, is_current=False)
+
+        # Step 3: the comparison set changed with the category, so the old scan's verdict
+        # says nothing about this document any more.
+        with _conflict_scope_lock(db, document):
+            scan = scan_conflicts_for(db, document, commit=False)
+            document.is_current = (
+                not scan.conflict_ids
+                and not scan.duplicate_document_ids
+                and document.legal_status
+                not in {
+                    LegalStatus.NOT_YET_EFFECTIVE,
+                    LegalStatus.EXPIRED,
+                    LegalStatus.REPEALED,
+                    LegalStatus.REPLACED,
+                }
+            )
+            db.commit()
+
+            update_document_vector_metadata(
+                document.id,
+                review_status=document.review_status,
+                legal_status=document.legal_status,
+                category=document.category,
+                visibility=document.visibility,
+                is_current=document.is_current,
+            )
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "Reclassifying document %s failed; it stays quarantined.",
+            document_id,
+            extra={
+                "event": "document.reclassify.failed",
+                "document_id": document_id,
+                "from_category": previous_category,
+                "to_category": category,
+            },
+        )
+        if isinstance(exc, DocumentIngestionError):
+            raise
+        raise DocumentIngestionError(f"Could not reclassify document {document_id}.") from exc
+
+    logger.info(
+        "Reclassified document %s.",
+        document_id,
+        extra={
+            "event": "document.reclassify.success",
+            "document_id": document_id,
+            "from_category": previous_category,
+            "to_category": category,
+            "chunk_count": len(chunks),
+            "is_current": document.is_current,
+        },
+    )
+    db.refresh(document)
     return document
 
 
@@ -486,6 +633,7 @@ def _conflict_scope_lock(db: Session, document: Document) -> Iterator[None]:
     by the ingestion session, until the compare-and-activate section has finished.
     """
     bind = db.get_bind()
+    assert isinstance(bind, Engine), "the advisory lock needs its own connection from the engine"
     if bind.dialect.name != "mysql":
         yield
         return
@@ -554,7 +702,7 @@ def _content_key(text: str) -> str:
 
 def _meaningful_content_key(text: str) -> str:
     """Ignore layout punctuation while retaining operators that can change meaning."""
-    normalised = text.replace("\x00", "").translate(str.maketrans({"≤": "<=", "≥": ">=", "≠": "!="}))
+    normalised = text.replace("\x00", "").translate(str.maketrans(_OPERATOR_TRANSLATIONS))
     normalised = strip_diacritics(normalised)
     normalised = re.sub(r"[^a-z0-9%<>=+!]+", " ", normalised)
     normalised = re.sub(r"\s*([%<>=+!])\s*", r"\1", normalised)

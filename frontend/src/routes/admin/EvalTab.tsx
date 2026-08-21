@@ -30,9 +30,18 @@ function ScoreCard({ label, value }: { label: string; value: number | null }) {
 // Verifier Agent scores (automated) plus the top questions the AI answered poorly.
 export function EvalTab() {
   const [scores, setScores] = useState<EvalScores | null>(null);
+  const [failedToLoad, setFailedToLoad] = useState(false);
 
   useEffect(() => {
-    api.get<EvalScores>("/admin/eval/scores").then(setScores).catch(() => {});
+    api
+      .get<EvalScores>("/admin/eval/scores")
+      .then((result) => {
+        setScores(result);
+        setFailedToLoad(false);
+      })
+      // Swallowing this left every card showing a dash forever, which reads as "the AI has
+      // no scores yet" rather than "these numbers could not be loaded".
+      .catch(() => setFailedToLoad(true));
   }, []);
 
   const failed = scores?.top_failed_questions ?? [];
@@ -41,6 +50,8 @@ export function EvalTab() {
     <div className="page">
       <h2 className="page-title">Chất lượng trả lời</h2>
       <p className="page-sub">Điểm tự động đo mức độ bám sát nguồn tài liệu và độ liên quan của câu trả lời AI.</p>
+
+      {failedToLoad && <div className="alert alert-danger">Không tải được điểm đánh giá.</div>}
 
       <section className="section-block">
         <div className="stat-grid">

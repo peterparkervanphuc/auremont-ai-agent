@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from backend.core.deps import get_current_user, require_role
+from backend.core.deps import require_role
 from backend.core.enums import UserRole
 from backend.core.mysql_client import get_db
+from backend.models.feedback import Feedback
 from backend.models.user import User
+from backend.repositories.chat_session import get_session
 from backend.repositories.feedback import (
     create_feedback,
     get_question_for_answer,
@@ -14,18 +16,42 @@ from backend.repositories.feedback import (
 from backend.repositories.message import get_message
 from backend.schemas.feedback import FailedQuestion, FeedbackCreate, FeedbackResponse
 
-router = APIRouter(prefix="/feedback", tags=["Feedback"])
+# Feedback is a Sale-facing loop (CLAUDE.md 5.2e) feeding the Admin dashboard — a CUSTOMER
+# account has no feedback UI and must not reach these routes at all. Without the role floor
+# here, `get_current_user` alone let any authenticated customer probe Sale conversations.
+router = APIRouter(
+    prefix="/feedback",
+    tags=["Feedback"],
+    dependencies=[Depends(require_role(UserRole.SALE, UserRole.ADMIN))],
+)
+
+
+def _owned_message(db: Session, message_id: int, user: User):
+    """Fetch a message; 404 unless it belongs to a conversation the caller owns.
+
+    Message ids are sequential, so without this an authenticated user could walk them to
+    read or rate answers from every other Sale's consultations. Returns 404 rather than
+    403 so the response does not reveal which message ids exist — same contract as
+    `routers/hitl.py::confirm_hitl`.
+    """
+    message = get_message(db, message_id)
+    if message is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+
+    session = get_session(db, message.session_id) if message.session_id else None
+    if session is None or session.sale_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    return message
 
 
 @router.post("", response_model=FeedbackResponse, status_code=status.HTTP_201_CREATED)
 async def submit_feedback(
     payload: FeedbackCreate,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN)),
 ) -> FeedbackResponse:
     """The Feedback button under each answer — a Sale reports it as wrong or incomplete."""
-    if get_message(db, payload.message_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    _owned_message(db, payload.message_id, user)
 
     return create_feedback(
         db,
@@ -40,8 +66,13 @@ async def submit_feedback(
 async def get_feedback_for_message(
     message_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-) -> list[FeedbackResponse]:
+    user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN)),
+) -> list[Feedback]:
+    # Admin reads any message's feedback — monitoring answer quality across the team is
+    # their job (CLAUDE.md Tab 2), and `/top-failed` already exposes it team-wide.
+    # A Sale stays confined to their own conversations.
+    if user.role != UserRole.ADMIN:
+        _owned_message(db, message_id, user)
     return list_feedback_for_message(db, message_id)
 
 

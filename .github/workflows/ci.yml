@@ -25,6 +25,9 @@ jobs:
       - name: Lint with ruff
         run: ruff check backend/ tests/
 
+      - name: Type-check with mypy
+        run: mypy backend/
+
       - name: Run tests
         run: pytest tests/ -v --tb=short
         env:

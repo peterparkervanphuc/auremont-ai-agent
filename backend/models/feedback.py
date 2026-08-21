@@ -1,4 +1,7 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.mysql_client import Base
 from backend.utils.time import utcnow
@@ -12,13 +15,13 @@ class Feedback(Base):
 
     __tablename__ = "feedback"
 
-    id = Column(Integer, primary_key=True, index=True)
-    message_id = Column(Integer, ForeignKey("messages.id"), nullable=False, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    message_id: Mapped[int] = mapped_column(Integer, ForeignKey("messages.id"), nullable=False, index=True)
 
     # Who filed it — lets Admin trace a report back to the Sale who hit the problem.
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
-    type = Column(String(20), nullable=False, index=True)  # FeedbackType
-    comment = Column(Text, nullable=True)
+    type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # FeedbackType
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

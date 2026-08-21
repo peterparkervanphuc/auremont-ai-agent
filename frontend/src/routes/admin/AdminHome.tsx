@@ -71,7 +71,22 @@ export function AdminHome() {
     if (projectId) params.set("project_id", projectId);
     if (saleId) params.set("sale_id", saleId);
     setFailed(false);
-    api.get<BusinessDashboard>(`/admin/stats/business?${params}`).then(setDashboard).catch(() => setFailed(true));
+
+    // Filter changes fire faster than the dashboard query returns, and the responses can
+    // land out of order — without this flag a slower earlier request overwrites a newer
+    // one, leaving numbers on screen that belong to filters the Admin already moved off.
+    let cancelled = false;
+    api
+      .get<BusinessDashboard>(`/admin/stats/business?${params}`)
+      .then((result) => {
+        if (!cancelled) setDashboard(result);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [days, projectId, saleId]);
 
   const data = dashboard ?? EMPTY;
@@ -174,7 +189,7 @@ export function AdminHome() {
       </div>
 
       <section className="business-panel business-coverage-panel">
-        <div className="business-panel-head"><div><h3>Độ phủ tài liệu theo dự án</h3><p>Tài liệu hiện hành phục vụ đội Sale; xanh là đã hoàn tất và được duyệt</p></div><div className="business-coverage-legend"><span><i className="coverage-ready" />Sẵn sàng</span><span><i className="coverage-pending_review" />Chờ duyệt</span><span><i className="coverage-missing" />Chưa có</span></div></div>
+        <div className="business-panel-head"><div><h3>Độ phủ tài liệu theo dự án</h3><p>Tài liệu hiện hành phục vụ đội Sale; xanh là đã ingest xong và AI dùng được</p></div><div className="business-coverage-legend"><span><i className="coverage-ready" />Sẵn sàng</span><span><i className="coverage-missing" />Chưa có</span></div></div>
         {data.document_coverage.length === 0 ? <div className="business-empty">Chưa có dữ liệu dự án.</div> : <div className="business-coverage-table"><div className="business-coverage-head"><span>Dự án</span>{Object.values(CATEGORY_LABELS).map((label) => <span key={label}>{label}</span>)}</div>{data.document_coverage.map((project) => <div className="business-coverage-row" key={project.project_id}><strong>{project.name}</strong>{Object.keys(CATEGORY_LABELS).map((category) => <Link key={category} to={`/documents?project_id=${encodeURIComponent(project.project_id)}&category=${category}`} className={`coverage-cell coverage-${project.categories[category]}`} title={`Mở ${CATEGORY_LABELS[category]}: ${project.categories[category]}`} aria-label={`Mở tài liệu ${CATEGORY_LABELS[category]} của ${project.name}`}><i /></Link>)}</div>)}</div>}
       </section>
 

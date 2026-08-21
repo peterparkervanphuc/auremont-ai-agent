@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 from backend.core.audit import log_event, truncate
 from backend.core.config import settings
 from backend.core.deps import require_role
-from backend.core.enums import MessageSender, UserRole
+from backend.core.enums import MessageEmotion, MessageSender, UserRole
 from backend.core.mysql_client import get_db
+from backend.models.chat_session import ChatSession
 from backend.models.user import User
 from backend.repositories.chat_session import (
     create_session,
@@ -88,7 +89,7 @@ async def create_sale_session(
 @router.get("", response_model=list[ChatSessionResponse])
 async def list_sale_sessions(
     db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))
-) -> list[ChatSessionResponse]:
+) -> list[ChatSession]:
     return list_sessions_for_sale(db, sale_id=user.id)
 
 
@@ -182,7 +183,7 @@ async def ask_in_session(
         answer_relevancy=result.answer_relevancy,
         completeness=result.completeness,
         failure_mode=result.failure_mode,
-        emotion=result.emotion,
+        emotion=MessageEmotion(result.emotion) if result.emotion else None,
     )
 
 

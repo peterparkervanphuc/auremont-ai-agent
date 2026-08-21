@@ -1,4 +1,7 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.enums import HitlStatus
 from backend.core.mysql_client import Base
@@ -10,12 +13,12 @@ class HitlLog(Base):
 
     __tablename__ = "hitl_logs"
 
-    id = Column(Integer, primary_key=True, index=True)
-    message_id = Column(Integer, ForeignKey("messages.id"), nullable=False, index=True)
-    sale_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    message_id: Mapped[int] = mapped_column(Integer, ForeignKey("messages.id"), nullable=False, index=True)
+    sale_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
-    status = Column(String(20), default=HitlStatus.PENDING, nullable=False)
-    confirmed_content = Column(Text, nullable=True)  # snapshot of what was actually confirmed/sent
-    confirmed_at = Column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default=HitlStatus.PENDING, nullable=False)
+    confirmed_content: Mapped[str | None] = mapped_column(Text, nullable=True)  # snapshot of what was actually confirmed/sent
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    created_at = Column(DateTime, default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

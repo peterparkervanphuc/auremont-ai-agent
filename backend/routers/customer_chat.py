@@ -1,5 +1,6 @@
 import secrets
 import time
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from backend.core.mysql_client import get_db
 from backend.core.rate_limit import anonymous_rate_limit
 from backend.core.security import create_access_token, create_refresh_token
 from backend.models.chat_session import ChatSession
+from backend.models.message import Message
 from backend.models.user import User
 from backend.repositories.chat_session import (
     claim_session,
@@ -171,7 +173,7 @@ async def create_customer_chat_session(
 @router.get("/sessions", response_model=list[CustomerChatSessionResponse])
 async def list_customer_chat_sessions(
     db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.CUSTOMER))
-) -> list[CustomerChatSessionResponse]:
+) -> list[ChatSession]:
     return list_sessions_for_customer(db, customer_id=user.id)
 
 
@@ -186,7 +188,7 @@ async def get_customer_chat_session(
     way (WAITING_SALE/SALE_HANDLING) to know when to switch to live-chat rendering, since the
     ask endpoint stops returning a reply the moment a Sale is involved."""
     session = get_session(db, session_id)
-    _resolve_customer_asker(db, session, user, x_visitor_token)
+    session = _resolve_customer_asker(db, session, user, x_visitor_token)
     return session
 
 
@@ -196,9 +198,9 @@ async def list_customer_session_messages(
     db: Session = Depends(get_db),
     user: User | None = Depends(get_optional_current_user),
     x_visitor_token: str | None = Header(default=None, alias="X-Visitor-Token"),
-) -> list[MessageResponse]:
+) -> list[Message]:
     session = get_session(db, session_id)
-    _resolve_customer_asker(db, session, user, x_visitor_token)
+    session = _resolve_customer_asker(db, session, user, x_visitor_token)
     return list_messages_for_session(db, session_id)
 
 
@@ -216,9 +218,12 @@ async def ask_in_customer_session(
     _: None = Depends(anonymous_rate_limit),
 ) -> CustomerAskResponse | None:
     """Public/customer counterpart to `sale_chat.ask_in_session` — always retrieves at
-    PUBLIC clearance (see agent_pipeline.run_pipeline), and gates anonymous visitors behind
-    a soft paywall instead of a HITL confirm-before-send step (there is no second human
-    relaying the answer here: the customer IS the one reading it directly).
+    PUBLIC clearance (see agent_pipeline.run_pipeline). There is no HITL confirm-before-send
+    step here because there is no second human to perform it: the customer IS the one reading
+    the answer, and nobody signs off on a commitment made to themselves. A price/commitment
+    answer is therefore withheld rather than confirmed — anonymous visitors into the
+    registration funnel, logged-in customers to a real Sale — which is what keeps every
+    customer-visible message `requires_hitl=False`.
 
     Returns `None` once a live Sale is involved (WAITING_SALE/SALE_HANDLING): the message is
     still persisted, but the AI must stay completely silent from that point on so it never
@@ -226,7 +231,7 @@ async def ask_in_customer_session(
     the Sale's reply instead of expecting one back from this call.
     """
     session = get_session(db, session_id)
-    _resolve_customer_asker(db, session, user, x_visitor_token)
+    session = _resolve_customer_asker(db, session, user, x_visitor_token)
     set_title_if_empty(db, session, payload.content)
 
     # Fetched BEFORE persisting the new customer turn below, specifically so it excludes
@@ -247,7 +252,7 @@ async def ask_in_customer_session(
         return None
 
     is_anonymous = session.customer_id is None
-    gate: str | None = None
+    gate: Literal["turn_limit", "closing_intent", "human_request"] | None = None
     used_cache = False
     duration_ms = 0.0
     # `session.status` is a raw DB string (Column(String), not a native enum type) — wrap it
@@ -289,13 +294,23 @@ async def ask_in_customer_session(
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         used_cache = result.used_cache
 
-        if is_anonymous and result.requires_hitl:
+        if result.requires_hitl:
             # Belt-and-suspenders: the PUBLIC-tier answer itself tripped risk_service's
-            # price/commitment detector even though the keyword gate above missed it.
-            # Withhold it the same way, rather than showing a "requires confirmation"
-            # answer nobody is there to confirm.
-            gate = "closing_intent"
-            answer_text = _CLOSING_INTENT_MESSAGE
+            # price/commitment detector even though the keyword gates above missed it.
+            # Withhold it rather than showing a "requires confirmation" answer nobody on
+            # this surface is there to confirm: a customer cannot sign off on a commitment
+            # made to themselves, and `POST /hitl/{id}/confirm` is SALE/ADMIN-only. This is
+            # what keeps `requires_hitl` false on every customer-visible message, which is
+            # why the customer UI carries no HITL card at all.
+            if is_anonymous:
+                gate = "closing_intent"
+                answer_text = _CLOSING_INTENT_MESSAGE
+            else:
+                # A logged-in customer has somewhere to go that an anonymous one doesn't:
+                # a real Sale, who re-delivers the figures through the HITL card on their side.
+                new_status = SessionStatus.WAITING_SALE
+                enter_waiting_queue(db, session)
+                answer_text = _HANDOFF_NOTICE_MESSAGE
             verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
         else:
             answer_text = result.draft_answer
@@ -355,7 +370,7 @@ async def request_human(
     `ask_in_customer_session` for their equivalent, which routes into the registration gate
     instead of a real handoff)."""
     session = get_session(db, session_id)
-    _resolve_customer_asker(db, session, user, None)
+    session = _resolve_customer_asker(db, session, user, None)
 
     if session.status == SessionStatus.BOT_HANDLING:
         enter_waiting_queue(db, session)
@@ -406,7 +421,7 @@ async def return_to_ai(
     so there is nothing to return from.
     """
     session = get_session(db, session_id)
-    _resolve_customer_asker(db, session, user, None)
+    session = _resolve_customer_asker(db, session, user, None)
 
     if session.status != SessionStatus.BOT_HANDLING:
         return_to_bot(db, session)
@@ -427,7 +442,7 @@ async def clear_customer_session_messages(
     session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.CUSTOMER))
 ) -> None:
     session = get_session(db, session_id)
-    _resolve_customer_asker(db, session, user, None)
+    session = _resolve_customer_asker(db, session, user, None)
     delete_hitl_logs_for_session(db, session_id)
     delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)
@@ -438,7 +453,7 @@ async def remove_customer_session(
     session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.CUSTOMER))
 ) -> None:
     session = get_session(db, session_id)
-    _resolve_customer_asker(db, session, user, None)
+    session = _resolve_customer_asker(db, session, user, None)
     delete_hitl_logs_for_session(db, session_id)
     delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)

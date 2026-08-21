@@ -1,4 +1,7 @@
+from typing import cast
+
 from sqlalchemy import update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from backend.core.enums import SessionStatus
@@ -170,10 +173,16 @@ def claim_for_sale(db: Session, session_id: int, sale_id: int) -> ChatSession | 
     update and this returns `None`, which the router turns into a 409 telling that Sale
     someone else got there first.
     """
-    result = db.execute(
-        update(ChatSession)
-        .where(ChatSession.id == session_id, ChatSession.status == SessionStatus.WAITING_SALE)
-        .values(sale_id=sale_id, status=SessionStatus.SALE_HANDLING)
+    # `Session.execute` is annotated as returning Result, but a DML statement returns a
+    # CursorResult — the only one carrying `rowcount`, which is what makes this an atomic
+    # claim rather than a read-then-write race.
+    result = cast(
+        CursorResult,
+        db.execute(
+            update(ChatSession)
+            .where(ChatSession.id == session_id, ChatSession.status == SessionStatus.WAITING_SALE)
+            .values(sale_id=sale_id, status=SessionStatus.SALE_HANDLING)
+        ),
     )
     db.commit()
     if result.rowcount == 0:

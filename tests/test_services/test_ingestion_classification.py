@@ -184,6 +184,7 @@ def test_low_confidence_classification_waits_for_admin(
     db_session,
     monkeypatch,
 ):
+    """Weak evidence still records a low confidence, even though nothing gates on it now."""
     _mock_external_services(
         monkeypatch,
         """
@@ -202,25 +203,20 @@ def test_low_confidence_classification_waits_for_admin(
     )
 
     assert result.classification_confidence == 0.75
-    assert result.review_status == DocumentReviewStatus.PENDING
-    assert result.reviewed_by is None
+    assert result.classification_reason
 
 
 def test_admin_required_evidence_cannot_auto_approve_even_with_a_low_threshold(
     db_session,
     monkeypatch,
 ):
+    """A body-only price list is still classified as one, from the content alone."""
     _mock_external_services(
         monkeypatch,
         """
         BẢNG GIÁ THAM KHẢO
         BE1 | 3.500.000.000 VND
         """,
-    )
-    monkeypatch.setattr(
-        ingestion_service.settings,
-        "classification_auto_approve_threshold",
-        0.1,
     )
     document = _document(db_session, "6f42d13e-1908-4a30-a828-e197c1c673db.pdf")
 
@@ -233,16 +229,11 @@ def test_admin_required_evidence_cannot_auto_approve_even_with_a_low_threshold(
     )
 
     assert result.category == DocumentCategory.PRICE_LIST
-    assert result.review_status == DocumentReviewStatus.PENDING
 
 
 def test_unconfirmed_filename_cannot_auto_approve_with_low_threshold(db_session, monkeypatch):
+    """A filename the body never confirms is still classified from the filename."""
     _mock_external_services(monkeypatch, "Nội dung mô tả vị trí và tiện ích.")
-    monkeypatch.setattr(
-        ingestion_service.settings,
-        "classification_auto_approve_threshold",
-        0.1,
-    )
     document = _document(db_session, "HaiAu_VHOP_ThongTinDuAn_Full.pdf")
 
     result = ingestion_service.ingest_uploaded_document(
@@ -254,7 +245,6 @@ def test_unconfirmed_filename_cannot_auto_approve_with_low_threshold(db_session,
     )
 
     assert result.category == DocumentCategory.SUBDIVISION_INFO
-    assert result.review_status == DocumentReviewStatus.PENDING
 
 
 def test_prompt_injection_is_blocked_before_classification(
@@ -1416,3 +1406,41 @@ def test_conflict_scan_is_idempotent_for_the_same_pair(db_session, monkeypatch):
 
     assert second == first
     assert db_session.query(ConflictFlag).count() == 1
+
+
+def test_an_unidentifiable_upload_is_answerable_immediately(db_session, monkeypatch):
+    """Admin uploads, Sale can look it up — no approval step in between.
+
+    A real project file is one PDF holding policy, pricing, floor plans and amenities at
+    once, so the classifier has nothing decisive to go on and lands it in `other`. That used
+    to mean PENDING, and PENDING is invisible to retrieval, so the Admin watched the upload
+    succeed while Sale was still told "chưa có dữ liệu".
+    """
+    text = "Thông tin chung về dự án, tiện ích nội khu, vị trí và các phân khu."
+    document = _document(db_session, "tai lieu du an.pdf")
+    indexed: list[dict] = []
+    activations: list[dict] = []
+
+    _mock_external_services(monkeypatch, text)
+    monkeypatch.setattr(ingestion_service, "index_document_chunks", lambda **kwargs: indexed.append(kwargs))
+    monkeypatch.setattr(
+        ingestion_service,
+        "update_document_vector_metadata",
+        lambda document_id, **kwargs: activations.append({"document_id": document_id, **kwargs}),
+    )
+
+    result = ingestion_service.ingest_uploaded_document(
+        db_session,
+        document=document,
+        filename=document.title,
+        file_bytes=b"fake pdf content",
+        content_type="application/pdf",
+    )
+
+    assert result.status == DocumentStatus.COMPLETED
+    assert result.review_status == DocumentReviewStatus.APPROVED
+    assert result.is_current is True
+
+    # Both conditions the retrieval filter checks must end up true in Qdrant, not just MySQL.
+    assert activations[-1]["review_status"] == DocumentReviewStatus.APPROVED
+    assert activations[-1]["is_current"] is True

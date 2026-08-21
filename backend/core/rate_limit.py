@@ -23,7 +23,33 @@ _hits: dict[str, deque[float]] = defaultdict(deque)
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    """The address to throttle on, honouring X-Forwarded-For only as far as it is trustworthy.
+
+    Behind a proxy every request's socket peer is the proxy itself, so throttling on it puts
+    all visitors in one bucket. But X-Forwarded-For is client-settable: trusting it outright
+    lets one visitor forge a new IP per request and bypass the limit completely. So the value
+    is only read when `trusted_proxy_count` says how many proxies actually sit in front, and
+    then only the hop that many places from the right — the last entry a trusted proxy wrote.
+    Anything further left was supplied by the client and is ignored.
+    """
+    peer = request.client.host if request.client else "unknown"
+
+    hops = settings.trusted_proxy_count
+    if hops <= 0:
+        return peer
+
+    forwarded = request.headers.get("x-forwarded-for")
+    if not forwarded:
+        return peer
+
+    chain = [entry.strip() for entry in forwarded.split(",") if entry.strip()]
+    if not chain:
+        return peer
+
+    # One proxy appends one entry, so the client address sits `hops` from the end. A chain
+    # shorter than that means fewer proxies ran than configured — fall back to the leftmost
+    # entry rather than reaching past the start of the list.
+    return chain[-hops] if len(chain) >= hops else chain[0]
 
 
 def anonymous_rate_limit(request: Request) -> None:

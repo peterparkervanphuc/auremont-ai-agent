@@ -164,15 +164,18 @@ def update_document_storage_path(
     return document
 
 
-def list_documents_pending_review(db: Session) -> list[Document]:
-    """Documents uploaded but still awaiting an Admin decision on their metadata."""
+def list_documents_for_metadata_edit(db: Session) -> list[Document]:
+    """Ingested documents whose metadata an Admin can correct.
+
+    Every completed document, not a pending-approval queue: nothing waits for review to
+    become answerable, so the list exists to let an Admin fix legal status, effective dates
+    or a version label after the fact — `legal_status` in particular still decides whether
+    the document stays retrievable.
+    """
 
     return (
         db.query(Document)
-        .filter(
-            Document.review_status == DocumentReviewStatus.PENDING,
-            Document.status == DocumentStatus.COMPLETED,
-        )
+        .filter(Document.status == DocumentStatus.COMPLETED)
         .order_by(Document.created_at.desc())
         .all()
     )
@@ -191,8 +194,8 @@ def update_document_classification(
     document = get_document(db, document_id, for_update=True)
     if document is None:
         raise ValueError(f"Document with id={document_id} not found.")
-    if document.review_status != DocumentReviewStatus.PENDING:
-        raise ValueError(f"Document {document_id} classification has already been reviewed.")
+    # No "already reviewed" guard: metadata is editable for the life of the document, not
+    # once at an approval step. Nothing waits on review to become retrievable any more.
     if document.status != DocumentStatus.COMPLETED:
         raise ValueError(f"Document {document_id} is not ready for classification review (status={document.status}).")
 

@@ -8,6 +8,12 @@ from backend.core.enums import MessageEmotion, MessageSender
 class Citation(BaseModel):
     document_id: int
     title: str
+    # Set only when another citation in the same list carries an identical title, to tell
+    # the two apart ("tr.5", "#37"). Kept out of `title` deliberately: CitationList.tsx
+    # decides between the inline PDF preview and a new tab by testing that the title still
+    # ends in ".pdf", so appending anything to it silently breaks the preview and the
+    # page/Y anchoring. Absent on citations stored before this field existed.
+    qualifier: str | None = None
     page: int | None = None
     # PDF points from the page's top — lets the citation preview scroll straight to this
     # spot instead of just the top of the page. None for DOCX, or a chunk indexed before

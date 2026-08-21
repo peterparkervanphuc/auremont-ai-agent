@@ -3445,6 +3445,13 @@ code {
 .chat-conv-list::-webkit-scrollbar { width: 4px; }
 .chat-conv-list::-webkit-scrollbar-thumb { background: var(--border-h); border-radius: 8px; }
 
+/* Positioning context for the delete button, which sits beside the row link rather than
+   inside it (see SessionList.tsx). The link keeps its own relative positioning for the
+   active-state marker. */
+.chat-conv-row {
+  position: relative;
+}
+
 .chat-conv-item {
   position: relative;
   width: 100%;
@@ -3502,7 +3509,9 @@ code {
   opacity: 0;
   transition: opacity var(--t-fast), background var(--t-fast), color var(--t-fast);
 }
-.chat-conv-item:hover .chat-conv-delete { opacity: 1; }
+.chat-conv-row:hover .chat-conv-delete { opacity: 1; }
+/* Hidden-until-hover controls are unreachable by keyboard unless focus reveals them too. */
+.chat-conv-delete:focus-visible { opacity: 1; }
 .chat-conv-delete:hover { background: rgba(190,18,60,0.1); color: var(--rose); }
 
 .chat-conv-empty {
@@ -5089,6 +5098,51 @@ code {
   color: var(--emerald);
 }
 .chat-widget-handoff-hint p {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+/* Live handoff replies reach the customer with no HITL card in between, so an AI draft
+   carrying price/commitment risk has to be acknowledged here before it can be sent. */
+.live-hitl-ack {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px 14px;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.live-hitl-ack svg {
+  color: var(--amber);
+  flex-shrink: 0;
+}
+.live-hitl-ack p {
+  flex: 1;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+/* Stands in for a price/commitment answer the widget must not show: the confirm-and-copy
+   gate only exists in the full chat window, so this points there instead of rendering it. */
+.chat-widget-hitl {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 16px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--text-2);
+}
+.chat-widget-hitl svg {
+  color: var(--amber);
+}
+.chat-widget-hitl p {
   font-size: 0.8125rem;
   line-height: 1.5;
 }

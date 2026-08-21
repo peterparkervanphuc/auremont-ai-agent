@@ -168,7 +168,7 @@ def resolve_conflict(
     if kept.status != DocumentStatus.COMPLETED:
         raise ValueError(f"Document {keep_document_id} is not an active completed document.")
 
-    previous_vector_metadata = {
+    previous_vector_metadata: dict[int, dict[str, str | bool]] = {
         document.id: {
             "review_status": str(document.review_status),
             "legal_status": str(document.legal_status),

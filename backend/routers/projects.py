@@ -167,7 +167,7 @@ def _cover_image_for(category: str, groups: dict[str, list[dict]], gallery: list
 @router.get("/{project_id}/categories", response_model=list[CategorySummary])
 def get_categories(project_id: str, db: Session = Depends(get_db)) -> list[CategorySummary]:
     row = _get_project_or_404(db, project_id)
-    details = row.details
+    details: dict = row.details or {}
     gallery = details.get("images", {}).get("gallery", [])
     groups = _group_pricing_by_category(details)
 
@@ -196,7 +196,7 @@ def get_categories(project_id: str, db: Session = Depends(get_db)) -> list[Categ
 @router.get("/{project_id}/categories/{category_slug}", response_model=CategoryDetail)
 def get_category_detail(project_id: str, category_slug: str, db: Session = Depends(get_db)) -> CategoryDetail:
     row = _get_project_or_404(db, project_id)
-    details = row.details
+    details: dict = row.details or {}
     project_info = details.get("project", {})
     gallery = details.get("images", {}).get("gallery", [])
     groups = _group_pricing_by_category(details)

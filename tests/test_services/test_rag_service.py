@@ -73,11 +73,11 @@ def _visibility_values(call) -> list[str]:
     raise AssertionError("Không có filter visibility")
 
 
-def _review_status(call) -> str:
+def _is_current(call) -> bool:
     for condition in _conditions(call):
-        if condition.key == "review_status":
+        if condition.key == "is_current":
             return condition.match.value
-    raise AssertionError("Không có filter review_status")
+    raise AssertionError("Không có filter is_current")
 
 
 # --- Filter RBAC --------------------------------------------------------------------
@@ -114,13 +114,24 @@ def test_project_id_omitted_when_not_given(qdrant):
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
 
     keys = [condition.key for condition in _conditions(qdrant.query_calls[0])]
-    assert keys == ["visibility", "review_status", "is_current"]
+    assert keys == ["visibility", "is_current"]
 
 
-def test_retrieval_requires_admin_approval(qdrant):
+def test_retrieval_does_not_wait_for_admin_approval(qdrant):
+    """An uploaded document answers immediately — there is no approval step."""
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
 
-    assert _review_status(qdrant.query_calls[0]) == "approved"
+    keys = [condition.key for condition in _conditions(qdrant.query_calls[0])]
+    assert "review_status" not in keys
+
+
+def test_retrieval_still_excludes_documents_that_are_not_current(qdrant):
+    """The one condition that carries all of it: ingestion clears `is_current` for a
+    duplicate, for a document flagged as conflicting, and for an expired/repealed one. If
+    this filter ever goes, those three start answering again."""
+    rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
+
+    assert _is_current(qdrant.query_calls[0]) is True
 
 
 # --- Truy vấn ------------------------------------------------------------------------

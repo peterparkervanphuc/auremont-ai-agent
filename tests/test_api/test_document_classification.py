@@ -93,7 +93,7 @@ def client(db_session, admin):
     app.dependency_overrides.clear()
 
 
-def test_pending_review_returns_only_unapproved_documents(
+def test_metadata_list_returns_every_ingested_document(
     client,
     db_session,
     admin,
@@ -120,13 +120,16 @@ def test_pending_review_returns_only_unapproved_documents(
     processing.status = DocumentStatus.PROCESSING
     db_session.commit()
 
-    response = client.get("/api/v1/documents/pending-review")
+    response = client.get("/api/v1/documents/metadata-editable")
 
     assert response.status_code == 200, response.text
 
+    # Not an approval queue any more: metadata stays editable for the life of a document,
+    # so an already-approved one belongs in the list too. Only a document still ingesting
+    # is excluded, because its metadata is not settled yet.
     document_ids = [item["id"] for item in response.json()]
     assert pending.id in document_ids
-    assert approved.id not in document_ids
+    assert approved.id in document_ids
     assert processing.id not in document_ids
 
 
@@ -203,7 +206,8 @@ def test_classification_approval_preserves_conflict_quarantine(
     assert client.vector_sync_calls[-1][1]["is_current"] is False
 
 
-def test_classification_cannot_be_reviewed_twice(client, db_session, admin):
+def test_metadata_can_be_edited_more_than_once(client, db_session, admin):
+    """There is no one-shot approval step, so a correction can itself be corrected."""
     document = create_document(
         db_session,
         DocumentCreate(title="CSBH da duyet.pdf", category=DocumentCategory.SALES_POLICY),
@@ -217,7 +221,7 @@ def test_classification_cannot_be_reviewed_twice(client, db_session, admin):
     second = client.patch(f"/api/v1/documents/{document.id}/classification", json=payload)
 
     assert first.status_code == 200
-    assert second.status_code == 409
+    assert second.status_code == 200
 
 
 def test_processing_document_cannot_be_approved_or_activated(client, db_session, admin):

@@ -16,20 +16,38 @@ interface ConflictFlagResponse {
 // Flags conflicts between two documents; admin picks which one to keep.
 export function ConflictsTab() {
   const [conflicts, setConflicts] = useState<ConflictFlagResponse[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get<ConflictFlagResponse[]>("/admin/conflicts").then(setConflicts).catch(() => setConflicts([]));
+    api
+      .get<ConflictFlagResponse[]>("/admin/conflicts")
+      .then((rows) => {
+        setConflicts(rows);
+        setError(null);
+      })
+      // An empty list and a failed load look identical on screen otherwise — the Admin
+      // reads "Không có mâu thuẫn nào cần xử lý" and moves on, while flags sit unhandled.
+      .catch(() => setError("Không tải được danh sách mâu thuẫn."));
   }, []);
 
   const resolve = async (conflictId: number, keepDocumentId: number) => {
-    await api.post(`/admin/conflicts/${conflictId}/resolve`, { keep_document_id: keepDocumentId });
-    setConflicts((prev) => prev.filter((c) => c.id !== conflictId));
+    setError(null);
+    try {
+      await api.post(`/admin/conflicts/${conflictId}/resolve`, { keep_document_id: keepDocumentId });
+      // Only drop the row once the server confirms, so a failed resolve leaves the flag
+      // visible and actionable instead of vanishing from a list that is now wrong.
+      setConflicts((prev) => prev.filter((c) => c.id !== conflictId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không xử lý được mâu thuẫn này.");
+    }
   };
 
   return (
     <div className="page">
       <h2 className="page-title">Cảnh báo mâu thuẫn</h2>
       <p className="page-sub">Hai tài liệu có nội dung khác nhau cho cùng một dự án — chọn tài liệu cần giữ lại.</p>
+
+      {error && <div className="alert alert-danger">{error}</div>}
 
       {conflicts.length === 0 ? (
         <div className="empty-state">

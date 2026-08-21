@@ -40,6 +40,12 @@ export interface UserResponse {
 export interface Citation {
   document_id: number;
   title: string;
+  /**
+   * Tells two same-named sources apart ("tr.5", "#37"); null when the title is already
+   * unique. Deliberately separate from `title`, which must keep its ".pdf" ending for
+   * withPageAnchor and the inline preview. Absent on messages stored before this existed.
+   */
+  qualifier?: string | null;
   page: number | null;
   /** PDF points from the page's top — see CitationList.tsx's withPageAnchor. */
   y_position: number | null;

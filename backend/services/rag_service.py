@@ -93,12 +93,13 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
                 extra={"event": "retrieval.sparse_embed.failed", "project_id": project_id},
             )
 
+    # No review_status condition: an uploaded document answers immediately. Everything that
+    # must stay out of retrieval for correctness — a duplicate, a document flagged as
+    # contradicting another, one whose legal status expired — has `is_current` cleared
+    # instead, so that single condition carries all of it (see ingestion_service, where
+    # is_current is computed from exactly those three).
     conditions: list[models.Condition] = [
         _visibility_condition(visibility),
-        models.FieldCondition(
-            key="review_status",
-            match=models.MatchValue(value="approved"),
-        ),
         models.FieldCondition(
             key="is_current",
             match=models.MatchValue(value=True),
