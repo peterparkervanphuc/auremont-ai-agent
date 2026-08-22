@@ -1,7 +1,7 @@
 // Building blocks shared by every zone page. They were previously nested inside
 // the single 1866-line CategoryDetailPage; extracting them lets each zone live in
 // its own file without duplicating the layout primitives.
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { fetchProjectDetail, type ProjectFullDetail } from "../../../api/projects";
 
 export interface ImageTab {
@@ -147,6 +147,14 @@ export function PriceTable({ projectId }: { projectId: string }) {
 
   if (!detail || detail.pricing.length === 0) return null;
 
+  // Most projects have one flat list of tiers. A project whose pricing spans more than
+  // one tiểu khu (The Sapphire: Sapphire 1 + Sapphire 2) repeats the same apartment types
+  // once per sub-zone — without a group label those read as duplicate, unexplained rows
+  // ("Studio" appearing twice with two different size ranges). Only add the extra
+  // sub-heading when it is actually needed, so every other project's table is unchanged.
+  const subZones = Array.from(new Set(detail.pricing.map((p) => p.subZone).filter((v): v is string => Boolean(v))));
+  const showSubZoneGroups = subZones.length > 1;
+
   return (
     <section className="price-table-brown">
       <h3 className="price-table-brown-title">Bảng giá {detail.name}</h3>
@@ -161,13 +169,19 @@ export function PriceTable({ projectId }: { projectId: string }) {
           <span>Diện tích</span>
           <span>Giá bán</span>
         </div>
-        {detail.pricing.map((p, i) => (
-          <div key={`${p.apartmentType}-${i}`} className="price-table-brown-row">
-            <span>{p.apartmentType}</span>
-            <span>{p.sizeRange}</span>
-            <span>{p.priceRange}</span>
-          </div>
-        ))}
+        {detail.pricing.map((p, i) => {
+          const startsNewGroup = showSubZoneGroups && p.subZone && detail.pricing[i - 1]?.subZone !== p.subZone;
+          return (
+            <Fragment key={`${p.subZone ?? ""}-${p.apartmentType}-${i}`}>
+              {startsNewGroup && <div className="price-table-brown-subzone">{p.subZone}</div>}
+              <div className="price-table-brown-row">
+                <span>{p.apartmentType}</span>
+                <span>{p.sizeRange}</span>
+                <span>{p.priceRange}</span>
+              </div>
+            </Fragment>
+          );
+        })}
       </div>
     </section>
   );

@@ -152,6 +152,10 @@ export interface ProjectPricingRow {
   storeys?: string;
   sizeMinSqm?: number;
   sizeMaxSqm?: number;
+  /** Which tiểu khu this tier belongs to (e.g. "Sapphire 1" vs "Sapphire 2") — only
+   * present for a project whose pricing spans more than one sub-zone. Lets PriceTable
+   * group rows instead of showing two unlabelled "Studio"/"1PN"/... sets back to back. */
+  subZone?: string;
 }
 
 export interface ProjectFullDetail {
@@ -173,6 +177,7 @@ export interface ProjectFullDetail {
 interface ApiPricingRow {
   category?: string;
   apartment_type?: string;
+  sub_zone?: string | null;
   size_min_sqm?: number | null;
   size_max_sqm?: number | null;
   size_note?: string | null;
@@ -225,6 +230,7 @@ function toPricingRow(row: ApiPricingRow): ProjectPricingRow {
     storeys: row.storeys ?? undefined,
     sizeMinSqm: row.size_min_sqm ?? undefined,
     sizeMaxSqm: row.size_max_sqm ?? undefined,
+    subZone: row.sub_zone ?? undefined,
   };
 }
 

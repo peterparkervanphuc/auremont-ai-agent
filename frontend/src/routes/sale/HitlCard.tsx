@@ -4,6 +4,8 @@ import type { MessageResponse } from "../../types";
 import { AlertIcon, CheckIcon, CopyIcon, LoaderIcon } from "../../components/Icons";
 import { CitationList } from "../../components/CitationList";
 import { MessageContent } from "../../components/MessageContent";
+import { AnswerImageStrip } from "./AnswerImageStrip";
+import { PropertyListingCarousel } from "../PropertyListingCarousel";
 
 interface HitlCardProps {
   message: MessageResponse;
@@ -71,6 +73,11 @@ export function HitlCard({ message, onConfirmed }: HitlCardProps) {
 
       {message.citations && message.citations.length > 0 && (
         <CitationList citations={message.citations} className="hitl-sources" label="Tài liệu" />
+      )}
+
+      {message.images && message.images.length > 0 && <AnswerImageStrip images={message.images} />}
+      {message.listings && message.listings.length > 0 && (
+        <PropertyListingCarousel listings={message.listings} />
       )}
 
       {/* Only the confirmed state gets a line of its own — before confirming, the copy

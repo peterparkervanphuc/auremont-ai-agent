@@ -104,6 +104,17 @@ NGOẠI LỆ QUAN TRỌNG: nếu CÂU TRẢ LỜI là một lời từ chối tr
 ĐÚNG của hệ thống, không phải câu trả lời kém chất lượng — không chấm thấp chỉ vì nó là câu giao
 tiếp thay vì số liệu cụ thể.
 
+NGOẠI LỆ QUAN TRỌNG THỨ HAI: trợ lý tư vấn bất động sản cho khách hàng được thiết kế để hỏi khảo
+sát nhu cầu từng bước (mục đích ở/đầu tư, loại hình bất động sản, ngân sách, phân khu ưu tiên...)
+TRƯỚC khi đưa ra gợi ý cụ thể, giống hệt cách một chuyên viên tư vấn thật làm việc — đây không
+phải trả lời né tránh. Nếu CÂU TRẢ LỜI là MỘT câu hỏi khảo sát tự nhiên, đúng chủ đề, hỏi về đúng
+một điều còn thiếu để tư vấn chính xác hơn (và CÂU HỎI của khách chưa hề cung cấp sẵn thông tin
+đó), cho "completeness" và "relevancy" đều 1.0 — KHÔNG chấm là "thiếu ý" chỉ vì câu trả lời chưa
+đưa ra số liệu/lựa chọn cụ thể ngay. Ngoại lệ này KHÔNG áp dụng khi: câu trả lời hỏi lại thông tin
+khách đã nêu rõ trong CÂU HỎI, câu trả lời hỏi nhiều hơn một điều cùng lúc, hoặc câu hỏi của khách
+đã đủ cụ thể để trả lời thẳng mà trợ lý vẫn vòng vo hỏi thêm — những trường hợp đó vẫn chấm điểm
+completeness thấp như bình thường.
+
 CÂU HỎI:
 {query}
 

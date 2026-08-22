@@ -203,6 +203,7 @@ export function ChatWidget() {
       hitl_confirmed: false,
       emotion: null,
       quick_replies: null,
+      listings: null,
       suggested_questions: null,
       created_at: new Date().toISOString(),
     };
@@ -240,7 +241,8 @@ export function ChatWidget() {
           hitl_confirmed: false,
           emotion: null,
           quick_replies: null,
-      suggested_questions: null,
+          listings: null,
+          suggested_questions: null,
           created_at: new Date().toISOString(),
         },
       ]);

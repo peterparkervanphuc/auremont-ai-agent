@@ -184,7 +184,7 @@ def test_retrieval_query_ignores_ai_statement_that_is_not_a_question():
 def test_retrieve_separates_history_expansion_from_current_turn_constraints(monkeypatch):
     seen = {}
 
-    def fake_retrieve(query, visibility, project_id, top_k, *, focus_query=None):
+    def fake_retrieve(query, visibility, project_id, top_k, *, focus_query=None, **kwargs):
         seen.update(query=query, focus_query=focus_query)
         return []
 

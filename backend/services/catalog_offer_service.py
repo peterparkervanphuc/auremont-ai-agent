@@ -61,17 +61,38 @@ def search_offers(
     )
     scoped_ids = set(project_ids or [])
     excluded_ids = set(excluded_project_ids or [])
+    # See `_project_is_in_scope`: a bare "which tiers does this project have" question
+    # stays on the named project; a unit-filtering question reaches into its sub-zones.
+    include_children = bool(active.constraints)
     rows = db.query(Project).all()
     offers: list[CatalogOffer] = []
 
     for project in rows:
-        if scoped_ids and not _project_is_in_scope(project, scoped_ids):
+        if scoped_ids and not _project_is_in_scope(project, scoped_ids, include_children=include_children):
             continue
+        # Exclusions always cover children: rejecting a parent rejects everything under it.
         if excluded_ids and _project_is_in_scope(project, excluded_ids):
             continue
         details = project.details or {}
         info = details.get("project") or {}
-        for tier in details.get("pricing") or []:
+        pricing = details.get("pricing") or []
+
+        # The umbrella "Vinhomes Ocean Park" catalogue entry mixes "Chung cư" together with
+        # "Biệt thự"/"Shophouse" — no real sub-zone does that (an apartment tower is never
+        # also a villa cluster), so that specific combination is the umbrella record's own
+        # signature, unlike a real sub-zone that legitimately sells two non-apartment
+        # product types together (e.g. villas plus a few shophouse units in the same
+        # sub-zone — those must stay searchable). Left in, VHOP's own chung-cư tier
+        # surfaces as a peer "phân khu" option next to The Beverly/The Zurich in a broad
+        # search — confusing, since it is the whole master development, not a comparable
+        # product. Only excluded from a BROAD search (`scoped_ids` empty or naming
+        # something else); a question that explicitly names this project still gets its
+        # own tiers back.
+        categories = {tier["category"] for tier in pricing if isinstance(tier, dict) and tier.get("category")}
+        if "Chung cư" in categories and len(categories) > 1 and project.id not in scoped_ids:
+            continue
+
+        for tier in pricing:
             if not isinstance(tier, dict):
                 continue
             offer = _to_offer(project, info, tier)
@@ -175,6 +196,41 @@ def _range_fit_score(
     return intersection / union
 
 
+def build_catalog_overview(db: Session | None) -> str:
+    """A complete, deterministic index of every project grouped by product category.
+
+    Exists for "what do you have at all" survey questions ("có những dự án nào", "danh
+    sách phân khu"), where RAG's top-k semantic retrieval is the wrong tool: it returns
+    whichever ~8 chunks score closest to the question's own wording, an arbitrary subset
+    that happens to skip whole categories (villas, shophouses) whenever no matching
+    project document scores high enough to make the cut. This instead reads straight from
+    every `Project` row, the same source `routers/projects.py::_primary_type` already
+    trusts to classify a project's category from its own pricing tiers.
+    """
+    if db is None:
+        return ""
+
+    groups: dict[str, list[str]] = {}
+    for project in db.query(Project).all():
+        details = project.details or {}
+        pricing = details.get("pricing") or []
+        if not pricing:
+            continue
+        categories = {tier["category"] for tier in pricing if tier.get("category")}
+        category = next(iter(categories)) if len(categories) == 1 else "Khu đô thị"
+        name = project.name.split(" - ", 1)[0]
+        groups.setdefault(category, []).append(name)
+
+    if not groups:
+        return ""
+
+    lines = ["TỔNG QUAN DANH MỤC DỰ ÁN (đầy đủ, không phụ thuộc vào tài liệu được truy xuất):"]
+    for category in sorted(groups):
+        names = sorted(dict.fromkeys(groups[category]))
+        lines.append(f"- {category}: {', '.join(names)}")
+    return "\n".join(lines)
+
+
 def _to_offer(project: Project, info: dict, tier: dict) -> CatalogOffer:
     unit_type = str(tier.get("apartment_type") or tier.get("type") or tier.get("category") or "Chưa phân loại")
     return CatalogOffer(
@@ -249,10 +305,19 @@ def _matches(offer: CatalogOffer, criteria: search_criteria.SearchCriteria) -> b
     return True
 
 
-def _project_is_in_scope(project: Project, scope_ids: set[str]) -> bool:
-    """Match a project itself or a direct catalogue child of a scoped parent."""
+def _project_is_in_scope(project: Project, scope_ids: set[str], *, include_children: bool = True) -> bool:
+    """Match a project itself, and a direct catalogue child when children are in scope.
+
+    `include_children` is False for a scoped search carrying NO unit constraints, i.e. the
+    question named the project and nothing else ("gia o Vinhomes Ocean Park"). That asks
+    about the scoped project's own tiers; expanding it buries them under every sub-zone's.
+    A search that does filter for units ("duoi 4 ty", "2PN 60-70m2") means the opposite -
+    the sub-zones are where those units actually live, so children must come along.
+    """
     if project.id in scope_ids:
         return True
+    if not include_children:
+        return False
     info = (project.details or {}).get("project") or {}
     return info.get("parent_project_id") in scope_ids
 

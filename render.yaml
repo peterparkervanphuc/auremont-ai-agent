@@ -17,6 +17,11 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: p110-redis
+          property: connectionString
       - key: CORS_ORIGINS
         sync: false
       - key: QDRANT_URL
@@ -35,3 +40,8 @@ services:
         value: salesmate-documents
       - key: PROJECT_IMAGES_BASE_URL
         value: https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev
+
+  - type: keyvalue
+    name: p110-redis
+    plan: free
+    ipAllowList: []

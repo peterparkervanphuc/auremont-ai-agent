@@ -27,10 +27,14 @@ function SapphireSpotlight() {
             Phân khu The Sapphire bao gồm <strong>27 tòa</strong> căn hộ cao từ 26 – 28 tầng với 2 tiểu khu là:
           </p>
           <ul className="zone-spotlight-list">
-            <li>
+            {/* Real jump targets for the chat's listing cards (PropertyListingCarousel.tsx)
+                and the navbar's zone sub-menu (see subAnchors in registry.tsx) — Sapphire
+                has no separate S1/S2 page section, so this intro line is the closest
+                honest anchor to each sub-tower. */}
+            <li id="the-sapphire-1">
               <strong>The Sapphire 1 (S1):</strong> 11 tòa căn hộ đánh số từ S1.01 đến S1.12.
             </li>
-            <li>
+            <li id="the-sapphire-2">
               <strong>The Sapphire 2 (S2):</strong> 16 tòa căn hộ đánh số từ S2.01 đến S2.19.
             </li>
           </ul>

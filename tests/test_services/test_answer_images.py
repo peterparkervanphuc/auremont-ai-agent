@@ -363,3 +363,103 @@ def test_a_broken_catalogue_never_costs_the_answer():
             raise RuntimeError("catalogue unavailable")
 
     assert answer_images_service.collect_images(_ExplodingDb(), "tiện ích The Palma có gì", "") == []
+
+
+# --- select_listing_images / select_listing_amenities (property listing cards) ----------
+
+SENIQUE_GALLERY = [
+    "https://cdn/p/senique/be-boi-50m-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/can-ho-1pn-medium-42-m2-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/can-ho-2pn-large-813-m2-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/can-ho-2pn-medium-643-m2-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/can-ho-3pn-small-832-m2-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/phoi-canh-tong-the-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/vi-tri-the-senique-hanoi.jpg",
+]
+
+
+def test_select_listing_images_prefers_unit_type_tagged_floor_plans():
+    """The Senique Hanoi tags floor plans by bedroom count in the filename — a "2PN"
+    listing must get exactly the "can-ho-2pn-..." shots, not the 1PN/3PN photos and not
+    the overview shot: once a unit type has its own real photos, nothing else is padded
+    in alongside them (that padding is exactly what showed the wrong photo in practice —
+    see the module docstring on select_listing_images)."""
+    selected = answer_images_service.select_listing_images(SENIQUE_GALLERY, "2PN")
+
+    assert selected == [
+        "https://cdn/p/senique/can-ho-2pn-large-813-m2-the-senique-hanoi.jpg",
+        "https://cdn/p/senique/can-ho-2pn-medium-643-m2-the-senique-hanoi.jpg",
+    ]
+
+
+def test_select_listing_images_returns_nothing_when_only_tower_wide_plans_exist():
+    """The Pavilion's gallery only tags floor plans by tower ("mat-bang-toa-p1"), never by
+    unit type, and has no true overview shot ("tong-mat-bang" is not "tong-the"/"phoi-canh"/
+    "toan-canh"). A tower-wide floor plan is not an accurate photo of "2PN" specifically —
+    showing one anyway (the old behaviour) was the exact complaint that led to this
+    function's rewrite, so the correct result here is no photo at all rather than a wrong
+    one."""
+    selected = answer_images_service.select_listing_images(PAVILION_GALLERY, "2PN")
+
+    assert selected == []
+
+
+def test_select_listing_images_falls_back_to_every_other_real_photo_with_no_floor_plans():
+    """When a subdivision's gallery has no unit-type-tagged photo at all, a listing gets
+    every other real photo of the project (amenities, overview shots — anything that is
+    not a floor plan), not just whichever happens to carry the narrow "phoi-canh"/
+    "tong-the" overview keywords. The Palma has several genuine scenic photos that don't
+    carry those exact keywords; stopping at the narrow overview-only set under-showed
+    real photos of the right project for no good reason."""
+    gallery = [
+        "https://cdn/p/the-palma/tien-ich-be-boi.jpg",
+        "https://cdn/p/the-palma/tien-ich-gym.jpg",
+        "https://cdn/p/the-palma/phoi-canh-tong-the.jpg",
+        "https://cdn/p/the-palma/mat-bang-toa-1.jpg",
+    ]
+
+    selected = answer_images_service.select_listing_images(gallery, "2PN")
+
+    assert selected == [
+        "https://cdn/p/the-palma/tien-ich-be-boi.jpg",
+        "https://cdn/p/the-palma/tien-ich-gym.jpg",
+        "https://cdn/p/the-palma/phoi-canh-tong-the.jpg",
+    ]
+
+
+def test_select_listing_images_has_no_fixed_cap():
+    """Accuracy matters more than a fixed photo count — every genuine match for the unit
+    type is returned, not trimmed down to some arbitrary number."""
+    gallery = [f"https://cdn/p/x/can-ho-2pn-{i}.jpg" for i in range(12)]
+
+    assert len(answer_images_service.select_listing_images(gallery, "2PN")) == 12
+
+
+def test_select_listing_images_empty_gallery_returns_empty():
+    assert answer_images_service.select_listing_images([], "2PN") == []
+
+
+class _FakeProjectWithAmenities:
+    details = {
+        "amenities": [
+            {"name": "Sân chơi trẻ em", "zone": "Sapphire 1"},
+            {"name": "Vườn dưỡng sinh", "zone": "Sapphire 1"},
+            {"name": "Hồ bơi", "zone": "Sapphire 1"},
+            {"name": "Sân tennis", "zone": "Sapphire 1"},
+            {"name": "Phòng gym", "zone": "Sapphire 1"},
+        ]
+    }
+
+
+def test_select_listing_amenities_returns_a_few_names():
+    names = answer_images_service.select_listing_amenities(_FakeProjectWithAmenities())
+
+    assert names == ["Sân chơi trẻ em", "Vườn dưỡng sinh", "Hồ bơi", "Sân tennis"]
+
+
+class _FakeProjectWithoutAmenities:
+    details: dict = {}
+
+
+def test_select_listing_amenities_handles_missing_data():
+    assert answer_images_service.select_listing_amenities(_FakeProjectWithoutAmenities()) == []

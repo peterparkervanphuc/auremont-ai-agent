@@ -299,7 +299,9 @@ async def ask_in_customer_session(
     # walked to the registration form or a live Sale should not be invited to start a new
     # question instead.
     quick_replies: list[str] = []
+    listings: list[dict] = []
     suggested_questions: list[str] = []
+    images: list[dict] = []
 
     if is_anonymous and _anonymous_turn_count(db, session_id) >= settings.customer_anonymous_turn_limit:
         gate = "turn_limit"
@@ -338,14 +340,18 @@ async def ask_in_customer_session(
             requires_hitl = False
             emotion = MessageEmotion(result.emotion) if result.emotion else emotion
             quick_replies = result.quick_replies
+            listings = result.listings
             suggested_questions = result.suggested_questions
+            images = result.images
         else:
             answer_text = result.draft_answer
-            verifier_score, requires_hitl = result.verifier_score, result.requires_hitl
+            verifier_score, requires_hitl = result.verifier_score, False
             faithfulness, answer_relevancy = result.faithfulness, result.answer_relevancy
             emotion = MessageEmotion(result.emotion) if result.emotion else None
             quick_replies = result.quick_replies
+            listings = result.listings
             suggested_questions = result.suggested_questions
+            images = result.images
 
     log_event(
         "customer.query",
@@ -375,7 +381,9 @@ async def ask_in_customer_session(
         answer_relevancy=answer_relevancy,
         emotion=emotion,
         quick_replies=quick_replies,
+        listings=listings,
         suggested_questions=suggested_questions,
+        images=images,
     )
 
     response = CustomerAskResponse.model_validate(message)

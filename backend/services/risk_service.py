@@ -75,3 +75,25 @@ def detect_commitment_risk(answer: str) -> bool:
         return True
 
     return any(strip_diacritics(keyword) in normalized for keyword in _COMMITMENT_KEYWORDS)
+
+
+def detect_hard_commitment_risk(answer: str) -> bool:
+    """Narrower than `detect_commitment_risk`: `True` only for an actual promise or business
+    obligation (discount, financing, deposit, contract, legal, payment terms) — a bare price
+    figure alone does not count.
+
+    Used by `routers/customer_chat.py` to decide whether a logged-in customer can be shown a
+    price-only answer directly, or whether it's a real commitment that still needs a live
+    Sale. `detect_commitment_risk` stays the trigger for the Sale-facing HITL card (any price
+    mention), since a Sale re-reading figures before sending them out is cheap; this function
+    is only for the narrower "can the AI say this straight to the customer" decision.
+    """
+    if not answer or not answer.strip():
+        return False
+
+    normalized = strip_diacritics(answer)
+
+    if _PERCENTAGE.search(normalized):
+        return True
+
+    return any(strip_diacritics(keyword) in normalized for keyword in _COMMITMENT_KEYWORDS)

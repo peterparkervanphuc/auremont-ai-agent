@@ -42,7 +42,10 @@ _REALTIME_INTENT_KEYWORDS = (
     # stale document just because the Sale did not include the words "tồn kho".
     "mã căn",
     "diện tích",
-    "giá căn",
+    # Deliberately NOT "giá căn": a bare price question ("giá căn 2PN?") is answered by the
+    # uploaded price list, not the live tool. Only an explicit threshold/range routes to
+    # inventory (see the budget patterns below). "giá" stays in the FOLLOW-UP list, where
+    # rows are already in scope and another field of them is being asked for.
     "trạng thái",
     "loại căn",
     "unit_code",
@@ -97,10 +100,27 @@ _PRICE_DOCUMENT_QUERY_PATTERN = re.compile(
 # inventory-only silently removes the only source that can answer that second half.
 # These are domain concepts, not project names or answers, so newly ingested projects
 # benefit without a code change.
+# A concrete unit identifier ("OCP1-S1-0203", "R1.03-1205"): a token starting with
+# letters, containing a digit, and joined by - or . to at least one more group. This is
+# what separates "gia can OCP1-S1-0203" (one real row, only the live API knows its
+# current price/status) from "gia can 2PN" (a unit TYPE, answered by the uploaded price
+# list). "2PN", "m2" and "45-70" must not match.
+_UNIT_CODE_PATTERN = re.compile(r"\b[a-z]+\d[a-z0-9]*(?:[.-][a-z0-9]+)+\b", re.IGNORECASE)
+
 _PROPERTY_DOCUMENT_ATTRIBUTE_PATTERN = re.compile(
     r"\b(?:view|tam\s+nhin|huong\s+nhin|huong\s+can|canh\s+quan|tien\s+ich|noi\s+that|"
     r"ban\s+giao|so\s+huu|phap\s+ly)\b",
     re.IGNORECASE,
+)
+
+# Narrower fallback for a bare budget threshold/range with no "căn"/"nhà" word nearby
+# ("dưới 5 tỷ có gì hợp không", "3-5 tỷ"). `names_specific_document_topic` below still
+# needs this even though `_FILTERED_UNIT_QUERY_PATTERN`/`_PRICE_DOCUMENT_QUERY_PATTERN`
+# cover the common phrasing, since it also decides "genuinely missing data" for a
+# budget-only question that never mentions "căn" at all.
+_PRICE_THRESHOLD_PATTERN = re.compile(r"\b(?:duoi|tren|khong qua|toi da)\s*\d+(?:[.,]\d+)?\s*(?:ty|trieu|tr)\b")
+_PRICE_RANGE_PATTERN = re.compile(
+    r"\b(?:tu\s*)?\d+(?:[.,]\d+)?\s*(?:ty|trieu|tr)?\s*(?:-|den|toi)\s*\d+(?:[.,]\d+)?\s*(?:ty|trieu|tr)\b"
 )
 
 _DOCUMENT_INTENT_KEYWORDS = (
@@ -124,6 +144,10 @@ _DOCUMENT_INTENT_KEYWORDS = (
 )
 
 
+def _mentions_price_threshold(normalized: str) -> bool:
+    return bool(_PRICE_THRESHOLD_PATTERN.search(normalized) or _PRICE_RANGE_PATTERN.search(normalized))
+
+
 def needs_inventory(query: str) -> bool:
     """Diacritic-insensitive matching: a Sale typing fast on a phone rarely uses accents.
 
@@ -132,8 +156,11 @@ def needs_inventory(query: str) -> bool:
     counts from a PDF.
     """
     normalized = strip_diacritics(query)
-    return any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS) or bool(
-        _FILTERED_UNIT_QUERY_PATTERN.search(normalized)
+    return (
+        any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS)
+        or bool(_FILTERED_UNIT_QUERY_PATTERN.search(normalized))
+        or bool(_UNIT_CODE_PATTERN.search(normalized))
+        or _mentions_price_threshold(normalized)
     )
 
 
@@ -155,6 +182,7 @@ def needs_document_retrieval(query: str) -> bool:
         any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
         or bool(_PRICE_DOCUMENT_QUERY_PATTERN.search(normalized))
         or bool(_PROPERTY_DOCUMENT_ATTRIBUTE_PATTERN.search(normalized))
+        or _mentions_price_threshold(normalized)
         or not needs_inventory(query)
     )
 
@@ -197,18 +225,21 @@ def is_customer_memory_query(query: str) -> bool:
 
 
 def names_specific_document_topic(query: str) -> bool:
-    """True only for the keyword-matched half of `needs_document_retrieval` above — a
-    query that names something (policy, discount, legal, price list...) that should live
-    in an ingested document, as opposed to `needs_document_retrieval`'s generic catch-all
-    (True for almost anything that isn't an inventory question, including a bare "tư vấn
-    giúp em" with nothing to look up yet).
+    """True for the keyword-matched half of `needs_document_retrieval` above, plus a
+    budget threshold — both name something (policy, discount, legal, price list, a price
+    range...) that should live in an ingested document, as opposed to
+    `needs_document_retrieval`'s generic catch-all (True for almost anything that isn't a
+    plain availability question, including a bare "tư vấn giúp em" with nothing to look up
+    yet).
 
     Used to decide whether zero retrieval hits means "genuinely missing data, say so
     plainly" versus "nothing specific was asked for, let the model have a normal
     conversation instead" — see agent_pipeline._retrieve.
     """
     normalized = strip_diacritics(query)
-    return any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
+    if any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS):
+        return True
+    return _mentions_price_threshold(normalized)
 
 
 # Phrases that adjust an existing unit search rather than starting a new topic ("giữ
@@ -272,6 +303,36 @@ def is_search_refinement(query: str) -> bool:
     """
     normalized = strip_diacritics(query)
     return any(keyword in normalized for keyword in _SEARCH_REFINEMENT_KEYWORDS)
+
+
+# "What do you have at all" — a full-catalogue survey, not a question about one project or
+# one filtered search. RAG's top-k semantic retrieval is the wrong tool for this: it
+# returns whichever ~8 chunks score closest by embedding similarity to the phrase itself,
+# an arbitrary and incomplete subset that happens to skip whole product categories
+# (villas, shophouses) when no project document scores high enough to make the cut — see
+# agent_pipeline._retrieve, which builds a deterministic catalog_overview_context from the
+# `projects` table instead of relying on retrieval alone whenever this matches.
+_CATALOG_OVERVIEW_PATTERN = re.compile(
+    r"\b(?:co\s+nhung|co\s+bao\s+nhieu|danh\s+sach|liet\s+ke|gom\s+nhung|toan\s+bo)\b"
+    # "khu" alone covers the everyday-chat shorthand for "phân khu" ("có những khu nào") —
+    # without it this whole detector misses that exact common phrasing and the question
+    # falls through to plain RAG retrieval, which answers with an arbitrary, incomplete
+    # handful of sub-zones instead of the full loại hình survey.
+    r".{0,20}\b(?:du\s+an|phan\s+khu|khu|loai\s+hinh|san\s+pham|danh\s+muc)\b",
+    re.IGNORECASE,
+)
+
+
+def is_catalog_overview_query(query: str) -> bool:
+    """True for a broad "what projects/product types do you have" survey question.
+
+    Requires both a quantifier/listing verb ("có những", "danh sách", "liệt kê"...) and a
+    catalogue-scope noun ("dự án", "phân khu", "loại hình"...) close together, so it does
+    not fire on a specific-project question that merely mentions "dự án" in passing (e.g.
+    "dự án The Beverly có tiện ích gì" — no quantifier there).
+    """
+    normalized = strip_diacritics(query)
+    return bool(_CATALOG_OVERVIEW_PATTERN.search(normalized))
 
 
 # Preflight policies cover requests where generation is the wrong tool: unsafe requests

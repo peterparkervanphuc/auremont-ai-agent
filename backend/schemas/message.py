@@ -29,6 +29,23 @@ class AnswerImage(BaseModel):
     project_name: str
 
 
+class PropertyListing(BaseModel):
+    """One recommended unit, rendered as its own card (with paging arrows between cards)
+    instead of as a bullet line in `content` — see prompts.PropertyListing and
+    agent_pipeline._resolve_listing_images, which is what fills in `image_urls`/
+    `amenities`/`project_id`. All three default empty: a listing whose project/gallery
+    could not be resolved is still shown, just without photos or amenity tags.
+    """
+
+    project_name: str
+    unit_type: str
+    area_range: str
+    price_range: str
+    image_urls: list[str] = []
+    amenities: list[str] = []
+    project_id: str | None = None
+
+
 class MessageCreate(BaseModel):
     session_id: int | None = None
     content: str
@@ -52,6 +69,8 @@ class MessageResponse(BaseModel):
     emotion: MessageEmotion | None = None
     # Short reply options the customer can tap instead of typing — see Message.quick_replies.
     quick_replies: list[str] | None = None
+    # Recommended units rendered as their own cards — see Message.listings.
+    listings: list[PropertyListing] | None = None
     # Follow-up questions the asker may want next, for both Sale and customer — see
     # Message.suggested_questions.
     suggested_questions: list[str] | None = None

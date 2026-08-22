@@ -1,7 +1,7 @@
-"""merge document security findings and observability heads
+"""merge message listings and security/observability heads
 
-Revision ID: f3a4b5c6d7e8
-Revises: b2c3d4e5f6a7, e5f6a7b8c9d0
+Revision ID: b8c9d0e1f2a3
+Revises: a7b8c9d0e1f2, f3a4b5c6d7e8
 Create Date: 2026-08-23
 
 """
@@ -9,10 +9,10 @@ Create Date: 2026-08-23
 from collections.abc import Sequence
 
 
-revision: str = "f3a4b5c6d7e8"
+revision: str = "b8c9d0e1f2a3"
 down_revision: str | Sequence[str] | None = (
-    "b2c3d4e5f6a7",
-    "e5f6a7b8c9d0",
+    "a7b8c9d0e1f2",
+    "f3a4b5c6d7e8",
 )
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

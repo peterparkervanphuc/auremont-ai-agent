@@ -59,14 +59,40 @@ def _criteria(query: str) -> search_criteria.SearchCriteria:
 
 
 def test_every_seeded_project_and_pricing_tier_is_searchable(catalogue_db):
-    expected = sum(len(row.details.get("pricing") or []) for row in catalogue_db.rows)
+    """Every real sub-zone's pricing tiers are searchable in a broad, unscoped query —
+    except the umbrella "Vinhomes Ocean Park" catalogue entry, which mixes "Chung cư"
+    together with "Biệt thự"/"Shophouse" (no real sub-zone does that) and would otherwise
+    surface as a peer "phân khu" option next to The Beverly/The Zurich. Ngọc Trai/Sao Biển
+    legitimately mix two non-apartment categories (villas plus a few shophouse units in the
+    same sub-zone) and must stay searchable — only the umbrella's own combination is
+    excluded, see `search_offers`."""
+    umbrella_id = "vinhomes-ocean-park"
+    expected_ids = {row.id for row in catalogue_db.rows} - {umbrella_id}
+    expected = sum(
+        len(row.details.get("pricing") or []) for row in catalogue_db.rows if row.id != umbrella_id
+    )
 
     offers = catalog_offer_service.search_offers(
         catalogue_db, "tư vấn các loại bất động sản", criteria=search_criteria.SearchCriteria(), limit=200
     )
 
-    assert len(offers) == expected == 84
-    assert {offer.project_id for offer in offers} == {row.id for row in catalogue_db.rows}
+    assert len(offers) == expected == 73
+    assert {offer.project_id for offer in offers} == expected_ids
+
+
+def test_umbrella_project_is_still_searchable_when_explicitly_scoped(catalogue_db):
+    """A question that names "Vinhomes Ocean Park" directly still gets its own tiers back —
+    the exclusion above only applies to a broad, unscoped search."""
+    offers = catalog_offer_service.search_offers(
+        catalogue_db,
+        "vinhomes ocean park",
+        project_ids=["vinhomes-ocean-park"],
+        criteria=search_criteria.SearchCriteria(),
+        limit=200,
+    )
+
+    assert offers
+    assert {offer.project_id for offer in offers} == {"vinhomes-ocean-park"}
 
 
 @pytest.mark.parametrize(

@@ -42,6 +42,13 @@ class Message(Base):
     # row from before this column existed.
     quick_replies: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
+    # Recommended units rendered as their own cards rather than as bullet lines in
+    # `content`, e.g. [{"project_name": "The Sapphire 2", "unit_type": "2PN",
+    # "area_range": "55-64 m²", "price_range": "3,1-4,3 tỷ đồng", "image_url": "http://...",
+    # "project_id": "the-sapphire-2"}]. Only ever set on a PUBLIC-clearance AGENT message
+    # that recommends 1-2 specific units with a full set of figures (see
+    # prompts.PropertyListing). NULL everywhere else, same reasoning as quick_replies above.
+    listings: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     # Plausible NEXT questions about the topic just discussed, e.g. ["Giá căn 2PN bao
     # nhiêu?", "Tiện ích nội khu có gì?"] — offered to BOTH audiences (Sale and customer),
     # unlike `quick_replies` above. The distinction matters: quick_replies answer a

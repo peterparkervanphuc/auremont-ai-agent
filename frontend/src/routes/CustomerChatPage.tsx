@@ -13,6 +13,7 @@ import type {
 } from "../types";
 import { RegisterGateModal } from "../components/RegisterGateModal";
 import { AnswerImageStrip } from "./sale/AnswerImageStrip";
+import { PropertyListingCarousel } from "./PropertyListingCarousel";
 import { AuremontAvatar } from "../components/AuremontAvatar";
 import { MessageContent } from "../components/MessageContent";
 import { parseServerDate } from "../utils/datetime";
@@ -209,7 +210,8 @@ export function CustomerChatPage() {
         hitl_confirmed: false,
         emotion: null,
         quick_replies: null,
-      suggested_questions: null,
+        listings: null,
+        suggested_questions: null,
         created_at: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, optimisticUser]);
@@ -482,6 +484,9 @@ export function CustomerChatPage() {
                         should see or click through to the raw file. */}
 
                     {!isUser && m.images && m.images.length > 0 && <AnswerImageStrip images={m.images} />}
+                    {!isUser && m.listings && m.listings.length > 0 && (
+                      <PropertyListingCarousel listings={m.listings} />
+                    )}
                   </div>
 
                   {showQuickReplies && (

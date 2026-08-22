@@ -723,6 +723,19 @@
   font-weight: 700;
 }
 
+/* Groups rows by tiểu khu for a project whose pricing spans more than one (The Sapphire:
+   Sapphire 1 + Sapphire 2) — see PriceTable in inventory/shared.tsx. */
+.price-table-brown-subzone {
+  padding: 8px 18px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+}
+
 /* Floor plan tabs for The Palma 1/2 */
 .floor-plan-tabs {
   margin: var(--space-block) 0;
@@ -1835,6 +1848,245 @@
 
 .answer-image-card:hover { border-color: var(--accent); }
 
+/* ── Property listing carousel (CustomerChatPage.tsx / PropertyListingCarousel.tsx) —
+   one recommended unit at a time, same card language as .project-card (catalogue browse
+   pages) so a card inside the chat reads as the same kind of object, just narrower. ── */
+.listing-carousel {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+}
+
+.listing-card {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  overflow: hidden;
+}
+
+/* Vertical gallery, matching the reference listing sites: one large hero photo on top,
+   a strip of small thumbnails below it. Tapping a thumbnail swaps the hero in place;
+   tapping the hero opens the fullscreen viewer (.property-lightbox below) where photos
+   are shown genuinely large instead of cropped into a tile. */
+.listing-card-hero-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  cursor: zoom-in;
+  background: var(--bg-3);
+}
+
+.listing-card-hero-image {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  display: block;
+}
+
+.listing-card-hero-image--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  cursor: default;
+}
+
+.listing-card-thumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* "Previous page" of the thumbnail strip — only rendered once paged forward at least
+   once (see clampedThumbPage in PropertyListingCarousel.tsx); the "+N" badge on the last
+   thumbnail is itself the forward control, so only the back direction needs its own
+   button. */
+.listing-card-thumb-page-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 56px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: color var(--t-fast);
+}
+
+.listing-card-thumb-page-btn:hover {
+  color: var(--accent);
+}
+
+/* Landscape, matching the source photos (site plans, floor layouts) — a square crop like
+   an earlier revision used loses too much of the image to tell one thumbnail from
+   another. Height-anchored so the strip has a consistent row height regardless of how
+   many photos there are. */
+.listing-card-thumb-btn {
+  position: relative;
+  flex: 0 0 auto;
+  height: 56px;
+  aspect-ratio: 16 / 10;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  opacity: 0.65;
+  transition:
+    opacity var(--t-fast),
+    border-color var(--t-fast);
+}
+
+.listing-card-thumb-btn:hover {
+  opacity: 0.9;
+}
+
+.listing-card-thumb-btn--active {
+  opacity: 1;
+  border-color: var(--accent);
+}
+
+.listing-card-thumb-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* "+N" badge on the last visible thumbnail when the card caps how many it shows (see
+   _VISIBLE_THUMB_COUNT in PropertyListingCarousel.tsx) — the rest are still reachable in
+   the fullscreen viewer, this just keeps the row from stretching the chat bubble wider
+   than the column when a listing has many resolved photos. */
+.listing-card-thumb-more {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.listing-card-body {
+  padding: 10px 14px 12px;
+}
+
+/* The text side links out to the subdivision's catalogue page (new tab, see
+   PropertyListingCarousel.tsx) whenever a project could be resolved — styled to read as
+   clickable without looking like a generic link. */
+.listing-card-body--link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.listing-card-body--link:hover .listing-card-title {
+  color: var(--accent);
+}
+
+.listing-card-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: 4px;
+}
+
+.listing-card-meta {
+  font-size: 0.82rem;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+
+.listing-card-price {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.listing-card-amenities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.listing-card-amenity {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 3px 9px;
+}
+
+.listing-carousel-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.listing-carousel-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-2);
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast),
+    color var(--t-fast);
+}
+
+.listing-carousel-arrow:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.listing-carousel-arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.listing-carousel-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.listing-carousel-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border-h);
+}
+
+.listing-carousel-dot--active {
+  background: var(--accent);
+  width: 14px;
+  border-radius: 3px;
+}
+
 /* Portalled to <body>, so it is positioned against the viewport and sits above the
    topbar and sidebar. `cursor: zoom-out` on the backdrop advertises click-to-close. */
 .image-lightbox {
@@ -1862,6 +2114,125 @@
 @keyframes lightbox-in {
   from { opacity: 0; }
   to   { opacity: 1; }
+}
+
+/* Property listing gallery viewer — the fullscreen counterpart of
+   .listing-card-hero-btn/.listing-card-thumbs (PropertyListingCarousel.tsx). Sits inside
+   the shared .image-lightbox backdrop, but unlike the single-photo case it carries its
+   own prev/next arrows, a counter and a thumbnail strip, since a listing has several
+   photos worth browsing here instead of just one. The main photo is capped in vh rather
+   than % on purpose: it is nested two levels inside the backdrop's flex box, where a
+   percentage height has nothing definite to resolve against. */
+.property-lightbox {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: min(920px, calc(100vw - 64px));
+  max-height: 100%;
+  cursor: default;
+}
+
+.property-lightbox-main {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.property-lightbox-main img {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: var(--radius);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  display: block;
+}
+
+.property-lightbox-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text-1);
+  cursor: pointer;
+  z-index: 1;
+  transition:
+    opacity var(--t-fast),
+    background var(--t-fast);
+}
+
+.property-lightbox-arrow--left { left: 8px; }
+.property-lightbox-arrow--right { right: 8px; }
+
+.property-lightbox-arrow:hover:not(:disabled) { background: #fff; }
+
+.property-lightbox-arrow:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.property-lightbox-counter {
+  position: absolute;
+  bottom: 10px;
+  right: 12px;
+  padding: 3px 10px;
+  border-radius: 100px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.property-lightbox-thumbs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  max-width: 100%;
+  padding-bottom: 2px;
+}
+
+/* Landscape, same reasoning as .listing-card-thumb-btn — a square crop makes a floor
+   plan/site map unrecognisable. */
+.property-lightbox-thumb {
+  flex: 0 0 auto;
+  height: 64px;
+  aspect-ratio: 16 / 10;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  opacity: 0.6;
+  transition:
+    opacity var(--t-fast),
+    border-color var(--t-fast);
+}
+
+.property-lightbox-thumb:hover { opacity: 0.85; }
+
+.property-lightbox-thumb--active {
+  opacity: 1;
+  border-color: #fff;
+}
+
+.property-lightbox-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* ── Thinking indicator ─────────────────────────────────── */
@@ -3793,4 +4164,41 @@
   .eval-gauge-ring,
   .eval-failed-list button,
   .settings-guide-panel li { transition: none; }
+}
+/* Floating "back to chat" pill (BackToChatButton.tsx) — only rendered on a tab opened
+   from a listing card's link (PropertyListingCarousel.tsx). Sits top-left, under the
+   sticky header, well clear of ChatWidget's own bubble in the opposite corner. */
+.back-to-chat-btn {
+  position: fixed;
+  top: 80px;
+  left: 20px;
+  z-index: 250;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 100px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 8px 24px rgba(0, 80, 239, 0.35);
+  transition:
+    transform var(--t-fast),
+    box-shadow var(--t-fast);
+}
+
+.back-to-chat-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px rgba(0, 80, 239, 0.42);
+}
+
+@media (max-width: 600px) {
+  .back-to-chat-btn {
+    top: 72px;
+    left: 12px;
+    padding: 8px 13px;
+    font-size: 0.8rem;
+  }
 }
