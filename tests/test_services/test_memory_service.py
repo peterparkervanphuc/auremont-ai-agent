@@ -17,11 +17,13 @@ class _FakeRedis:
 
     def __init__(self):
         self.store: dict[str, str] = {}
+        self.set_calls = 0
 
     def get(self, key):
         return self.store.get(key)
 
     def set(self, key, value, ex=None):
+        self.set_calls += 1
         self.store[key] = value
 
     def delete(self, key):
@@ -95,6 +97,12 @@ def test_budget_phrasings_are_recognised():
         assert memory_service.extract_facts(question).budgets == [expected], question
 
 
+def test_budget_range_is_remembered_as_one_value():
+    profile = memory_service.extract_facts("Tài chính khoảng 3.5 - 4 tỷ")
+
+    assert profile.budgets == ["3.5 - 4 tỷ"]
+
+
 def test_spacing_variants_normalise_to_one_token():
     """'3 PN' va '3pn' phai la cung mot thu, khong tich thanh hai muc rieng."""
     spaced = memory_service.extract_facts("Con 3 PN thi sao?")
@@ -125,6 +133,20 @@ def test_remember_then_load(fake_redis):
     assert profile.unit_types == ["2PN"]
     assert profile.budgets == ["3,6 ty"]
     assert profile.projects == ["ocean-park-3"]
+
+
+def test_remember_many_backfills_oldest_to_newest_with_one_redis_write(fake_redis):
+    key = memory_service.sale_session_key(151)
+
+    memory_service.remember_many(
+        key,
+        ["Khách muốn căn 2PN", "Khách chuyển sang căn 3PN", "Tài chính khoảng 3.5 - 4 tỷ"],
+    )
+
+    profile = memory_service.load_profile(key)
+    assert profile.unit_types == ["3PN", "2PN"]
+    assert profile.budgets == ["3.5 - 4 tỷ"]
+    assert fake_redis.set_calls == 1
 
 
 def test_newest_interest_is_read_first(fake_redis):
@@ -231,3 +253,18 @@ def test_rendered_profile_lists_what_is_known():
 
     assert "2PN" in rendered
     assert "3,6 ty" in rendered
+
+
+def test_recall_answer_selects_only_the_requested_profile_dimension():
+    profile = memory_service.UserProfile(
+        unit_types=["2PN+1"],
+        budgets=["3.5 - 4 tỷ"],
+        projects=["the-pavilion", "the-sapphire"],
+    )
+
+    answer = memory_service.format_recall_answer("Khách đang quan tâm phân khu nào?", profile)
+
+    assert "The Pavilion" in answer
+    assert "The Sapphire" in answer
+    assert "2PN+1" not in answer
+    assert "3.5 - 4 tỷ" not in answer

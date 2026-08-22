@@ -52,3 +52,9 @@ def test_collapses_excess_blank_lines():
 def test_blank_input_collapses_to_empty(value):
     """_generate dựa vào kết quả rỗng để rơi vào nhánh lỗi thay vì gửi bong bóng trắng."""
     assert strip_markdown(value) == ""
+
+
+def test_repairs_a_bullet_joined_to_the_previous_sentence():
+    assert strip_markdown("Tòa P4 có 30 tầng.- Kề đường nội khu 17 m.") == (
+        "Tòa P4 có 30 tầng.\n- Kề đường nội khu 17 m."
+    )

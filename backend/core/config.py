@@ -129,6 +129,17 @@ class Settings(BaseSettings):
     # sau khi Admin thay tai lieu, nen no phai tu het han thay vi bam mai vao prompt.
     reflection_ttl_seconds: int = 60 * 60 * 24 * 30
 
+    # Tieu chi tim can tich luy qua nhieu luot cua mot phien (backend/services/
+    # search_criteria.py). Bat de "giu nguyen dieu kien, tang gia len 5 ty" khong lam mat
+    # cac tieu chi da neu truoc do; tat de quay ve hanh vi stateless: moi luot parse lai
+    # tu dau chi tu cau hoi hien tai.
+    search_criteria_enabled: bool = True
+    # 24 gio, ngan hon han memory_ttl_seconds (90 ngay): tieu chi tim kiem la bo nho lam
+    # viec cua MOT cuoc tu van, khong phai so thich lau dai cua mot nguoi. Mot bo loc cua
+    # phien hom qua song lai hom nay se am tham an di nhung can khach dang muon xem —
+    # loi nay khong co trieu chung nao ben ngoai, nen TTL phai ngan.
+    search_criteria_ttl_seconds: int = 60 * 60 * 24
+
     # Minimum Verifier confidence (0-1). Below this the Sale sees the
     # "Không đủ thông tin, liên hệ Admin" notice instead of the answer.
     verifier_threshold_sale: float = 0.7

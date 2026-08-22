@@ -7,6 +7,7 @@ import { BotIcon, LoaderIcon, SendIcon, TrashIcon, UserIcon } from "../../compon
 import { FeedbackButtons } from "../../components/FeedbackButtons";
 import { CitationList } from "../../components/CitationList";
 import { AuremontAvatar } from "../../components/AuremontAvatar";
+import { MessageContent } from "../../components/MessageContent";
 import { AnswerImageStrip } from "./AnswerImageStrip";
 import { ChatSuggestions } from "./ChatSuggestions";
 import { parseServerDate } from "../../utils/datetime";
@@ -196,7 +197,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
 
                 <div className="chat-bubble-wrap">
                   <div className={`chat-bubble ${isUser ? "chat-bubble--user" : "chat-bubble--bot"}`}>
-                    <p className="chat-bubble-text">{m.content}</p>
+                    <MessageContent content={m.content} className="chat-bubble-text" />
 
                     {!isUser && m.citations && m.citations.length > 0 && (
                       <CitationList citations={m.citations} className="chat-citations" label="Nguồn" />

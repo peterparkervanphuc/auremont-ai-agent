@@ -5,7 +5,7 @@ here is that a personalised answer never escapes into the cache other people rea
 """
 
 from backend.ai import prompts
-from backend.services import agent_pipeline
+from backend.services import agent_pipeline, memory_service
 
 PROFILE = "- Loai can thuong quan tam: 2PN"
 
@@ -107,6 +107,31 @@ def test_profile_reaches_the_generate_node(monkeypatch):
     agent_pipeline._generate({"query": "Gia can 3PN?", "memory_profile": PROFILE, "retrieved_docs": []})
 
     assert "2PN" in seen[0]
+
+
+def test_customer_memory_recall_never_calls_retrieval_or_a_model(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise AssertionError("memory recall must finish before RAG/model calls")
+
+    monkeypatch.setattr(agent_pipeline, "retrieve", fail)
+    monkeypatch.setattr(agent_pipeline, "generate_json", fail)
+    profile = memory_service.UserProfile(
+        unit_types=["2PN+1"],
+        budgets=["3.5 - 4 tỷ"],
+        projects=["the-pavilion", "the-sapphire"],
+    )
+
+    result = agent_pipeline.run_pipeline(
+        "Khách của tôi đang quan tâm đến phân khu nào?",
+        memory_profile=memory_service.format_profile(profile),
+        memory_profile_data=profile,
+        session_id=151,
+    )
+
+    assert "The Pavilion" in result.draft_answer
+    assert "The Sapphire" in result.draft_answer
+    assert result.verifier_score == 1.0
+    assert result.citations == []
 
 
 class _FakeGraph:

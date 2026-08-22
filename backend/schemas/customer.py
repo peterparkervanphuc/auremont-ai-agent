@@ -23,6 +23,11 @@ class AnonymousSessionResponse(BaseModel):
     visitor_token: str
 
 
+class AnonymousSessionClaimRequest(BaseModel):
+    session_id: int
+    visitor_token: str
+
+
 class CustomerChatSessionCreate(BaseModel):
     title: str | None = None
     project_id: str | None = None

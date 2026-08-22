@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import { customerApi } from "../api/customerChat";
 import { clearVisitorSession } from "../hooks/useVisitorToken";
 import { useAuth } from "../hooks/useAuth";
-import type { CustomerGate, TokenResponse, UserRole } from "../types";
+import type { CustomerChatSessionResponse, CustomerGate, TokenResponse, UserRole } from "../types";
 import { EyeIcon, EyeOffIcon, LoaderIcon, XIcon } from "./Icons";
 
 const GATE_COPY: Record<CustomerGate, { title: string; body: string }> = {
@@ -40,7 +40,7 @@ interface Props {
   onClose: () => void;
   /** Called once login/registration succeeds, so the caller can re-fetch messages
    * under the now-authenticated identity. */
-  onAuthenticated: () => void;
+  onAuthenticated: (sessionId?: number) => void;
 }
 
 export function RegisterGateModal({ gate, sessionId, visitorToken, onClose, onAuthenticated }: Props) {
@@ -55,10 +55,10 @@ export function RegisterGateModal({ gate, sessionId, visitorToken, onClose, onAu
   const copy = GATE_COPY[gate];
   const canSubmit = Boolean(email.trim() && password) && !loading;
 
-  const applySession = (token: TokenResponse) => {
+  const applySession = (token: TokenResponse, resumedSessionId?: number) => {
     login(token.access_token, token.refresh_token, token.user.role, token.user.username);
     clearVisitorSession();
-    onAuthenticated();
+    onAuthenticated(resumedSessionId);
   };
 
   const handleRegister = async (e: FormEvent) => {
@@ -73,7 +73,7 @@ export function RegisterGateModal({ gate, sessionId, visitorToken, onClose, onAu
         session_id: sessionId,
         visitor_token: visitorToken,
       });
-      applySession(token);
+      applySession(token, sessionId ?? undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Đăng ký thất bại, vui lòng thử lại.");
     } finally {
@@ -91,7 +91,16 @@ export function RegisterGateModal({ gate, sessionId, visitorToken, onClose, onAu
       const result = await api.postUrlEncoded<{ access_token: string; refresh_token: string }>("/auth/login", body);
       const role = decodeRoleFromToken(result.access_token);
       login(result.access_token, result.refresh_token, role, email.trim());
-      onAuthenticated();
+      let canonicalSessionId: number | undefined;
+      if (role === "customer" && sessionId && visitorToken) {
+        const canonical = await customerApi.post<CustomerChatSessionResponse>("/customer/sessions/claim-anonymous", {
+          session_id: sessionId,
+          visitor_token: visitorToken,
+        });
+        canonicalSessionId = canonical.id;
+      }
+      clearVisitorSession();
+      onAuthenticated(canonicalSessionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Đăng nhập thất bại.");
     } finally {

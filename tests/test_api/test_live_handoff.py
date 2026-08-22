@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from backend.core.deps import get_current_user, get_optional_current_user
 from backend.core.enums import MessageSender, SessionStatus, UserRole
 from backend.core.mysql_client import Base, get_db
+from backend.core.rate_limit import anonymous_rate_limit
 from backend.main import app
 from backend.models.user import User
 from backend.repositories.chat_session import (
@@ -97,7 +98,7 @@ def stub_pipeline(monkeypatch):
     monkeypatch.setattr(
         agent_pipeline,
         "run_pipeline",
-        lambda query, project_id=None, db=None, clearance=None, history=None: PipelineResult(
+        lambda query, project_id=None, db=None, clearance=None, history=None, **_kwargs: PipelineResult(
             draft_answer=f"Trả lời cho: {query}",
             citations=[],
             verifier_score=0.9,
@@ -177,11 +178,11 @@ def test_full_handoff_flow(as_customer, as_sale, sale, other_sale, customer, stu
 
     session_id = customer_client.post("/api/v1/customer/sessions", json={}).json()["id"]
 
-    # A closing-adjacent question from a logged-in customer triggers the handoff, not a
-    # normal AI answer.
+    # An explicit request for a person triggers handoff. Price/floor-plan questions stay
+    # in self-service and are covered separately by test_customer_hitl_gate.py.
     handoff = customer_client.post(
         f"/api/v1/customer/sessions/{session_id}/messages",
-        json={"content": "Cho mình xin bảng giá chi tiết"},
+        json={"content": "Tôi muốn gặp chuyên viên tư vấn"},
     )
     assert handoff.status_code == 201, handoff.text
     body = handoff.json()
@@ -271,10 +272,13 @@ def test_customer_can_self_service_return_to_ai_while_waiting(as_customer, custo
     assert status_check.json()["status"] == "bot_handling"
 
 
-def test_anonymous_visitor_asking_for_a_human_hits_the_registration_gate_not_the_queue(db_session):
-    """An anonymous visitor must never reach the live-inbox queue directly — only the
-    register/login gate, same funnel as every other lead-qualification trigger."""
+def test_anonymous_visitor_asking_for_a_human_stays_in_self_service(db_session, stub_pipeline):
+    """An anonymous visitor can ask the AI about Sale contact without a registration wall."""
     app.dependency_overrides[get_db] = lambda: db_session
+    # The process-wide per-IP bucket is intentionally shared in production, but every
+    # TestClient uses the same synthetic `testclient` IP. Isolate this behavior test from
+    # unrelated anonymous requests made earlier in the full suite.
+    app.dependency_overrides[anonymous_rate_limit] = lambda: None
     client = TestClient(app)
     try:
         anon = client.post("/api/v1/customer/sessions/anonymous").json()
@@ -287,7 +291,7 @@ def test_anonymous_visitor_asking_for_a_human_hits_the_registration_gate_not_the
         )
         assert response.status_code == 201
         body = response.json()
-        assert body["gate"] == "human_request"
+        assert body["gate"] is None
         assert body["status"] == "bot_handling"
     finally:
         app.dependency_overrides.clear()
@@ -313,7 +317,7 @@ def test_suggest_reports_whether_the_draft_carries_commitment_risk(
     monkeypatch.setattr(
         agent_pipeline,
         "run_pipeline",
-        lambda query, project_id=None, db=None, clearance=None, history=None: PipelineResult(
+            lambda query, project_id=None, db=None, clearance=None, history=None, **_kwargs: PipelineResult(
             draft_answer="Giá căn 2PN là 3,6 tỷ đồng.",
             citations=[],
             verifier_score=0.9,

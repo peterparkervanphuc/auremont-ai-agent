@@ -14,8 +14,9 @@ from pydantic import BaseModel, Field
 
 from backend.ai.answer_cleanup import wants_images_for_prompt
 from backend.services.inventory_service import InventoryUnit
+from backend.services.search_criteria import ZeroResultDiagnosis, format_zero_result
 
-SYSTEM_INSTRUCTION_VERSION = "2026-08-21.12"
+SYSTEM_INSTRUCTION_VERSION = "2026-08-22.6"
 
 _BEDROOM_PN_PATTERN = re.compile(r"\b(?P<count>\d+)PN(?P<plus>\+1)?\b", re.IGNORECASE)
 _BEDROOM_BR_PATTERN = re.compile(r"\b(?P<count>\d+)BR(?P<plus>\+)?(?=\W|$)", re.IGNORECASE)
@@ -141,6 +142,8 @@ SYSTEM_INSTRUCTION_PUBLIC = (
     "thẳng ngay, không hỏi vòng vo thêm.\n"
     "- Dựa vào những gì khách đã nói trong cuộc trò chuyện trước đó, không hỏi lại điều khách đã "
     "cho biết rồi.\n"
+    "- Khi khách chỉ đổi một tiêu chí tìm căn, giữ nguyên mọi tiêu chí khác đã có trong khối TIÊU CHÍ "
+    "ĐANG ÁP DỤNG; không bắt khách nhắc lại và không tự bỏ điều kiện bắt buộc.\n"
     "- KHÔNG hỏi khảo sát hẹp hơn để 'lọc chính xác hơn' nếu NGỮ CẢNH ở mức hỏi hiện tại đã cho "
     "thấy không có dữ liệu phù hợp (không có tài liệu, không có tồn kho khớp yêu cầu) — hỏi hẹp "
     "hơn không tự nhiên sinh ra dữ liệu không có sẵn, và khách bấm vào một lựa chọn rồi vẫn nhận "
@@ -307,6 +310,37 @@ SYSTEM_INSTRUCTION_PUBLIC = (
     "thay vì tự chọn một số."
 )
 
+# Cross-audience business safeguards. Kept once so the Sale co-pilot and customer chatbot
+# cannot drift into different legal, feng-shui, or product-capability claims.
+_DOMAIN_SAFETY_RULES = (
+    "\nQUY TẮC NGHIỆP VỤ BỔ SUNG:\n"
+    "- Pháp lý: phân biệt rõ thông tin do bên bán/chủ đầu tư cung cấp với tài liệu đã có trong NGỮ CẢNH; "
+    "không tuyên bố đã xác minh nếu ngữ cảnh không nói vậy, và nhắc kiểm tra hồ sơ tại cơ quan/người có thẩm quyền khi cần.\n"
+    "- Phong thủy: chỉ tư vấn như một góc tham khảo theo tiêu chí khách nêu, không trình bày như kết luận khoa học hay bảo đảm kết quả.\n"
+    "- Hành động hệ thống: không được nói đã lưu căn, bật thông báo, đặt/đổi/hủy lịch, gửi email/Zalo/SMS hay gọi lại nếu không có kết quả công cụ xác nhận hành động đó.\n"
+    "- So sánh và đầu tư: nêu rõ phần đánh đổi, chỉ chấm/xếp hạng theo dữ kiện có thật; không cam kết tăng giá, thanh khoản hoặc lợi nhuận.\n"
+    "- Dấu hiệu lừa đảo: ưu tiên khuyên chưa chuyển tiền, xác minh giấy tờ/chủ thể/tài khoản qua kênh chính thức; không hướng dẫn tiếp tục một giao dịch đáng ngờ."
+)
+_INVENTORY_PRESENTATION_RULES = (
+    "\nTRÌNH BÀY KẾT QUẢ TỒN KHO:\n"
+    "- Khi NGỮ CẢNH có nhiều căn, mở đầu bằng đúng một câu tóm tắt số căn phù hợp và khoảng giá; "
+    "câu này KHÔNG bắt đầu bằng dấu gạch đầu dòng.\n"
+    "- Sau câu tóm tắt, BẮT BUỘC viết MỖI CĂN TRÊN MỘT DÒNG gạch đầu dòng riêng. Tuyệt đối "
+    "không ghép hai hay nhiều mã căn vào cùng một dòng hoặc một câu dài.\n"
+    "- Mỗi dòng dùng mẫu ngắn: Mã căn · Phân khu · Loại căn · Diện tích m² · Giá tỷ đồng · Trạng thái. "
+    "Có thể đặt một dòng tên phân khu trước nhóm căn; không lặp lại câu dẫn dài cho từng căn.\n"
+    "- Viết giá dễ quét như '3,6 tỷ đồng', không viết '3.600.000.000 VNĐ' khi số tiền từ một tỷ đồng trở lên.\n"
+    "- Với yêu cầu tìm/chọn/tư vấn căn chung chung, chỉ liệt kê căn còn trống. Chỉ đưa căn đã đặt chỗ, "
+    "giữ chỗ hoặc đã bán vào kết quả khi người hỏi yêu cầu đúng trạng thái đó, hoặc nêu riêng một câu ngắn "
+    "khi không còn căn trống.\n"
+    "- Nếu có nhiều phân khu, nhóm các dòng theo phân khu để người đọc so sánh; vẫn giữ nguyên quy tắc một căn một dòng."
+    "\n- Không tự gắn điều kiện VAT, phí, diện tích thông thủy/tim tường hoặc thời hạn áp dụng vào một mã căn "
+    "nếu chính bản ghi tồn kho của mã căn đó không có trường tương ứng. Điều kiện chung trong tài liệu/catalogue "
+    "không tự động áp dụng cho một mã căn live khác nguồn."
+)
+SYSTEM_INSTRUCTION = f"{SYSTEM_INSTRUCTION}{_DOMAIN_SAFETY_RULES}{_INVENTORY_PRESENTATION_RULES}"
+SYSTEM_INSTRUCTION_PUBLIC = f"{SYSTEM_INSTRUCTION_PUBLIC}{_DOMAIN_SAFETY_RULES}{_INVENTORY_PRESENTATION_RULES}"
+
 
 class ConsultAnswer(BaseModel):
     """Structured output for SYSTEM_INSTRUCTION_PUBLIC (generate_json, schema-constrained
@@ -384,6 +418,10 @@ def build_prompt(
     is_public: bool = False,
     correction: str = "",
     lessons: str = "",
+    criteria_summary: str = "",
+    zero_result: ZeroResultDiagnosis | None = None,
+    catalog_context: str = "",
+    catalog_offer_context: str = "",
 ) -> str:
     """Build the Generate prompt.
 
@@ -408,6 +446,15 @@ def build_prompt(
             "Đây là sở thích đã ghi nhận, KHÔNG phải dữ liệu dự án. Tuyệt đối không dùng "
             "làm số liệu trả lời và không tự suy ra nhu cầu hiện tại từ nó. Luôn trả lời "
             "đúng câu hỏi được hỏi; nếu câu hỏi mâu thuẫn với ghi nhớ, câu hỏi thắng."
+        )
+
+    if criteria_summary.strip():
+        sections.append(
+            "TIÊU CHÍ ĐANG ÁP DỤNG (trạng thái tìm căn của phiên hiện tại):\n"
+            f"{criteria_summary}\n"
+            "Đây là ràng buộc thật của lượt tìm kiếm này. Không hỏi lại điều đã có ở đây. "
+            "Không mở đầu câu trả lời bằng cách đọc lại toàn bộ danh sách; chỉ nhắc tiêu chí "
+            "thực sự liên quan tới điều vừa được hỏi."
         )
 
     asker = "khách" if is_public else "Sale"
@@ -435,6 +482,12 @@ def build_prompt(
     header = "CÂU HỎI CỦA KHÁCH HÀNG" if is_public else "CÂU HỎI CỦA SALE"
     sections.append(f"{header}:\n{query}")
 
+    if catalog_context.strip():
+        sections.append(catalog_context.strip())
+
+    if catalog_offer_context.strip():
+        sections.append(catalog_offer_context.strip())
+
     if docs:
         bedroom_aliases = _bedroom_aliases_in_context(query, docs)
         prompt_docs = [_annotate_bedroom_aliases(doc, bedroom_aliases) for doc in docs]
@@ -449,19 +502,35 @@ def build_prompt(
             )
 
     if needs_inventory and not inventory_failed:
-        sections.append(f"TỒN KHO REAL-TIME:\n{_format_units(units)}")
+        sections.append(f"TỒN KHO REAL-TIME:\n{_format_units(units, zero_result)}")
 
     if is_public:
+        public_inventory_layout = (
+            "- Khi có TỒN KHO REAL-TIME: dòng đầu nêu đúng tổng số căn phù hợp và khoảng giá; sau đó "
+            "mỗi căn một dòng '- '. Hiển thị tối đa 8 căn dễ so sánh nhất; nếu còn thêm, nói rõ số căn còn lại. "
+            "Nhóm theo phân khu, không ghép nhiều mã căn vào một dòng.\n"
+            if units
+            else ""
+        )
+        catalogue_layout = (
+            "- Khi có cả BẢNG GIÁ CATALOGUE THAM KHẢO và TỒN KHO REAL-TIME, phải dùng CẢ HAI nhưng tách rõ: "
+            "tồn kho là mã căn/trạng thái hiện tại; catalogue là khoảng giá tham khảo theo dự án/loại căn. "
+            "BẮT BUỘC nêu số cụ thể cho 1-2 khoảng liên quan nhất (tên dự án/phân khu · loại căn · "
+            "diện tích · khoảng giá) và không biến khoảng giá thành cam kết còn căn.\n"
+            if catalog_offer_context.strip() and units
+            else ""
+        )
         sections.append(
             "Trả lời câu hỏi trên với vai trò chuyên viên tư vấn đang trò chuyện trực tiếp với "
             "khách, tự nhiên và đúng trọng tâm. Văn bản thuần, không dùng ký tự Markdown nào "
             "(không dấu sao, không thăng) — NÊN có đúng 1 emoji phù hợp ngữ cảnh cho sinh động.\n"
-            "- Viết thành câu tự nhiên; BẮT BUỘC xuống dòng theo gạch đầu dòng, mỗi lựa chọn một "
+            + public_inventory_layout
+            + catalogue_layout
+            + "- Viết thành câu tự nhiên; BẮT BUỘC xuống dòng theo gạch đầu dòng, mỗi lựa chọn một "
             "dòng, ngay khi nêu số liệu của từ 2 lựa chọn trở lên trong cùng tin nhắn — không "
             "nhồi nhiều số liệu vào chung một câu văn dài dù câu đó đọc trôi chảy.\n"
-            "- Nếu ngữ cảnh có nhiều phân khu/tòa/loại căn cùng khớp, đừng liệt kê hết — chỉ nêu "
-            "số liệu đầy đủ cho 1-2 lựa chọn phù hợp nhất, còn lại chỉ nhắc ngắn gọn là còn thêm "
-            "lựa chọn khác.\n"
+            "- Với các lựa chọn chỉ có trong tài liệu/catalogue (không phải mã căn live), nếu có nhiều "
+            "phân khu/tòa/loại căn cùng khớp thì nêu 1-2 lựa chọn phù hợp nhất và nói ngắn gọn là còn thêm.\n"
             "- Nếu câu hỏi còn chung chung và có nhiều lựa chọn khớp, hỏi lại MỘT điều về nhu "
             "cầu trước khi tư vấn cụ thể (không gộp nhiều câu khảo sát vào một tin nhắn); nếu đã "
             "rõ ràng thì trả lời thẳng.\n"
@@ -472,8 +541,8 @@ def build_prompt(
             "đúng từ khoá đó — dù ngữ cảnh không đủ dữ liệu để khẳng định phân khu nào đáp ứng "
             "(lúc đó nói thẳng chưa đủ dữ liệu so sánh theo tiêu chí này), tuyệt đối không im "
             "lặng bỏ qua và chỉ báo giá/diện tích như thể khách chưa từng nói điều đó.\n"
-            "- Kèm điều kiện áp dụng của con số (VAT, diện tích tính theo, mốc thời gian) ngay "
-            "trong câu nêu con số đó.\n"
+            "- Chỉ kèm điều kiện VAT, diện tích tính theo hoặc mốc thời gian khi điều kiện đó nằm "
+            "trong cùng bản ghi/khối nguồn với con số đang nêu; thiếu thì không tự bổ sung.\n"
             "- Không viết tên tài liệu, số trang hay số thứ tự khối ngữ cảnh ([1], [2]) vào câu "
             "trả lời — giao diện đã hiện phần nguồn riêng bên dưới.\n"
             "- Nếu ngữ cảnh chưa có dữ liệu cho phần nào, nói thẳng thay vì suy đoán — nêu đúng "
@@ -490,19 +559,28 @@ def build_prompt(
             + _SUGGESTED_QUESTIONS_RULES.format(asker="khách")
         )
     else:
+        internal_layout = (
+            "- Dòng đầu tiên tóm tắt đúng tổng số căn còn trống và khoảng giá, KHÔNG bắt đầu bằng '- '.\n"
+            "- Sau đó liệt kê ĐỦ mọi căn trong TỒN KHO REAL-TIME, mỗi căn một dòng bắt đầu bằng '- '; "
+            "không bỏ bớt căn và không gộp nhiều căn vào một dòng.\n"
+            if units
+            else (
+                "- Dòng đầu tiên trả lời thẳng điều Sale hỏi, kèm con số chính và KHÔNG bắt đầu bằng '- '.\n"
+                "- Nếu còn nội dung liệt kê, mỗi lựa chọn sau đó mới bắt đầu bằng '- '. Tối đa 6 dòng tổng cộng.\n"
+            )
+        )
         sections.append(
             "Trả lời câu hỏi trên với tư cách chuyên viên tư vấn dự án, ngắn gọn và đúng trọng "
             "tâm như đang brief cho đồng nghiệp sắp gặp khách. Văn bản thuần, không dùng ký tự "
             "Markdown nào (không dấu sao, không thăng).\n"
-            "- Trình bày bằng gạch đầu dòng, mỗi dòng bắt đầu bằng '- '. Tối đa 6 dòng.\n"
-            "- Dòng đầu tiên trả lời thẳng điều Sale hỏi, kèm con số chính.\n"
-            "- Nếu Sale hỏi nhiều ý trong cùng một câu (ví dụ giá VÀ diện tích), phải trả lời đủ từng ý "
+            + internal_layout
+            + "- Nếu Sale hỏi nhiều ý trong cùng một câu (ví dụ giá VÀ diện tích), phải trả lời đủ từng ý "
             "được hỏi. Trước khi nói một ý là chưa có dữ liệu, rà soát toàn bộ các đoạn và bảng trong NGỮ CẢNH; "
             "không được bỏ sót số liệu chỉ vì nó nằm ở một khối ngữ cảnh phía sau.\n"
             "- Bám đúng loại căn / phân khu / tòa mà câu hỏi nhắc tới, đừng trả lời chung chung "
             "cho cả dự án khi Sale đang hỏi một loại căn cụ thể.\n"
-            "- Kèm điều kiện áp dụng của con số (VAT, diện tích tính theo, mốc thời gian) ngay "
-            "trong dòng nêu con số đó, thay vì tách thành dòng riêng.\n"
+            "- Chỉ kèm điều kiện VAT, diện tích tính theo hoặc mốc thời gian khi cùng bản ghi/khối "
+            "nguồn với con số; thiếu thì không tự bổ sung.\n"
             "- Không viết tên tài liệu, số trang hay số thứ tự khối ngữ cảnh ([1], [2]) vào câu "
             "trả lời — giao diện đã hiện phần nguồn riêng bên dưới.\n"
             "- Nếu ngữ cảnh chưa có dữ liệu cho phần nào, nói thẳng trong một dòng thay vì suy đoán.\n"
@@ -544,10 +622,17 @@ def build_prompt(
         )
 
     if needs_inventory and inventory_failed:
-        sections.append(
-            "LIVE INVENTORY STATUS: unavailable. Do not infer stock from project documents; "
-            "state that live inventory could not be checked."
-        )
+        if catalog_offer_context.strip():
+            sections.append(
+                "TỒN KHO THEO MÃ CĂN: chưa có kết nối/mapping real-time đáng tin cậy cho đúng phạm vi đang hỏi. "
+                "Vẫn trả lời bằng BẢNG GIÁ CATALOGUE THAM KHẢO ở trên, ghi rõ đó là khoảng tham khảo; "
+                "không nói hệ thống lỗi và không khẳng định một mã căn cụ thể đang còn."
+            )
+        else:
+            sections.append(
+                "LIVE INVENTORY STATUS: unavailable. Do not infer stock from project documents; "
+                "state that live inventory could not be checked."
+            )
 
     if lessons.strip():
         # Placed before `correction` because it is the weaker instruction of the two: a
@@ -661,13 +746,19 @@ def _format_doc(index: int, doc: dict) -> str:
     return f"{header}\n{doc.get('content') or ''}"
 
 
-def _format_units(units: list[InventoryUnit]) -> str:
+def _format_units(units: list[InventoryUnit], zero_result: ZeroResultDiagnosis | None = None) -> str:
     if not units:
+        if zero_result is not None:
+            return format_zero_result(zero_result)
         return "Hiện không còn căn nào khớp với yêu cầu."
 
+    status_labels = {"available": "còn trống", "reserved": "đã giữ chỗ", "sold": "đã bán"}
     return "\n".join(
-        f"- {unit.unit_code} | loại {unit.unit_type or 'không rõ'} | "
-        f"giá {f'{unit.price:,.0f} VNĐ' if unit.price is not None else 'chưa có'} | {unit.status}"
+        f"- {unit.unit_code} | phân khu {unit.subdivision or 'không rõ'} | "
+        f"loại {unit.unit_type or 'không rõ'} | "
+        f"diện tích {f'{unit.area_m2:g} m²' if unit.area_m2 is not None else 'chưa có'} | "
+        f"giá {f'{unit.price:,.0f} VNĐ' if unit.price is not None else 'chưa có'} | "
+        f"{status_labels.get(unit.status.strip().lower(), unit.status)}"
         for unit in units
     )
 
@@ -675,6 +766,7 @@ def _format_units(units: list[InventoryUnit]) -> str:
 def format_unit_for_verifier(unit: InventoryUnit) -> str:
     """Give the verifier the same live facts that were supplied to the LLM."""
     return (
-        f"Live inventory: {unit.unit_code}; type {unit.unit_type or 'unknown'}; "
+        f"Live inventory: {unit.unit_code}; subdivision {unit.subdivision or 'unknown'}; "
+        f"type {unit.unit_type or 'unknown'}; area {unit.area_m2 if unit.area_m2 is not None else 'unknown'} m2; "
         f"price {unit.price if unit.price is not None else 'unknown'}; status {unit.status}."
     )

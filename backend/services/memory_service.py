@@ -1,16 +1,18 @@
-"""Long-term memory — what we remember about a person across sessions.
+"""Long-term memory — what we remember about a person across conversations.
 
 Short-term working memory (the `history` turns threaded into each prompt) covers the current thread and
 lives in MySQL. This module covers the layer above it: preferences that outlive any one
-conversation, so a returning customer does not have to restate a budget they mentioned
-last week, and a Sale gets their own recurring topics surfaced.
+conversation, so preferences still survive after older turns fall outside the prompt's
+short-term history window.
 
-Two separate namespaces, never mixed:
+Namespaces are never mixed:
 
 - `memory:customer:{id}` — one person's own preferences (budget, unit types, projects
   they keep asking about). Personal to that customer.
-- `memory:sale:{id}` — a Sale's *own* recurring topics, aggregated across the customers
-  they consult for. Personal to that Sale: one Sale never sees another's.
+- `memory:sale-session:{id}` — preferences of the one end customer represented by a
+  Sale consultation session. Two sessions owned by the same Sale never share it.
+- `memory:sale:{id}` — legacy Sale-level namespace retained for compatibility with old
+  callers; the Sale chat router no longer reads or writes this shared profile.
 
 Three rules hold this together, and each exists because breaking it causes a specific
 kind of wrong answer:
@@ -35,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.config import get_settings
 from backend.core.redis_client import get_redis_client
+from backend.utils.text import strip_diacritics
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,11 @@ UNIT_TYPE_PATTERN = re.compile(r"\b(\d\s?PN|studio|shophouse|penthouse|duplex)\b
 
 # "3,6 ty", "3.6 tỷ", "5 ty dong", "800 trieu" — the number plus its unit.
 BUDGET_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu)\b", re.IGNORECASE)
+BUDGET_RANGE_PATTERN = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(?:-|–|đến|den|tới|toi)\s*"
+    r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu)\b",
+    re.IGNORECASE,
+)
 
 # A money figure only counts as *this person's budget* when the sentence says so. Without
 # this gate every price the person merely asked about was stored as their budget: "căn 2PN
@@ -90,7 +98,13 @@ def customer_key(customer_id: int) -> str:
 
 
 def sale_key(sale_id: int) -> str:
+    """Legacy Sale-level key; do not use for customer consultation sessions."""
     return f"memory:sale:{sale_id}"
+
+
+def sale_session_key(session_id: int) -> str:
+    """Long-term profile for the single customer represented by a Sale session."""
+    return f"memory:sale-session:{session_id}"
 
 
 def load_profile(key: str) -> UserProfile:
@@ -143,31 +157,37 @@ def remember(key: str, question: str, project_id: str | None = None, db: Session
     `db` lets the project be recovered from the question itself when the session carries
     no `project_id`, which is now the normal case — see `_resolve_project`.
     """
-    client = get_redis_client()
-    if client is None or not question or not question.strip():
-        return
+    remember_many(key, [question], project_id, db)
 
-    extracted = extract_facts(question, _resolve_project(question, project_id, db))
-    if extracted.is_empty():
+
+def remember_many(
+    key: str,
+    questions: list[str],
+    project_id: str | None = None,
+    db: Session | None = None,
+) -> None:
+    """Fold several oldest-to-newest human questions into one profile and one write.
+
+    Used to backfill a newly session-scoped Sales profile from that session's own MySQL
+    transcript. It never reads the legacy Sale-wide key, which may contain several end
+    customers. One Redis write keeps this rare migration path cheap even for a long chat.
+    """
+    client = get_redis_client()
+    usable = [question for question in questions if question and question.strip()]
+    if client is None or not usable:
         return
 
     try:
-        current = load_profile(key)
-        merged = _merge(current, extracted)
+        merged = load_profile(key)
+        for question in usable:
+            extracted = extract_facts(question)
+            extracted.projects = _resolve_projects(question, project_id, db)
+            if not extracted.is_empty():
+                merged = _merge(merged, extracted)
 
-        client.set(
-            key,
-            json.dumps(
-                {
-                    "unit_types": merged.unit_types,
-                    "budgets": merged.budgets,
-                    "projects": merged.projects,
-                    "topics": merged.topics,
-                },
-                ensure_ascii=False,
-            ),
-            ex=get_settings().memory_ttl_seconds,
-        )
+        if merged.is_empty():
+            return
+        _save_profile(client, key, merged)
     except Exception:
         # The answer being served is already complete; a failed write changes nothing
         # the user sees this turn.
@@ -176,6 +196,22 @@ def remember(key: str, question: str, project_id: str | None = None, db: Session
             exc_info=True,
             extra={"event": "memory.remember.failed", "key": key},
         )
+
+
+def _save_profile(client, key: str, profile: UserProfile) -> None:
+    client.set(
+        key,
+        json.dumps(
+            {
+                "unit_types": profile.unit_types,
+                "budgets": profile.budgets,
+                "projects": profile.projects,
+                "topics": profile.topics,
+            },
+            ensure_ascii=False,
+        ),
+        ex=get_settings().memory_ttl_seconds,
+    )
 
 
 def forget(key: str) -> None:
@@ -213,6 +249,22 @@ def _resolve_project(question: str, project_id: str | None, db: Session | None) 
     from backend.services.answer_images_service import resolve_project_id
 
     return resolve_project_id(db, question)
+
+
+def _resolve_projects(question: str, project_id: str | None, db: Session | None) -> list[str]:
+    """All projects named in one question, or the session's explicit project.
+
+    Comparison questions frequently name two subdivisions; storing only the single best
+    match makes a later "khách quan tâm phân khu nào?" silently omit half the request.
+    """
+    if project_id:
+        return [project_id]
+    if db is None:
+        return []
+
+    from backend.services.answer_images_service import resolve_project_ids
+
+    return resolve_project_ids(db, question)
 
 
 def extract_facts(question: str, project_id: str | None = None) -> UserProfile:
@@ -257,6 +309,11 @@ def _extract_budgets(question: str) -> list[str]:
     if not BUDGET_CONTEXT_PATTERN.search(question) or PRICE_QUESTION_PATTERN.search(question):
         return []
 
+    range_match = BUDGET_RANGE_PATTERN.search(question)
+    if range_match:
+        low, high, unit = range_match.groups()
+        return [f"{low} - {high} {unit.lower()}"]
+
     found: list[str] = []
     for number, unit in BUDGET_PATTERN.findall(question):
         token = f"{number} {unit.lower()}"
@@ -277,10 +334,44 @@ def format_profile(profile: UserProfile) -> str:
     if profile.budgets:
         lines.append(f"- Mức giá từng nhắc tới: {', '.join(profile.budgets)}")
     if profile.projects:
-        lines.append(f"- Dự án từng hỏi: {', '.join(profile.projects)}")
+        lines.append(f"- Dự án từng hỏi: {', '.join(_display_project(item) for item in profile.projects)}")
     if profile.topics:
         lines.append(f"- Chủ đề hay hỏi: {', '.join(profile.topics)}")
     return "\n".join(lines)
+
+
+def format_recall_answer(query: str, profile: UserProfile) -> str:
+    """Answer a customer's-profile recall without RAG or an LLM call."""
+    if profile.is_empty():
+        return (
+            "Mình chưa ghi nhận đủ nhu cầu của khách trong phiên này. "
+            "Anh/chị có thể bổ sung phân khu, loại căn hoặc khoảng tài chính khách đang quan tâm."
+        )
+
+    normalized = strip_diacritics(query)
+    asks_project = any(term in normalized for term in ("phan khu", "du an", "quan tam den dau"))
+    asks_budget = any(term in normalized for term in ("ngan sach", "tai chinh", "tam gia", "bao nhieu tien"))
+    asks_unit = any(term in normalized for term in ("loai can", "can gi", "may phong", "phong ngu"))
+
+    lines: list[str] = []
+    if profile.projects and (asks_project or not (asks_budget or asks_unit)):
+        projects = ", ".join(_display_project(item) for item in profile.projects)
+        lines.append(f"- Phân khu/dự án từng quan tâm: {projects}.")
+    if profile.unit_types and (asks_unit or not (asks_project or asks_budget)):
+        lines.append(f"- Loại căn từng quan tâm: {', '.join(profile.unit_types)}.")
+    if profile.budgets and (asks_budget or not (asks_project or asks_unit)):
+        lines.append(f"- Khoảng tài chính từng đề cập: {', '.join(profile.budgets)}.")
+    if profile.topics and not (asks_project or asks_budget or asks_unit):
+        lines.append(f"- Chủ đề thường hỏi: {', '.join(profile.topics)}.")
+
+    if not lines:
+        return "Mình chưa ghi nhận thông tin đó trong phiên khách hàng này."
+    return "Dựa trên trao đổi trong riêng phiên này, khách đang có các mối quan tâm sau:\n" + "\n".join(lines)
+
+
+def _display_project(project_id: str) -> str:
+    """Turn a catalogue slug into a readable label without another database query."""
+    return " ".join(part.capitalize() for part in project_id.replace("_", "-").split("-") if part)
 
 
 def _merge(current: UserProfile, extracted: UserProfile) -> UserProfile:

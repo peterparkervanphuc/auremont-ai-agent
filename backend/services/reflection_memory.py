@@ -18,10 +18,10 @@ carries the wrong answer along with the right one, and makes every later prompt 
 and more expensive for no gain. A lesson is the compressed form — the same reason the
 slide's "compressed memory" collapses three specific rules into one general one.
 
-Scoped per failure mode rather than per user. A mistake the agent makes is a property of
-the agent, not of whoever happened to ask: a lesson learned while answering one Sale
-should help the next Sale immediately. `memory_service` is the opposite — that one is
-about a person and is namespaced per person.
+The storage API accepts an optional scope. Sale consultation chat always supplies a
+session scope because one session represents one end customer, so neither preferences
+nor learned corrections can cross from customer A into customer B. Callers that omit a
+scope retain the legacy global lesson store.
 
 Fails open exactly like `memory_service`: no Redis, or a corrupt value, means no lesson,
 never a failed answer.
@@ -38,6 +38,17 @@ from backend.core.redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 
 _KEY = "reflection:lessons"
+
+
+def sale_session_scope(session_id: int) -> str:
+    """Stable reflection namespace for one customer's Sale consultation session."""
+    return f"sale-session:{session_id}"
+
+
+def _storage_key(scope: str | None = None) -> str:
+    """Redis key for a reflection scope; no scope preserves legacy global behaviour."""
+    return _KEY if not scope else f"{_KEY}:{scope}"
+
 
 # Hard cap on lessons kept. The whole point is that memory stays short: a prompt carrying
 # twenty lessons costs tokens on every question and buries the current one. When the cap
@@ -82,14 +93,14 @@ class Lesson:
         return f"- Khi {self.trigger}: {self.lesson} ({self.fix})"
 
 
-def load_lessons() -> list[Lesson]:
+def load_lessons(scope: str | None = None) -> list[Lesson]:
     """Every stored lesson. Any failure yields an empty list."""
     client = get_redis_client()
     if client is None:
         return []
 
     try:
-        raw = client.get(_KEY)
+        raw = client.get(_storage_key(scope))
     except Exception:
         logger.warning(
             "Doc reflection memory that bai; coi nhu chua co bai hoc nao.",
@@ -131,7 +142,7 @@ def load_lessons() -> list[Lesson]:
     return lessons
 
 
-def record_lesson(*, query: str, failure_mode: str, feedback: str) -> None:
+def record_lesson(*, query: str, failure_mode: str, feedback: str, scope: str | None = None) -> None:
     """Distil one Verifier rejection into a lesson and store it. Never raises.
 
     Called after a rejection, off the answer's critical path — the Sale already has their
@@ -146,10 +157,10 @@ def record_lesson(*, query: str, failure_mode: str, feedback: str) -> None:
         return
 
     try:
-        lessons = load_lessons()
+        lessons = load_lessons(scope)
         merged = _merge(lessons, _build(trigger, failure_mode, feedback))
         client.set(
-            _KEY,
+            _storage_key(scope),
             json.dumps([_as_dict(item) for item in merged], ensure_ascii=False),
             ex=get_settings().reflection_ttl_seconds,
         )
@@ -161,7 +172,11 @@ def record_lesson(*, query: str, failure_mode: str, feedback: str) -> None:
         )
 
 
-def relevant_lessons(query: str, limit: int = MAX_LESSONS_PER_PROMPT) -> list[Lesson]:
+def relevant_lessons(
+    query: str,
+    limit: int = MAX_LESSONS_PER_PROMPT,
+    scope: str | None = None,
+) -> list[Lesson]:
     """Lessons worth putting in this question's prompt, most useful first.
 
     Matched on trigger-word overlap rather than embeddings: this runs before every
@@ -175,7 +190,7 @@ def relevant_lessons(query: str, limit: int = MAX_LESSONS_PER_PROMPT) -> list[Le
         return []
 
     scored = []
-    for lesson in load_lessons():
+    for lesson in load_lessons(scope):
         overlap = len(words & _keywords(lesson.trigger))
         if overlap >= _MIN_TRIGGER_OVERLAP:
             # Overlap first (is this lesson about this question?), then how often the
@@ -191,14 +206,14 @@ def format_lessons(lessons: list[Lesson]) -> str:
     return "\n".join(lesson.render() for lesson in lessons)
 
 
-def forget_all() -> None:
+def forget_all(scope: str | None = None) -> None:
     """Drop every lesson — the Admin "start over" after reworking prompts or documents."""
     client = get_redis_client()
     if client is None:
         return
 
     try:
-        client.delete(_KEY)
+        client.delete(_storage_key(scope))
     except Exception:
         logger.warning("Xoa reflection memory that bai.", exc_info=True, extra={"event": "reflection.forget.failed"})
 

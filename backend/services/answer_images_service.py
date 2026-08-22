@@ -117,7 +117,9 @@ def wants_images(query: str) -> bool:
     return _contains_phrase(normalized, _LOOK_VERBS) and bool(_subject_tokens(normalized))
 
 
-def collect_images(db: Session, query: str, answer: str) -> list[dict]:
+def collect_images(
+    db: Session, query: str, answer: str, project_id: str | None = None
+) -> list[dict]:
     """Photos to show under this answer — those asked for, or those that illustrate it.
 
     Takes whichever of the two routes in the module docstring applies. `wants_images`
@@ -137,11 +139,16 @@ def collect_images(db: Session, query: str, answer: str) -> list[dict]:
         if not haystack.strip():
             return []
 
-        project = _best_match(db, haystack)
+        # A scoped chat session is authoritative. Project names nest ("The Pavilion -
+        # Vinhomes Ocean Park"), so resolving from prose alone can otherwise select the
+        # longer parent project and attach its maps instead of the named P4 plan.
+        project = db.get(Project, project_id) if project_id else _best_match(db, haystack)
         if project is None:
             return []
 
         details: dict = project.details or {}
+        overview_towers = ((details.get("project") or {}).get("overview") or {}).get("towers") or []
+        known_towers = overview_towers if isinstance(overview_towers, list) else []
         images: dict = details.get("images") or {}
         gallery = [url for url in images.get("gallery") or [] if isinstance(url, str) and url]
         if not gallery:
@@ -149,9 +156,9 @@ def collect_images(db: Session, query: str, answer: str) -> list[dict]:
 
         normalized_query = _normalize(query)
         if wants_images(query):
-            selected = _filter_by_topic(gallery, normalized_query)
+            selected = _filter_by_topic(gallery, normalized_query, known_towers)
         else:
-            selected = _auto_attach_images(gallery, normalized_query)
+            selected = _auto_attach_images(gallery, normalized_query, known_towers)
 
         return [{"url": url, "project_id": project.id, "project_name": project.name} for url in selected]
     except Exception:
@@ -186,7 +193,67 @@ def resolve_project_id(db: Session, text: str) -> str | None:
         return None
 
 
-def _filter_by_topic(gallery: list[str], normalized_query: str) -> list[str]:
+def resolve_project_ids(db: Session, text: str) -> list[str]:
+    """Every catalogue project explicitly named in text, in mention order.
+
+    Unlike `resolve_project_id`, this supports comparison questions that name two or more
+    subdivisions. A parent project is suppressed when its only match is contained inside
+    a longer matched catalogue name.
+    """
+    try:
+        haystack = _normalize(text or "")
+        if not haystack:
+            return []
+
+        matches: list[tuple[int, int, str]] = []
+        for project in db.query(Project).all():
+            candidates = _project_aliases(project)
+
+            occurrences = [
+                (match.start(), len(candidate))
+                for candidate in candidates
+                if len(candidate) >= _MIN_NAME_LENGTH
+                for match in [re.search(rf"(?<!\w){re.escape(candidate)}(?!\w)", haystack)]
+                if match is not None
+            ]
+
+            # Tower codes such as P4 are shorter than the normal project-name safety
+            # threshold. Accept one only when it is explicitly a known tower of exactly
+            # one catalogue project; ambiguous tower codes are discarded below.
+            details = project.details or {}
+            tower_names = _known_project_towers(details)
+            for tower in tower_names:
+                match = re.search(rf"(?<!\w){re.escape(tower)}(?!\w)", haystack)
+                if match is not None:
+                    occurrences.append((match.start(), len(tower)))
+            if occurrences:
+                position, length = min(occurrences, key=lambda item: (item[0], -item[1]))
+                matches.append((position, -length, project.id))
+
+        # A bare tower identifier is useful only when unique. Names/sub-zones with the
+        # same start position remain multiple on purpose (e.g. The Ocean View scopes a
+        # comparison/search across all of its child projects).
+        grouped: dict[tuple[int, int], list[str]] = {}
+        for position, negative_length, project_id in matches:
+            grouped.setdefault((position, negative_length), []).append(project_id)
+        matches = [
+            item
+            for item in matches
+            if -item[1] >= _MIN_NAME_LENGTH or len(grouped[(item[0], item[1])]) == 1
+        ]
+        matches.sort()
+        return list(dict.fromkeys(project_id for _, _, project_id in matches))
+    except Exception:
+        logger.exception(
+            "Could not resolve projects from text.",
+            extra={"event": "answer_images.resolve_projects.failed"},
+        )
+        return []
+
+
+def _filter_by_topic(
+    gallery: list[str], normalized_query: str, known_towers: list[str] | None = None
+) -> list[str]:
     """Narrow the gallery to the topic the question named.
 
     Falls back to the whole gallery in two cases, both deliberate: the question named no
@@ -194,6 +261,14 @@ def _filter_by_topic(gallery: list[str], normalized_query: str) -> list[str]:
     the catalogue has no picture of. Returning nothing to someone who explicitly asked to
     see something is worse than returning that project's photos.
     """
+    exact_tower_tokens = _tower_tokens(normalized_query, known_towers)
+    if exact_tower_tokens:
+        exact = [url for url in gallery if any(token in _normalize_filename(url) for token in exact_tower_tokens)]
+        # A named tower is an exact visual request. Showing another tower because this
+        # one has no uploaded plan is materially misleading, so do not use the usual
+        # requested-photo gallery fallback here.
+        return exact
+
     tokens = _wanted_tokens(normalized_query)
     if not tokens:
         return gallery
@@ -202,7 +277,9 @@ def _filter_by_topic(gallery: list[str], normalized_query: str) -> list[str]:
     return matched or gallery
 
 
-def _auto_attach_images(gallery: list[str], normalized_query: str) -> list[str]:
+def _auto_attach_images(
+    gallery: list[str], normalized_query: str, known_towers: list[str] | None = None
+) -> list[str]:
     """The automatic route's selection: matching photos only, capped.
 
     Two deliberate differences from `_filter_by_topic`, both following from nobody having
@@ -216,6 +293,14 @@ def _auto_attach_images(gallery: list[str], normalized_query: str) -> list[str]:
       illustrate the project without claiming to depict a specific thing, and nothing when
       the catalogue has none of those either.
     """
+    # An exact tower code is a stronger qualifier than the generic subject "tòa". Without
+    # this first pass, "tòa P4" matches every `mat-bang-toa-p*` filename and the cap keeps
+    # P1-P3 while dropping the one image the asker actually named.
+    exact_tower_tokens = _tower_tokens(normalized_query, known_towers)
+    if exact_tower_tokens:
+        exact = [url for url in gallery if any(token in _normalize_filename(url) for token in exact_tower_tokens)]
+        return exact[:_AUTO_ATTACH_MAX_IMAGES]
+
     # Keyed off the SUBJECT, not `_wanted_tokens`: that also returns bedroom qualifiers
     # ("2pn"), and "giá căn 2 phòng ngủ" would then count as naming a visual topic it never
     # named — yielding no photo at all instead of the overview shots, since no filename
@@ -249,6 +334,24 @@ def _wanted_tokens(normalized_query: str) -> list[str]:
     return tokens
 
 
+def _tower_tokens(normalized_query: str, known_towers: list[str] | None = None) -> list[str]:
+    """Exact named tower qualifiers in both dot and hyphen filename conventions."""
+    matched_names = [
+        tower
+        for tower in known_towers or []
+        if isinstance(tower, str)
+        and re.search(rf"(?<!\w){re.escape(_normalize(tower))}(?!\w)", normalized_query)
+    ]
+    if not matched_names:
+        matched_names = re.findall(r"\b(?:toa|tower)\s*([a-z]{1,5}\d+(?:\.\d+)?)\b", normalized_query)
+
+    tokens: list[str] = []
+    for name in matched_names:
+        slug = _normalize(name).replace(" ", "-")
+        tokens.extend((f"toa-{slug}", f"toa-{slug.replace('.', '-')}"))
+    return list(dict.fromkeys(tokens))
+
+
 def _best_match(db: Session, haystack: str) -> Project | None:
     """The project whose name or slug appears in the text, longest match winning.
 
@@ -260,16 +363,38 @@ def _best_match(db: Session, haystack: str) -> Project | None:
     best_length = 0
 
     for project in db.query(Project).all():
-        for candidate in (project.name, project.id):
-            if not candidate:
-                continue
-            normalized = _normalize(candidate.replace("-", " "))
+        for normalized in _project_aliases(project):
             if len(normalized) < _MIN_NAME_LENGTH or normalized not in haystack:
                 continue
             if len(normalized) > best_length:
                 best, best_length = project, len(normalized)
 
     return best
+
+
+def _project_aliases(project: Project) -> set[str]:
+    """All catalogue labels a customer can reasonably use for one project/sub-zone."""
+    details = project.details or {}
+    info = details.get("project") or {}
+    raw = {
+        project.id.replace("-", " "),
+        project.name,
+        project.name.split(" - ", 1)[0] if project.name else None,
+        info.get("name"),
+        info.get("full_name"),
+        info.get("alternate_name"),
+        info.get("sub_zone"),
+    }
+    aliases = {_normalize(str(value)) for value in raw if value}
+    aliases.update(alias.removeprefix("the ") for alias in tuple(aliases))
+    return {alias for alias in aliases if alias}
+
+
+def _known_project_towers(details: dict) -> set[str]:
+    overview = ((details.get("project") or {}).get("overview") or {}).get("towers") or []
+    tower_details = details.get("tower_details") or {}
+    raw = [*(overview if isinstance(overview, list) else []), *tower_details.keys()]
+    return {_normalize(str(value)) for value in raw if value}
 
 
 def _contains_phrase(haystack: str, phrases: tuple[str, ...]) -> bool:

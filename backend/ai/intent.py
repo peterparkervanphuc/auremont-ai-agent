@@ -6,9 +6,23 @@ from a stale PDF. A deterministic rule is auditable and adds no latency; a class
 would add both a failure mode and a round trip to every question.
 """
 
+import re
+
 from backend.utils.text import strip_diacritics
 
 _REALTIME_INTENT_KEYWORDS = (
+    "tìm căn",
+    "lọc căn",
+    "tìm nhà",
+    "lọc nhà",
+    "tìm đất",
+    "lọc đất",
+    "tìm văn phòng",
+    "tìm mặt bằng",
+    "tìm kho",
+    "những căn",
+    "các căn",
+    "cho tôi căn",
     "còn căn",
     "còn bao nhiêu",
     "còn không",
@@ -24,6 +38,24 @@ _REALTIME_INTENT_KEYWORDS = (
     "giữ chỗ",
     "căn nào",
     "suất nào",
+)
+
+# Natural filtering requests often omit an explicit verb: "những căn dưới 5 tỷ", "căn
+# hộ trên 80m2". Keyword-only routing missed these even though the criteria parser read
+# the numeric bound correctly, leaving a valid filter stranded on the document-RAG path.
+_FILTERED_UNIT_QUERY_PATTERN = re.compile(
+    r"\b(?:nhung|cac)\s+can\b|\b(?:can|nha)(?:\s+ho)?\b.{0,32}\b(?:duoi|tren|toi da|toi thieu|tu)\s*\d",
+    re.IGNORECASE,
+)
+
+# A budget/price filter needs both sources: live inventory says what is still available,
+# while public project documents provide the published price ranges used to explain and
+# compare the recommendations. Previously these questions took the inventory-only branch,
+# so a customer asking "tư vấn căn dưới 3 tỷ" never searched the uploaded price material.
+_PRICE_DOCUMENT_QUERY_PATTERN = re.compile(
+    r"\b(?:gia|ngan\s+sach|tam\s+gia)\b"
+    r"|\b(?:duoi|tren|toi\s+da|toi\s+thieu|tu)\b.{0,32}\b(?:ty|ti|trieu|vnd|dong)\b",
+    re.IGNORECASE,
 )
 
 _DOCUMENT_INTENT_KEYWORDS = (
@@ -55,14 +87,59 @@ def needs_inventory(query: str) -> bool:
     counts from a PDF.
     """
     normalized = strip_diacritics(query)
-    return any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS)
+    return any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS) or bool(
+        _FILTERED_UNIT_QUERY_PATTERN.search(normalized)
+    )
 
 
 def needs_document_retrieval(query: str) -> bool:
-    """Keep policy/legal RAG independent from the live-inventory decision."""
+    """Keep document RAG independent from the live-inventory decision.
+
+    Price-filter requests intentionally use both paths: inventory for current availability
+    and uploaded project/price documents for the customer-facing explanation.
+    """
     normalized = strip_diacritics(query)
-    return any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS) or not needs_inventory(
-        query
+    return (
+        any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
+        or bool(_PRICE_DOCUMENT_QUERY_PATTERN.search(normalized))
+        or not needs_inventory(query)
+    )
+
+
+# Questions a Sale asks about the end customer's profile, not about project facts. These
+# must be answered from the session-scoped memory/history before retrieval: sending them
+# to RAG both wastes an embedding call and makes a perfectly answerable recall depend on
+# the document service being healthy.
+_CUSTOMER_MEMORY_REFERENCE_PATTERN = re.compile(
+    r"\b(?:khach(?:\s+hang)?(?:\s+(?:cua\s+toi|nay|do))?|ho\s+so\s+khach|nhu\s+cau\s+khach)\b",
+    re.IGNORECASE,
+)
+_CUSTOMER_MEMORY_ATTRIBUTE_PATTERN = re.compile(
+    r"\b(?:quan\s+tam|nhu\s+cau|ngan\s+sach|tai\s+chinh|tam\s+gia|loai\s+can"
+    r"|phan\s+khu|du\s+an|uu\s+tien|so\s+thich|mong\s+muon|tim\s+mua|muon\s+mua)\b",
+    re.IGNORECASE,
+)
+_MEMORY_RECALL_PATTERN = re.compile(
+    r"\b(?:nao|gi|bao\s+nhieu|ra\s+sao|the\s+nao|nhac\s+lai|tom\s+tat"
+    r"|cho\s+toi\s+biet|xem\s+lai)\b",
+    re.IGNORECASE,
+)
+
+
+def is_customer_memory_query(query: str) -> bool:
+    """True for a Sale recalling the represented customer's profile.
+
+    Requiring a customer reference, a remembered attribute and a recall signal avoids
+    stealing recommendation questions such as "phân khu nào phù hợp với khách của tôi?"
+    or statements such as "khách này quan tâm The Pavilion" from the normal pipeline.
+    """
+    normalized = strip_diacritics(query)
+    if any(term in normalized for term in ("phu hop", "nen chon", "tu van", "de xuat", "goi y")):
+        return False
+    return bool(
+        _CUSTOMER_MEMORY_REFERENCE_PATTERN.search(normalized)
+        and _CUSTOMER_MEMORY_ATTRIBUTE_PATTERN.search(normalized)
+        and _MEMORY_RECALL_PATTERN.search(normalized)
     )
 
 
@@ -79,6 +156,126 @@ def names_specific_document_topic(query: str) -> bool:
     """
     normalized = strip_diacritics(query)
     return any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
+
+
+# Phrases that adjust an existing unit search rather than starting a new topic ("giữ
+# nguyên điều kiện, tăng giá lên 5 tỷ", "bỏ yêu cầu hồ bơi", "quay lại bộ lọc cũ").
+#
+# These matter because accumulated search criteria must NOT be applied to every question.
+# A Sale who has been filtering units and then asks "chính sách thanh toán thế nào?" is
+# changing subject, and silently keeping a 3PN filter on that answer would be wrong. So
+# criteria are only touched when the turn is either an inventory question
+# (`needs_inventory`) or a refinement of one — this list is the second half of that gate.
+_SEARCH_REFINEMENT_KEYWORDS = (
+    "giu nguyen",
+    "van giu",
+    "tang gia",
+    "giam gia",
+    "tang len",
+    "giam xuong",
+    "nang len",
+    "ha xuong",
+    "bo yeu cau",
+    "bo dieu kien",
+    "bo tieu chi",
+    "khong can",
+    "thoi khong can",
+    "doi lai",
+    "thay vao do",
+    "re hon",
+    "dat hon",
+    "rong hon",
+    "nho hon",
+    "gia mem",
+    "de o",
+    "dau tu",
+    "gia dinh",
+    "gia thap den cao",
+    "gia cao den thap",
+    "re nhat",
+    "dat nhat",
+    "dien tich lon nhat",
+    "don gia thap nhat",
+    "quay lai bo loc",
+    "bo loc cu",
+    "dieu kien cu",
+    "xoa bo loc",
+    "xoa toan bo",
+    "xoa tat ca",
+    "bo toan bo",
+    "xoa het dieu kien",
+    "tim lai tu dau",
+    "nhu luc nay",
+)
+
+
+def is_search_refinement(query: str) -> bool:
+    """`True` when the turn adjusts an existing unit search instead of opening a new topic.
+
+    Deliberately narrow. A false positive keeps stale filters alive on an unrelated
+    question — a failure with no visible symptom, because the answer still looks
+    plausible while quietly hiding units. A false negative merely costs the person one
+    repeated condition.
+    """
+    normalized = strip_diacritics(query)
+    return any(keyword in normalized for keyword in _SEARCH_REFINEMENT_KEYWORDS)
+
+
+# Preflight policies cover requests where generation is the wrong tool: unsafe requests
+# must be refused consistently, while unsupported product actions must not be presented as
+# if they succeeded. The return value is a closed code; user-facing wording stays in the
+# pipeline with the other notices.
+_ILLEGAL_REQUEST_KEYWORDS = (
+    "lam gia giay to",
+    "khai gia thap",
+    "tron thue",
+    "lach luat",
+    "ne dieu kien vay",
+    "gia mao giay to",
+)
+_PRIVACY_REQUEST_KEYWORDS = (
+    "so dien thoai chu nha",
+    "cccd chu nha",
+    "thong tin ca nhan chu nha",
+    "thong tin ca nhan cu dan",
+    "danh sach cu dan",
+)
+_DISCRIMINATION_PATTERN = re.compile(
+    r"\b(hang xom|cu dan|khu nay).{0,30}(dan toc|ton giao|quoc tich|nguoi nuoc nao)\b",
+    re.IGNORECASE,
+)
+_SCAM_SIGNAL_KEYWORDS = (
+    "lua dao",
+    "coc truoc khi xem",
+    "khong cho xem giay to",
+    "tai khoan nguoi khac",
+    "nguoi nhan tien khong phai chu",
+    "thu phi xem nha",
+    "moi gioi tu nhan chinh chu",
+)
+_RENTAL_SEARCH_PATTERN = re.compile(
+    r"\b(?:tim|can|muon)\s+(?:can ho|can|nha|phong)?\s*(?:de\s+)?thue\b|\bthue\s+(?:nha|can ho|can|phong)\b",
+    re.IGNORECASE,
+)
+
+
+def preflight_policy(query: str) -> str | None:
+    """A deterministic policy code for requests that should stop before retrieval."""
+    normalized = strip_diacritics(query)
+    if any(keyword in normalized for keyword in _ILLEGAL_REQUEST_KEYWORDS):
+        return "illegal_request"
+    if any(keyword in normalized for keyword in _PRIVACY_REQUEST_KEYWORDS):
+        return "privacy_request"
+    if _DISCRIMINATION_PATTERN.search(normalized):
+        return "discrimination_request"
+    if any(keyword in normalized for keyword in _SCAM_SIGNAL_KEYWORDS):
+        return "scam_warning"
+    # Saving/favourites/notifications are now self-service conversation topics. The
+    # assistant may explain the current capability and keep the criteria in this session;
+    # prompts still forbid claiming that an external notification was actually created.
+    if _RENTAL_SEARCH_PATTERN.search(normalized) and "cho thue" not in normalized:
+        return "rental_out_of_scope"
+    return None
 
 
 # Questions ABOUT the conversation itself rather than about a project ("tôi vừa hỏi gì",
@@ -144,12 +341,22 @@ _CLOSING_INTENT_KEYWORDS = (
     "mặt bằng chi tiết",
     "xem mặt bằng",
     "đặt lịch",
+    "đổi lịch",
+    "hủy lịch",
+    "huỷ lịch",
+    "xác nhận lịch",
+    "nhắc lịch",
     "hẹn xem nhà",
     "hẹn xem căn",
     "đi xem dự án",
     "đi xem thực tế",
     "tư vấn trực tiếp",
     "gọi điện",
+    "gọi video",
+    "gọi lại",
+    "gửi zalo",
+    "gửi sms",
+    "gửi email",
     "số điện thoại",
     "liên hệ em",
     "liên hệ anh",
@@ -210,11 +417,13 @@ _FRUSTRATION_KEYWORDS = (
 
 
 def needs_human_handoff(query: str) -> bool:
-    """`True` when a logged-in customer's question should be handed to a live Sale instead
-    of answered by the AI — a closing-adjacent question, an explicit ask for a human, or a
-    sign of frustration with the AI itself.
+    """`True` when the customer explicitly needs a person or is frustrated with the AI.
+
+    Detailed price, floor-plan and appointment questions are self-service topics and must
+    reach the document pipeline. Treating every closing-adjacent keyword as a handoff made
+    normal budget questions disappear behind a generic "contact Sale" response.
     """
-    if needs_registration_gate(query) or wants_human_agent(query):
+    if wants_human_agent(query):
         return True
     normalized = strip_diacritics(query)
     return any(strip_diacritics(keyword) in normalized for keyword in _FRUSTRATION_KEYWORDS)
