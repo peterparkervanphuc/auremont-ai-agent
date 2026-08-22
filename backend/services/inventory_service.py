@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 INVENTORY_TIMEOUT_SECONDS = 5.0
 
-# Unit types a Sale commonly mentions: "2PN", "3 pn", "2 phòng ngủ",
+# Unit types a Sale commonly mentions: "2PN", "3 pn", "2 phòng ngủ", "2 ngủ",
 # "Penthouse", "Studio", "Shophouse", "Duplex".  The captured bedroom forms
 # are normalised to the API convention (for example, "2 phòng ngủ" -> "2PN").
 # \b at both ends so "21PN" is not mis-matched as "1PN".
@@ -133,7 +133,11 @@ class InventoryUnit:
     view_type: tuple[str, ...] = ()
 
 
-def lookup_inventory(project_id: str | None, query: str) -> list[InventoryUnit]:
+def lookup_inventory(
+    project_id: str | None,
+    query: str,
+    context_queries: list[str] | None = None,
+) -> list[InventoryUnit]:
     """Look up a project's inventory, filtered by the unit type mentioned in the question.
 
     `project_id` is the catalogue slug held on the chat session, or None when the session
@@ -141,6 +145,11 @@ def lookup_inventory(project_id: str | None, query: str) -> list[InventoryUnit]:
     inventory API actually keys units by. None is a normal case, not an error: the session
     flow no longer asks the Sale to pick a project, so the configured catch-all decides
     which project's stock to read.
+
+    ``context_queries`` contains recent human questions, newest first. Each explicit
+    filter in the current query wins; a missing filter may inherit from those questions.
+    This keeps a follow-up like "diện tích 45-70m2" scoped to the previously requested
+    "2 ngủ ở The Sapphire" instead of silently widening back to the whole project.
 
     Returns an empty list when the project has no matching units left — that is a valid
     answer ("there are no 2PN units available"), entirely different from failing to reach
@@ -150,7 +159,7 @@ def lookup_inventory(project_id: str | None, query: str) -> list[InventoryUnit]:
     Raises `InventoryProjectUnresolvedError` (a project no one can resolve — see that
     class) or `InventoryApiError` when data genuinely cannot be fetched from the API.
     """
-    return _apply_query_filters(fetch_units(project_id), query)
+    return _apply_query_filters(fetch_units(project_id), query, context_queries=context_queries)
 
 
 def fetch_units(project_id: str | None) -> list[InventoryUnit]:
@@ -180,8 +189,8 @@ def resolve_api_project_id(project_id: str | None) -> str | None:
     """Translate a catalogue slug into the inventory API's own project code.
 
     The two namespaces are genuinely different: `projects.id` is a catalogue slug per
-    sub-zone (`the-palma`, `hai-au`), while the inventory API groups every one of those
-    under a single project code (`ocean-park-3`) and exposes the sub-zone as
+    sub-zone (`the-sapphire`, `hai-au`), while the current MockAPI groups every one of
+    those under a single project code (`ocp1`) and exposes the sub-zone as
     `subdivision`. Sending the slug through unmapped is a guaranteed 404.
 
     Returns None only when nothing can be resolved — no project on the session and no
@@ -463,6 +472,8 @@ def unit_type_matches(actual: str | None, wanted: str | None) -> bool:
         return False
     if actual_type == wanted_type:
         return True
+    if re.fullmatch(r"\d+PN", wanted_type) and actual_type == f"{wanted_type}+":
+        return True
     minimum = re.fullmatch(r"MIN(\d+)PN\+?", wanted_type)
     maximum = re.fullmatch(r"MAX(\d+)PN\+?", wanted_type)
     actual_bedrooms = re.fullmatch(r"(\d+)PN\+?", actual_type)
@@ -630,14 +641,47 @@ def _apply_one(units: list[InventoryUnit], field_name: str, value) -> list[Inven
     return units
 
 
-def _apply_query_filters(units: list[InventoryUnit], query: str) -> list[InventoryUnit]:
-    """Apply all explicit natural-language filters with AND semantics.
+def _apply_query_filters(
+    units: list[InventoryUnit],
+    query: str,
+    *,
+    context_queries: list[str] | None = None,
+) -> list[InventoryUnit]:
+    """Apply current and inherited natural-language filters with AND semantics.
 
     Kept as the stateless path: one question in, filtered units out, no memory of earlier
     turns. `lookup_inventory` still routes through here, so every existing caller and test
-    behaves exactly as before. The stateful path goes through `apply_criteria` instead.
+    behaves exactly as before. Recent context only supplies fields omitted by the current
+    turn; the stateful path goes through `apply_criteria` instead.
     """
-    type_mentions = _extract_unit_type_mentions(query)
+    filter_queries = [query, *(context_queries or [])]
+
+    # Resolve identifiers against the complete inventory before narrowing by another
+    # field. Otherwise an incompatible unit type can hide an explicitly named
+    # subdivision, and a multi-segment unit code can be mistaken for its prefix.
+    source_units = list(units)
+    wanted_codes = next(
+        (codes for value in filter_queries if (codes := _extract_unit_codes(value, source_units))),
+        set(),
+    )
+    if wanted_codes:
+        units = [unit for unit in units if unit.unit_code in wanted_codes]
+
+    wanted_subdivisions = next(
+        (
+            subdivisions
+            for value in filter_queries
+            if (subdivisions := _extract_subdivisions(value, source_units))
+        ),
+        set(),
+    )
+    if wanted_subdivisions:
+        units = [unit for unit in units if _normalize_text(unit.subdivision) in wanted_subdivisions]
+
+    type_mentions = next(
+        (mentions for value in filter_queries if (mentions := _extract_unit_type_mentions(value))),
+        [],
+    )
     wanted_types = [item for item, excluded in type_mentions if not excluded]
     excluded_types = [item for item, excluded in type_mentions if excluded]
     if wanted_types:
@@ -647,25 +691,26 @@ def _apply_query_filters(units: list[InventoryUnit], query: str) -> list[Invento
             unit for unit in units if not any(unit_type_matches(unit.unit_type, item) for item in excluded_types)
         ]
 
-    wanted_code = _extract_unit_code(query)
-    if wanted_code is not None:
-        units = [unit for unit in units if unit.unit_code.casefold() == wanted_code.casefold()]
-
-    wanted_subdivision = _extract_subdivision(query, units)
-    if wanted_subdivision is not None:
-        units = [unit for unit in units if _normalize_text(unit.subdivision) == wanted_subdivision]
-
-    area_range = _extract_area_range(query)
+    area_range = next(
+        (value for filter_query in filter_queries if (value := _extract_area_range(filter_query)) is not None),
+        None,
+    )
     if area_range is not None:
         minimum, maximum = area_range
         units = [unit for unit in units if unit.area_m2 is not None and minimum <= unit.area_m2 <= maximum]
 
-    price_range = _extract_price_range(query)
+    price_range = next(
+        (value for filter_query in filter_queries if (value := _extract_price_range(filter_query)) is not None),
+        None,
+    )
     if price_range is not None:
         minimum, maximum = price_range
         units = [unit for unit in units if unit.price is not None and minimum <= unit.price <= maximum]
 
-    wanted_status = _extract_status(query)
+    wanted_status = next(
+        (value for filter_query in filter_queries if (value := _extract_status(filter_query)) is not None),
+        None,
+    )
     if wanted_status is not None:
         units = [unit for unit in units if unit.status.strip().lower() == wanted_status]
 
@@ -699,11 +744,81 @@ def _apply_query_filters(units: list[InventoryUnit], query: str) -> list[Invento
     return units
 
 
-def _extract_subdivision(query: str, units: list[InventoryUnit]) -> str | None:
+def _extract_unit_codes(query: str, units: list[InventoryUnit]) -> set[str]:
+    """Exact unit codes mentioned in the query; supports contextual follow-ups."""
+
     normalized_query = _normalize_text(query)
-    candidates = {_normalize_text(unit.subdivision) for unit in units if unit.subdivision}
-    matches = [candidate for candidate in candidates if candidate and candidate in normalized_query]
-    return max(matches, key=len) if matches else None
+    return {
+        unit.unit_code
+        for unit in units
+        if unit.unit_code
+        and re.search(
+            rf"(?<![a-z0-9]){re.escape(_normalize_text(unit.unit_code))}(?![a-z0-9])",
+            normalized_query,
+        )
+    }
+
+
+def _unit_type_matches(unit_type: str | None, wanted_type: str) -> bool:
+    """Match a bedroom family while preserving an explicit ``+1`` request.
+
+    A generic "2 ngủ" includes both 2PN and 2PN+1 because both have two bedrooms.
+    "2PN+1" remains exact so the Sale can still request that layout specifically.
+    """
+
+    normalized_unit_type = _normalize_unit_type(unit_type)
+    if normalized_unit_type == wanted_type:
+        return True
+    return wanted_type.endswith("PN") and normalized_unit_type == f"{wanted_type}+1"
+
+
+def _subdivision_aliases(subdivision: str) -> set[str]:
+    """Return safe human aliases for one inventory subdivision.
+
+    MockAPI stores ``The Sapphire 1`` and ``The Sapphire 2`` separately, while Sales
+    commonly ask for their parent name ``The Sapphire``. Dropping only a leading "The"
+    and a trailing numeric child suffix keeps the alias deterministic and prevents fuzzy
+    matches across unrelated projects.
+    """
+
+    normalized = _normalize_text(subdivision)
+    aliases = {normalized}
+    if normalized.startswith("the "):
+        aliases.add(normalized[4:])
+
+    for alias in tuple(aliases):
+        parent = re.sub(r"\s+\d+$", "", alias).strip()
+        if parent:
+            aliases.add(parent)
+    return aliases
+
+
+def _extract_subdivisions(query: str, units: list[InventoryUnit]) -> set[str]:
+    """Resolve the most specific subdivision alias mentioned in the query.
+
+    Multiple stored children may intentionally share the winning alias: "The Sapphire"
+    selects both Sapphire 1 and 2, while "Sapphire 1" selects only that child.
+    """
+
+    normalized_query = _normalize_text(query)
+    subdivision_aliases: dict[str, set[str]] = {}
+    for unit in units:
+        if not unit.subdivision:
+            continue
+        normalized_subdivision = _normalize_text(unit.subdivision)
+        subdivision_aliases.setdefault(normalized_subdivision, _subdivision_aliases(unit.subdivision))
+
+    matches = [
+        (len(alias), alias, subdivision)
+        for subdivision, aliases in subdivision_aliases.items()
+        for alias in aliases
+        if alias and alias in normalized_query
+    ]
+    if not matches:
+        return set()
+
+    most_specific_length = max(length for length, _, _ in matches)
+    return {subdivision for length, _, subdivision in matches if length == most_specific_length}
 
 
 def _extract_unit_code(query: str) -> str | None:

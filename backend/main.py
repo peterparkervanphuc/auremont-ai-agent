@@ -23,6 +23,7 @@ from backend.models import (  # noqa: F401
     document_relation,
     hitl_log,
     message,
+    observability,
     project,
     user,
 )
@@ -30,6 +31,8 @@ from backend.models import feedback as feedback_model  # noqa: F401
 from backend.routers import (
     admin_conflicts,
     admin_eval,
+    admin_observability,
+    admin_sales,
     admin_settings,
     admin_stats,
     auth,
@@ -110,6 +113,8 @@ app.include_router(feedback.router, prefix="/api/v1")
 app.include_router(admin_eval.router, prefix="/api/v1")
 app.include_router(admin_conflicts.router, prefix="/api/v1")
 app.include_router(admin_stats.router, prefix="/api/v1")
+app.include_router(admin_sales.router, prefix="/api/v1")
+app.include_router(admin_observability.router, prefix="/api/v1")
 app.include_router(admin_settings.router, prefix="/api/v1")
 
 # Public (anonymous visitors + logged-in CUSTOMER accounts) — see backend/routers/customer_chat.py

@@ -123,7 +123,7 @@ def test_project_id_omitted_when_not_given(qdrant):
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
 
     keys = [condition.key for condition in _conditions(qdrant.query_calls[0])]
-    assert keys == ["visibility", "is_current"]
+    assert keys == ["visibility", "review_status", "is_current"]
 
 
 def test_parent_scope_can_include_child_project_documents(qdrant):
@@ -151,18 +151,22 @@ def test_excluded_project_is_removed_without_hiding_global_documents(qdrant):
     )
 
     query_filter = qdrant.query_calls[0]["query_filter"]
-    assert len(query_filter.must_not) == 1
-    condition = query_filter.must_not[0]
-    assert condition.key == "project_id"
+    condition = next(
+        item
+        for item in query_filter.must_not
+        if isinstance(item, models.FieldCondition) and item.key == "project_id"
+    )
     assert list(condition.match.any) == ["the-zenpark"]
 
 
-def test_retrieval_does_not_wait_for_admin_approval(qdrant):
-    """An uploaded document answers immediately — there is no approval step."""
+def test_retrieval_requires_admin_or_policy_approval(qdrant):
+    """A weak LLM suggestion cannot answer before an Admin approves it."""
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
 
-    keys = [condition.key for condition in _conditions(qdrant.query_calls[0])]
-    assert "review_status" not in keys
+    review_condition = next(
+        condition for condition in _conditions(qdrant.query_calls[0]) if condition.key == "review_status"
+    )
+    assert review_condition.match.value == "approved"
 
 
 def test_retrieval_still_excludes_documents_that_are_not_current(qdrant):
@@ -172,6 +176,15 @@ def test_retrieval_still_excludes_documents_that_are_not_current(qdrant):
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
 
     assert _is_current(qdrant.query_calls[0]) is True
+
+
+def test_retrieval_excludes_unclassified_other_documents(qdrant):
+    rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
+
+    excluded = qdrant.query_calls[0]["query_filter"].must_not
+    assert len(excluded) == 1
+    assert excluded[0].key == "category"
+    assert excluded[0].match.value == "other"
 
 
 # --- Truy vấn ------------------------------------------------------------------------
@@ -650,6 +663,7 @@ def live_qdrant(monkeypatch):
         vectors=[[1.0, 0.0, 0.0]],
         sparse_vectors=embed_documents_sparse(["Căn 2PN giá 3.6 tỷ."]),
         review_status="approved",
+        category="price_list",
     )
     vector_store_service.index_document_chunks(
         document_id=2,
@@ -660,6 +674,7 @@ def live_qdrant(monkeypatch):
         vectors=[[0.9, 0.1, 0.0]],
         sparse_vectors=embed_documents_sparse(["Tiện ích nội khu."]),
         review_status="approved",
+        category="subdivision_info",
     )
     return client
 
@@ -694,6 +709,7 @@ def test_live_project_scope_also_includes_global_documents(live_qdrant):
         vectors=[[1.0, 0.0, 0.0]],
         sparse_vectors=embed_documents_sparse(["Hướng dẫn giao dịch chung."]),
         review_status="approved",
+        category="internal_guide",
     )
 
     result = rag_service.retrieve(
@@ -745,6 +761,7 @@ def live_hybrid_qdrant(monkeypatch):
         vectors=[[1.0, 0.0, 0.0]],
         sparse_vectors=embed_documents_sparse([semantic_text]),
         review_status="approved",
+        category="price_list",
     )
     vector_store_service.index_document_chunks(
         document_id=2,
@@ -755,6 +772,7 @@ def live_hybrid_qdrant(monkeypatch):
         vectors=[[0.0, 1.0, 0.0]],
         sparse_vectors=embed_documents_sparse([keyword_text]),
         review_status="approved",
+        category="inventory_snapshot",
     )
     return client
 

@@ -77,6 +77,8 @@ class DocumentResponse(BaseModel):
     classification_reason: str | None = None
     block_reason: str | None = None
     security_findings: list[DocumentSecurityFinding] = Field(default_factory=list)
+    classification_requires_admin_review: bool | None = None
+    classification_version: str | None = None
     classified_at: datetime | None = None
     reviewed_by: int | None = None
     reviewed_at: datetime | None = None

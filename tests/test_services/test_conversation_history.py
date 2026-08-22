@@ -203,6 +203,37 @@ def test_retrieve_separates_history_expansion_from_current_turn_constraints(monk
     assert seen["focus_query"] == "Còn 3PN thì sao?"
 
 
+def test_inventory_context_uses_recent_human_turns_only_newest_first():
+    history = [
+        {"sender": MessageSender.SALE, "content": "Còn căn 2 ngủ ở The Sapphire không?"},
+        {"sender": MessageSender.AGENT, "content": "Hiện có 6 căn, giá từ 2,82 tỷ."},
+        {"sender": MessageSender.SALE, "content": "Diện tích từ 45 đến 70 m2 thì sao?"},
+        {"sender": MessageSender.AGENT, "content": "Để tôi kiểm tra."},
+    ]
+
+    assert agent_pipeline._inventory_context_queries(history) == [
+        "Diện tích từ 45 đến 70 m2 thì sao?",
+        "Còn căn 2 ngủ ở The Sapphire không?",
+    ]
+
+
+def test_inventory_field_follow_up_keeps_live_tool_routing(monkeypatch):
+    monkeypatch.setattr(agent_pipeline, "retrieve", lambda *_args, **_kwargs: [])
+    state = {
+        "query": "Giá bao nhiêu?",
+        "history": [
+            {"sender": MessageSender.SALE, "content": "Còn căn 2 ngủ ở The Sapphire không?"},
+            {"sender": MessageSender.AGENT, "content": "Hiện có 6 căn."},
+        ],
+        "project_id": None,
+        "clearance": DocumentVisibility.INTERNAL,
+    }
+
+    result = agent_pipeline._retrieve(state)
+
+    assert result["needs_inventory"] is True
+
+
 # --- agent_pipeline._verify judges against the same history-expanded query -----------
 
 

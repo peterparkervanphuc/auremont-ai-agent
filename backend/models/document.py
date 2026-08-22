@@ -100,7 +100,15 @@ class Document(Base):
     # security/duplicate lifecycle state is not a business-category explanation.
     block_reason: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     security_findings: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    # The LLM's original safety signal is retained after an Admin reviews the document,
+    # so the audit trail can distinguish an automatic approval from a human decision.
+    # Legacy rows are NULL because the old classifier never produced this signal.
+    classification_requires_admin_review: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    classification_version: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     classified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Canonical business facts extracted by the classifier for semantic conflict
+    # comparison. The JSON shape is versioned by `classification_version`.
+    conflict_facts: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
 
     reviewed_by: Mapped[int | None] = mapped_column(
         Integer,

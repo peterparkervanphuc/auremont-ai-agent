@@ -16,9 +16,11 @@ Traces are also the raw material for `eval/`: `scripts/build_eval_set.py` turns 
 runs into graded cases, which is the "trace runs -> label failures -> build eval set"
 half of the flywheel.
 
-Disabled by default (`TRACING_ENABLED`). Writing is best-effort and never raises: a full
-disk or a read-only mount must degrade observability, never answer a Sale's question with
-a 500.
+The JSONL export is disabled by default (`TRACING_ENABLED`). The Admin dashboard can
+independently persist the same content-free records to MySQL with
+`OBSERVABILITY_METRICS_ENABLED`. Both writes are best-effort and never raise: a full disk,
+read-only mount or metrics outage must degrade observability, never answer a Sale's
+question with a 500.
 """
 
 import json
@@ -95,8 +97,13 @@ class TraceRun:
 
 
 def start_run(*, query_len: int, project_id: str | None, clearance: str) -> TraceRun | None:
-    """Begin tracing one question. Returns None when tracing is off."""
-    if not settings.tracing_enabled:
+    """Begin tracing one question when either trace sink is enabled.
+
+    ``TRACING_ENABLED`` controls the optional JSONL eval/debug export. The Admin
+    dashboard uses the durable MySQL sink controlled by
+    ``OBSERVABILITY_METRICS_ENABLED``; the two can be enabled independently.
+    """
+    if not settings.tracing_enabled and not settings.observability_metrics_enabled:
         return None
 
     run = TraceRun(
@@ -122,6 +129,13 @@ def step(name: str, **fields: Any) -> None:
         run.step(name, **fields)
 
 
+def current_run_id() -> str | None:
+    """Return the active trace id so provider usage can be joined to its pipeline."""
+
+    run = _current_run.get()
+    return run.run_id if run is not None else None
+
+
 def set_outcome(**outcome: Any) -> None:
     """Record how the run ended, without closing it.
 
@@ -134,7 +148,7 @@ def set_outcome(**outcome: Any) -> None:
 
 
 def finish(**outcome: Any) -> None:
-    """Close the run in progress and append it to the trace file."""
+    """Close a run and flush it to every enabled sink, best-effort."""
     run = _current_run.get()
     if run is None:
         return
@@ -142,14 +156,30 @@ def finish(**outcome: Any) -> None:
     _current_run.set(None)
     run.outcome.update(outcome)
 
-    try:
-        _append(run.as_dict())
-    except Exception:  # pragma: no cover - observability must never break a request
-        logger.warning(
-            "Could not write the pipeline trace.",
-            exc_info=True,
-            extra={"event": "tracing.write.failed", "run_id": run.run_id},
-        )
+    record = run.as_dict()
+
+    if settings.observability_metrics_enabled:
+        try:
+            # Lazy import avoids a config/Base/model cycle during application startup.
+            from backend.core.observability_sink import persist_trace_run
+
+            persist_trace_run(record)
+        except Exception:  # pragma: no cover - observability must never break a request
+            logger.warning(
+                "Could not persist the pipeline trace.",
+                exc_info=True,
+                extra={"event": "tracing.persist.failed", "run_id": run.run_id},
+            )
+
+    if settings.tracing_enabled:
+        try:
+            _append(record)
+        except Exception:  # pragma: no cover - observability must never break a request
+            logger.warning(
+                "Could not write the pipeline trace.",
+                exc_info=True,
+                extra={"event": "tracing.write.failed", "run_id": run.run_id},
+            )
 
 
 def _append(record: dict[str, Any]) -> None:

@@ -95,6 +95,23 @@ def test_tracing_disabled_writes_nothing(tmp_path, monkeypatch):
     assert not path.exists()
 
 
+def test_mysql_metrics_can_run_without_jsonl_tracing(tmp_path, monkeypatch):
+    path = tmp_path / "runs.jsonl"
+    persisted: list[dict] = []
+    monkeypatch.setattr(settings, "tracing_enabled", False)
+    monkeypatch.setattr(settings, "observability_metrics_enabled", True)
+    monkeypatch.setattr(settings, "trace_file", str(path))
+    monkeypatch.setattr("backend.core.observability_sink.persist_trace_run", persisted.append)
+    _stub_pipeline(monkeypatch, verdicts=[_verdict(0.9)])
+
+    agent_pipeline.run_pipeline(QUERY)
+
+    assert not path.exists()
+    assert len(persisted) == 1
+    assert persisted[0]["outcome"] == "answered"
+    assert persisted[0]["steps"]
+
+
 # --- "Dung chi log final answer" -------------------------------------------------------
 
 

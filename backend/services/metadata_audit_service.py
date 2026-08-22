@@ -784,15 +784,15 @@ def _document_id(value: Any) -> int | None:
 def _is_quarantined(snapshot: VectorDocumentSnapshot) -> bool:
     if snapshot.point_count <= 0:
         return False
-    rejected = snapshot.payload_values["review_status"].get(
-        _payload_token({"review_status": "rejected"}, "review_status"),
+    approved = snapshot.payload_values["review_status"].get(
+        _payload_token({"review_status": "approved"}, "review_status"),
         0,
     )
     inactive = snapshot.payload_values["is_current"].get(
         _payload_token({"is_current": False}, "is_current"),
         0,
     )
-    return rejected == snapshot.point_count and inactive == snapshot.point_count
+    return approved == 0 and inactive == snapshot.point_count
 
 
 def _is_safe_current_document(document: Any) -> bool:
@@ -800,7 +800,7 @@ def _is_safe_current_document(document: Any) -> bool:
         return False
     if _enum_value(document.status) != DocumentStatus.COMPLETED.value:
         return False
-    if _enum_value(document.review_status) == DocumentReviewStatus.REJECTED.value:
+    if _enum_value(document.review_status) != DocumentReviewStatus.APPROVED.value:
         return False
     return _enum_value(document.legal_status) not in {
         LegalStatus.NOT_YET_EFFECTIVE.value,

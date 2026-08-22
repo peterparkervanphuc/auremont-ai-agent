@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_port: int = Field(default=8000, ge=1, le=65535)
     app_host: str = "0.0.0.0"
+    # Business dashboards group UTC-naive database timestamps by the team's
+    # local calendar day. Keep this configurable for deployments in other regions.
+    business_timezone: str = "Asia/Bangkok"
     log_level: str = "INFO"
     # None = auto-select: JSON in production/staging (machine-readable), plain
     # text in dev (human-readable). Set LOG_JSON=true/false to force one mode
@@ -51,6 +54,25 @@ class Settings(BaseSettings):
     # Gemini
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    # A classification is published without human review only when the model both
+    # declines to request review and reaches this confidence.  Keep the threshold in
+    # configuration so deployments can tighten it after evaluating their own corpus.
+    classification_auto_approve_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
+    # Production-safe default: the LLM only proposes metadata. Chunking, embedding and
+    # retrieval publication begin after an Admin confirms/corrects that proposal.
+    classification_require_admin_approval_before_indexing: bool = True
+    # Hybrid conflict detection keeps deterministic comparisons for exact numeric/text
+    # changes and adds an LLM judge for paraphrases and cross-category business claims.
+    # The judge runs before the MySQL advisory lock; only grounded structured evidence
+    # is persisted while the lock is held.
+    semantic_conflict_detection_enabled: bool = True
+    semantic_conflict_fail_closed: bool = True
+    semantic_conflict_min_confidence: float = Field(default=0.75, ge=0.0, le=1.0)
+    semantic_conflict_max_candidates: int = Field(default=40, ge=1, le=200)
+    semantic_conflict_max_chars_per_document: int = Field(default=48_000, ge=4_000, le=60_000)
+    semantic_conflict_sample_segments: int = Field(default=5, ge=3, le=7)
+    semantic_conflict_max_facts_per_document: int = Field(default=200, ge=1, le=500)
+    semantic_conflict_max_fact_chars_per_document: int = Field(default=32_000, ge=1_000, le=100_000)
 
     # CORS
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
@@ -98,6 +120,16 @@ class Settings(BaseSettings):
     # in production; turn it on while gathering runs to build an eval set from.
     tracing_enabled: bool = False
     trace_file: str = "eval/runs.jsonl"
+    # Durable operational metrics are stored in MySQL and power the Admin dashboard.
+    # This is independent from TRACING_ENABLED: JSONL traces are an optional eval/debug
+    # export, while dashboard metrics must survive a container rebuild.
+    observability_metrics_enabled: bool = False
+    # Used only by the Admin observability dashboard. Defaults to zero instead of
+    # baking a provider price into the app: model pricing changes and deployments
+    # can have negotiated rates. Configure both values to enable cost estimates.
+    token_input_cost_per_million_usd: float = Field(default=0.0, ge=0)
+    token_output_cost_per_million_usd: float = Field(default=0.0, ge=0)
+    admin_presence_window_minutes: int = Field(default=15, ge=1, le=1440)
 
     # Long-term memory (Redis). Ho so ghi nho theo tung nguoi dung — KHONG phai
     # nguon su that: Redis chet thi pipeline van tra loi day du, chi mat ca nhan hoa.
@@ -169,8 +201,8 @@ class Settings(BaseSettings):
     inventory_api_url: str = ""
     inventory_api_key: str = ""
     # Bridges two different project-id namespaces. The `projects` table is keyed by
-    # catalogue slug (`the-palma`, `vinhomes-ocean-park`), while the inventory API keys
-    # units by its own project code (`ocean-park-3`) — a slug sent straight through
+    # catalogue slug (`the-sapphire`, `vinhomes-ocean-park`), while the inventory API keys
+    # units by its own project code (`ocp1`) — a slug sent straight through
     # returns 404 and the Sale sees "Tạm thời không tra được tồn kho" for every project.
     #
     # Format: comma-separated `slug=code` pairs. `*=code` is the catch-all, used for any

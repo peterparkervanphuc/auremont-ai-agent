@@ -8,9 +8,11 @@ import { ZONES } from "../routes/sale/inventory/registry";
 import type { UserRole } from "../types";
 import {
   AlertIcon,
+  ActivityIcon,
   AuremontLogoIcon,
   ChartIcon,
   ChatIcon,
+  CheckIcon,
   ChevronRightIcon,
   DocumentIcon,
   HomeIcon,
@@ -40,7 +42,10 @@ interface AdminNavEntry {
 
 // ADMIN manages the document store and AI quality monitoring; no separate inventory menu.
 const ADMIN_NAV: AdminNavEntry[] = [
+  { to: "/sales", label: "Quản lý Sale", icon: UsersIcon, roles: ["admin"] },
+  { to: "/observability", label: "Giám sát hệ thống", icon: ActivityIcon, roles: ["admin"] },
   { to: "/documents", label: "Kho tài liệu", icon: DocumentIcon, roles: ["admin"] },
+  { to: "/document-review", label: "Duyệt metadata", icon: CheckIcon, roles: ["admin"] },
   { to: "/eval", label: "Chất lượng trả lời", icon: ChartIcon, roles: ["admin"] },
   { to: "/conflicts", label: "Cảnh báo mâu thuẫn", icon: AlertIcon, roles: ["admin"] },
   { to: "/settings", label: "Cài đặt chung", icon: SettingsIcon, roles: ["admin"] },
@@ -92,7 +97,9 @@ export function TopNavbar() {
     setOpenDropdown(null);
   }, [location.pathname]);
 
-  const showLiveInboxNav = role === "sale" || role === "admin";
+  // Admin now manages the queue from /sales, where sessions can be assigned and
+  // re-assigned. The compact live inbox remains the Sale's own work queue.
+  const showLiveInboxNav = role === "sale";
   const [waitingCount, setWaitingCount] = useState(0);
 
   useEffect(() => {
@@ -110,7 +117,7 @@ export function TopNavbar() {
   };
 
   return (
-    <header className={`topnav ${isOverlay ? "topnav--overlay" : ""}`}>
+    <header className={`topnav ${isOverlay ? "topnav--overlay" : ""} ${role === "admin" ? "topnav--admin" : ""}`}>
       <NavLink to={homeHref} className="topnav-brand" onClick={() => setMobileOpen(false)}>
         <AuremontLogoIcon size={28} />
         <span>Auremont</span>

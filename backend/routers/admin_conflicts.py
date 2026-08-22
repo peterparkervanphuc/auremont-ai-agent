@@ -5,14 +5,22 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.core.deps import require_role
-from backend.core.enums import UserRole
+from backend.core.enums import ConflictStatus, UserRole
 from backend.core.mysql_client import get_db
 from backend.models.conflict_flag import ConflictFlag
+from backend.models.document import Document
+from backend.models.project import Project
 from backend.models.user import User
 from backend.repositories.conflict_flag import list_open_conflicts, resolve_conflict
 from backend.repositories.document import get_document
-from backend.schemas.conflict_flag import ConflictFlagResponse, ConflictResolveRequest
+from backend.schemas.conflict_flag import (
+    ConflictDetailResponse,
+    ConflictDocumentSummary,
+    ConflictFlagResponse,
+    ConflictResolveRequest,
+)
 from backend.services.cache_service import clear_cache
+from backend.services.conflict_severity_service import ConflictSeverity, classify_conflict_severity
 from backend.services.vector_store_service import VectorStoreError, update_document_vector_metadata
 
 logger = logging.getLogger(__name__)
@@ -22,10 +30,86 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=list[ConflictFlagResponse])
-async def get_conflicts(db: Session = Depends(get_db)) -> list[ConflictFlag]:
+def _severity(flag: ConflictFlag) -> ConflictSeverity:
+    return classify_conflict_severity(
+        detection_method=flag.detection_method,
+        confidence=flag.confidence,
+        conflict_type=flag.conflict_type,
+        evidence=flag.evidence,
+    )
+
+
+def _document_summary(document: Document) -> ConflictDocumentSummary:
+    return ConflictDocumentSummary(
+        id=document.id,
+        title=document.title,
+        project_id=document.project_id,
+        version_label=document.version_label,
+        issued_date=document.issued_date,
+        effective_date=document.effective_date,
+        uploaded_at=document.uploaded_at,
+        category=str(document.category),
+        visibility=str(document.visibility),
+        summary=document.document_summary,
+        classification_reason=document.classification_reason,
+    )
+
+
+@router.get("", response_model=list[ConflictDetailResponse])
+async def get_conflicts(db: Session = Depends(get_db)) -> list[ConflictDetailResponse]:
     """conflicting documents (e.g. two price-list versions of the same project)."""
-    return list_open_conflicts(db)
+    flags = list_open_conflicts(db)
+    document_ids = {document_id for flag in flags for document_id in (flag.document_id_a, flag.document_id_b)}
+    documents = (
+        {document.id: document for document in db.query(Document).filter(Document.id.in_(document_ids)).all()}
+        if document_ids
+        else {}
+    )
+    project_ids = {document.project_id for document in documents.values() if document.project_id}
+    projects = (
+        {project.id: project for project in db.query(Project).filter(Project.id.in_(project_ids)).all()}
+        if project_ids
+        else {}
+    )
+
+    result = []
+    for flag in flags:
+        document_a = documents.get(flag.document_id_a)
+        document_b = documents.get(flag.document_id_b)
+        # A broken FK should not turn the entire alert centre into a 500. The FK is
+        # enforced in normal deployments, so this only protects old/imported databases.
+        if document_a is None or document_b is None:
+            logger.error(
+                "Conflict %s refers to a missing document.",
+                flag.id,
+                extra={"event": "conflict.document_missing", "conflict_id": flag.id},
+            )
+            continue
+        project_id = document_b.project_id or document_a.project_id
+        result.append(
+            ConflictDetailResponse(
+                id=flag.id,
+                document_id_a=flag.document_id_a,
+                document_id_b=flag.document_id_b,
+                description=flag.description,
+                detection_method=flag.detection_method,
+                confidence=flag.confidence,
+                similarity_score=flag.similarity_score,
+                conflict_type=flag.conflict_type,
+                severity=_severity(flag),
+                evidence=flag.evidence,
+                analysis_version=flag.analysis_version,
+                status=ConflictStatus(flag.status),
+                created_at=flag.created_at,
+                resolved_by=flag.resolved_by,
+                resolved_at=flag.resolved_at,
+                project_id=project_id,
+                project_name=projects[project_id].name if project_id in projects else None,
+                document_a=_document_summary(document_a),
+                document_b=_document_summary(document_b),
+            )
+        )
+    return result
 
 
 @router.post("/{conflict_id}/resolve", response_model=ConflictFlagResponse)
@@ -136,7 +220,7 @@ async def resolve_conflict_flag(
     # keep quoting the version the Admin has just ruled against — exactly the contradiction
     # the conflict flag was raised to end.
     clear_cache()
-    return conflict
+    return ConflictFlagResponse.model_validate(conflict).model_copy(update={"severity": _severity(conflict)})
 
 
 def _restore_vector_metadata(

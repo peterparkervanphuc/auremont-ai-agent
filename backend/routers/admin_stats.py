@@ -1,5 +1,6 @@
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
@@ -17,10 +18,91 @@ from backend.models.hitl_log import HitlLog
 from backend.models.message import Message
 from backend.models.project import Project
 from backend.models.user import User
+from backend.schemas.admin_dashboard import BusinessDashboardResponse
+from backend.services.document_coverage_service import (
+    COVERAGE_CATEGORIES,
+    document_coverage_state,
+    document_matches_project_scope,
+    project_scope_aliases,
+)
 
 router = APIRouter(prefix="/admin/stats", tags=["Admin Stats"], dependencies=[Depends(require_role(UserRole.ADMIN))])
 
 TREND_DAYS = 14
+
+
+def _dashboard_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(get_settings().business_timezone)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
+def _utc_boundary(day: date, zone: ZoneInfo) -> datetime:
+    """Convert a local midnight to the UTC-naive format stored by SQLAlchemy."""
+    return datetime.combine(day, time.min, tzinfo=zone).astimezone(UTC).replace(tzinfo=None)
+
+
+def _local_date(value: datetime, zone: ZoneInfo) -> date:
+    return value.replace(tzinfo=UTC).astimezone(zone).date()
+
+
+def _period_metrics(
+    db: Session,
+    sessions: list[ChatSession],
+    messages: list[Message],
+    sale_by_session: dict[int, int | None],
+) -> dict[str, Any]:
+    """Build one internally consistent snapshot for a group of sessions."""
+    agent_messages = [row for row in messages if row.sender == "agent"]
+    sale_messages = [row for row in messages if row.sender == "sale"]
+    raw_feedback_rows = (
+        db.query(Feedback).filter(Feedback.message_id.in_([row.id for row in agent_messages])).all()
+        if agent_messages
+        else []
+    )
+    # A message may receive more than one feedback row. The latest assessment is
+    # authoritative so one answer never inflates several donut slices at once.
+    latest_feedback: dict[int, Feedback] = {}
+    for row in sorted(raw_feedback_rows, key=lambda item: (item.created_at, item.id)):
+        latest_feedback[row.message_id] = row
+    feedback_rows = list(latest_feedback.values())
+
+    helpful_count = sum(1 for row in feedback_rows if row.type == "helpful")
+    helpful_rate = helpful_count / len(feedback_rows) if feedback_rows else None
+    verified_scores = [row.verifier_score for row in agent_messages if row.verifier_score is not None]
+    verifier_avg = sum(verified_scores) / len(verified_scores) if verified_scores else None
+    hitl_required = [row for row in agent_messages if row.requires_hitl]
+    hitl_message_ids = [row.id for row in hitl_required]
+    hitl_confirmed = (
+        db.query(func.count(func.distinct(HitlLog.message_id)))
+        .filter(HitlLog.message_id.in_(hitl_message_ids), HitlLog.confirmed_at.isnot(None))
+        .scalar()
+        if hitl_message_ids
+        else 0
+    )
+    active_sale_ids = {row.sale_id for row in sessions if row.sale_id is not None}
+    active_sale_ids.update(
+        sale_by_session[row.session_id]
+        for row in sale_messages
+        if row.session_id in sale_by_session and sale_by_session[row.session_id] is not None
+    )
+
+    return {
+        "agent_messages": agent_messages,
+        "sale_messages": sale_messages,
+        "feedback_rows": feedback_rows,
+        "summary": {
+            "sessions": len(sessions),
+            "customers": sum(1 for row in sessions if row.customer_name and row.customer_name.strip()),
+            "questions": len(sale_messages),
+            "active_sales": len(active_sale_ids),
+            "helpful_rate": helpful_rate,
+            "verifier_avg": verifier_avg,
+            "hitl_required": len(hitl_required),
+            "hitl_confirmed": hitl_confirmed,
+        },
+    }
 
 
 def _cumulative_counts(created_dates: list[date], days: int) -> list[int]:
@@ -67,7 +149,7 @@ async def get_admin_trends(db: Session = Depends(get_db)) -> dict:
     }
 
 
-@router.get("/business")
+@router.get("/business", response_model=BusinessDashboardResponse)
 async def get_business_dashboard(
     days: int = Query(default=14, ge=7, le=90),
     project_id: str | None = None,
@@ -80,62 +162,74 @@ async def get_business_dashboard(
     revenue, contracts and conversion rate are intentionally omitted because the
     product does not store those facts yet.
     """
-    today = date.today()
+    zone = _dashboard_timezone()
+    today = datetime.now(UTC).astimezone(zone).date()
     start_day = today - timedelta(days=days - 1)
-    start_at = datetime.combine(start_day, time.min)
+    start_at = _utc_boundary(start_day, zone)
+    end_at = _utc_boundary(today + timedelta(days=1), zone)
+    previous_start_day = start_day - timedelta(days=days)
+    previous_start_at = _utc_boundary(previous_start_day, zone)
 
     # Use the same official-team scope for every business metric. Otherwise the
     # headline session/question totals include Admin and E2E traffic while the
     # active-Sale card excludes it, producing an internally inconsistent dashboard.
-    official_sales = (
-        db.query(User).filter(User.role == "sale", User.is_active.is_(True), ~User.username.like("e2e_sale_%")).all()
-    )
+    official_sales = db.query(User).filter(User.role == "sale", ~User.username.like("e2e_sale_%")).all()
     sale_names = {row.id: row.username for row in official_sales}
     official_sale_ids = set(sale_names)
-    session_query = db.query(ChatSession).filter(
-        ChatSession.created_at >= start_at,
-        ChatSession.sale_id.in_(official_sale_ids),
-    )
+    session_scope = [ChatSession.sale_id.in_(official_sale_ids)]
     if project_id:
-        session_query = session_query.filter(ChatSession.project_id == project_id)
+        session_scope.append(ChatSession.project_id == project_id)
     if sale_id:
-        session_query = session_query.filter(ChatSession.sale_id == sale_id)
-    sessions = session_query.all() if official_sale_ids else []
-    session_ids = [row.id for row in sessions]
-    messages = db.query(Message).filter(Message.session_id.in_(session_ids)).all() if session_ids else []
-    agent_messages = [row for row in messages if row.sender == "agent"]
-    sale_messages = [row for row in messages if row.sender == "sale"]
+        session_scope.append(ChatSession.sale_id == sale_id)
 
-    feedback_rows = (
-        db.query(Feedback).filter(Feedback.message_id.in_([row.id for row in agent_messages])).all()
-        if agent_messages
+    sessions = (
+        db.query(ChatSession)
+        .filter(*session_scope, ChatSession.created_at >= start_at, ChatSession.created_at < end_at)
+        .all()
+        if official_sale_ids
         else []
     )
-    helpful_count = sum(1 for row in feedback_rows if row.type == "helpful")
-    helpful_rate = helpful_count / len(feedback_rows) if feedback_rows else None
-
-    verified_scores = [row.verifier_score for row in agent_messages if row.verifier_score is not None]
-    verifier_avg = sum(verified_scores) / len(verified_scores) if verified_scores else None
-    hitl_required = [row for row in agent_messages if row.requires_hitl]
-    hitl_message_ids = [row.id for row in hitl_required]
-    hitl_confirmed = (
-        db.query(func.count(HitlLog.id))
-        .filter(HitlLog.message_id.in_(hitl_message_ids), HitlLog.confirmed_at.isnot(None))
-        .scalar()
-        if hitl_message_ids
-        else 0
+    previous_sessions = (
+        db.query(ChatSession)
+        .filter(*session_scope, ChatSession.created_at >= previous_start_at, ChatSession.created_at < start_at)
+        .all()
+        if official_sale_ids
+        else []
     )
+    # Messages are filtered by their own timestamp and joined to the scoped Sale
+    # sessions. This keeps long-running sessions accurate without loading all
+    # historical sessions into application memory.
+    period_message_rows = (
+        db.query(Message, ChatSession.sale_id)
+        .join(ChatSession, Message.session_id == ChatSession.id)
+        .filter(
+            *session_scope,
+            Message.created_at >= previous_start_at,
+            Message.created_at < end_at,
+        )
+        .all()
+        if official_sale_ids
+        else []
+    )
+    period_messages = [row[0] for row in period_message_rows]
+    sale_by_session = {row[0].session_id: row[1] for row in period_message_rows if row[0].session_id is not None}
+    current_messages = [row for row in period_messages if start_at <= row.created_at < end_at]
+    previous_messages = [row for row in period_messages if previous_start_at <= row.created_at < start_at]
+    current_period = _period_metrics(db, sessions, current_messages, sale_by_session)
+    agent_messages = current_period["agent_messages"]
+    sale_messages = current_period["sale_messages"]
+    feedback_rows = current_period["feedback_rows"]
+    previous_summary = _period_metrics(db, previous_sessions, previous_messages, sale_by_session)["summary"]
 
     activity = []
     for offset in range(days):
         day = start_day + timedelta(days=offset)
-        day_sessions = [row for row in sessions if row.created_at.date() == day]
-        day_session_ids = {row.id for row in day_sessions}
+        day_sessions = [row for row in sessions if _local_date(row.created_at, zone) == day]
         activity.append(
             {
                 "date": day.isoformat(),
                 "sessions": len(day_sessions),
-                "questions": sum(1 for row in sale_messages if row.session_id in day_session_ids),
+                "questions": sum(1 for row in sale_messages if _local_date(row.created_at, zone) == day),
             }
         )
 
@@ -165,10 +259,10 @@ async def get_business_dashboard(
         sale_counts[row.sale_id]["sessions"] += 1
         if row.customer_name and row.customer_name.strip():
             sale_counts[row.sale_id]["customers"] += 1
-    session_sale = {row.id: row.sale_id for row in sessions}
     for row in sale_messages:
-        sale_id = session_sale.get(row.session_id) if row.session_id is not None else None
-        if sale_id in sale_counts:
+        sale_id = sale_by_session.get(row.session_id) if row.session_id is not None else None
+        if sale_id in official_sale_ids:
+            sale_counts.setdefault(sale_id, {"sessions": 0, "customers": 0})
             sale_counts[sale_id].setdefault("questions", 0)
             sale_counts[sale_id]["questions"] += 1
     top_sales = [
@@ -193,7 +287,7 @@ async def get_business_dashboard(
     quality_trend = []
     for offset in range(days):
         day = start_day + timedelta(days=offset)
-        day_answers = [row for row in agent_messages if row.created_at.date() == day]
+        day_answers = [row for row in agent_messages if _local_date(row.created_at, zone) == day]
         faithfulness = [row.faithfulness for row in day_answers if row.faithfulness is not None]
         relevancy = [row.answer_relevancy for row in day_answers if row.answer_relevancy is not None]
         quality_trend.append(
@@ -204,23 +298,23 @@ async def get_business_dashboard(
             }
         )
 
-    coverage_categories = ["sales_policy", "price_list", "floor_plan", "legal_document", "payment_schedule"]
-    documents = db.query(Document).filter(Document.project_id.isnot(None)).all()
+    # Keep all documents here: company-wide uploads can still carry precise
+    # ``subdivision_names`` metadata and therefore cover a subdivision row.
+    documents = db.query(Document).all()
     document_coverage: list[dict[str, Any]] = []
-    for project in projects:
-        project_documents = [row for row in documents if row.project_id == project.id and row.is_current]
+    coverage_projects = [project for project in projects if not project_id or project.id == project_id]
+    for project in coverage_projects:
+        project_aliases = project_scope_aliases(project)
+        project_documents = [
+            row for row in documents if document_matches_project_scope(row, project, project_aliases)
+        ]
         categories = {}
-        for category in coverage_categories:
+        for category in COVERAGE_CATEGORIES:
             matching = [row for row in project_documents if row.category == category]
-            # Completed is all it takes: there is no approval step between ingestion and
-            # answering, so a "pending review" state would never be reachable.
-            if any(row.status == "completed" for row in matching):
-                state = "ready"
-            elif matching:
-                state = "unavailable"
-            else:
-                state = "missing"
-            categories[category] = state
+            categories[category] = document_coverage_state(
+                matching,
+                retrieval_project_id=project.id,
+            )
         document_coverage.append(
             {
                 "project_id": project.id,
@@ -231,24 +325,38 @@ async def get_business_dashboard(
         )
     document_coverage.sort(key=lambda item: (-item["ready_count"], item["name"]))
 
+    selected_coverage_project = next((project for project in projects if project.id == project_id), None)
+    ready_documents = sum(
+        1
+        for document in documents
+        if document.is_current
+        and document.status == "completed"
+        and document.review_status == "approved"
+        and (
+            selected_coverage_project is None
+            or document.project_id == selected_coverage_project.id
+        )
+    )
+    summary = current_period["summary"]
+    summary["ready_documents"] = ready_documents
+
     return {
         "period_days": days,
+        "period": {
+            "current_start": start_day.isoformat(),
+            "current_end": today.isoformat(),
+            "previous_start": previous_start_day.isoformat(),
+            "previous_end": (start_day - timedelta(days=1)).isoformat(),
+            "timezone": zone.key,
+        },
         "applied_filters": {"project_id": project_id, "sale_id": sale_id},
         "filter_options": {
             "projects": [{"id": row.id, "name": row.name} for row in projects],
             "sales": [{"id": row.id, "username": row.username} for row in official_sales],
         },
         "verifier_threshold": get_settings().verifier_threshold_sale,
-        "summary": {
-            "sessions": len(sessions),
-            "customers": sum(1 for row in sessions if row.customer_name and row.customer_name.strip()),
-            "questions": len(sale_messages),
-            "active_sales": len(sale_counts),
-            "helpful_rate": helpful_rate,
-            "verifier_avg": verifier_avg,
-            "hitl_required": len(hitl_required),
-            "hitl_confirmed": hitl_confirmed,
-        },
+        "summary": summary,
+        "previous_summary": previous_summary,
         "activity": activity,
         "top_projects": top_projects,
         "top_sales": top_sales,
@@ -256,8 +364,8 @@ async def get_business_dashboard(
         "quality_trend": quality_trend,
         "hitl_funnel": {
             "answers": len(agent_messages),
-            "required": len(hitl_required),
-            "confirmed": hitl_confirmed,
+            "required": summary["hitl_required"],
+            "confirmed": summary["hitl_confirmed"],
         },
         "document_coverage": document_coverage[:8],
     }

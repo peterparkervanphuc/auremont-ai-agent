@@ -59,6 +59,13 @@ def test_schedule_changes_use_the_existing_human_handoff_flow():
     assert needs_registration_gate("Hủy lịch xem nhà giúp tôi")
 
 
+def test_inventory_field_questions_reach_live_mockapi():
+    assert needs_inventory("Có căn diện tích từ 45 đến 70 m2 không?")
+    assert needs_inventory("Giá căn OCP1-S1-0203 là bao nhiêu?")
+    assert needs_inventory("Kiểm tra trạng thái unit_code OCP1-S2-0303")
+    assert not needs_inventory("Cho tôi xin bảng giá chi tiết")
+
+
 def test_needs_registration_gate_matches_closing_questions():
     assert needs_registration_gate("Cho mình xin bảng giá chi tiết với ạ")
     assert needs_registration_gate("con can gui bang gia chi tiet khong")  # no diacritics

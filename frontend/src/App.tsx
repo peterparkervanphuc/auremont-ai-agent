@@ -23,6 +23,8 @@ import { DocumentRelationsTab } from "./routes/admin/DocumentRelationsTab";
 import { EvalTab } from "./routes/admin/EvalTab";
 import { ConflictsTab } from "./routes/admin/ConflictsTab";
 import { SettingsTab } from "./routes/admin/SettingsTab";
+import { SalesManagementPage } from "./routes/admin/SalesManagementPage";
+import { ObservabilityPage } from "./routes/admin/ObservabilityPage";
 import { NotFound } from "./routes/NotFound";
 
 /** Admin gets its own dashboard; Sale and Customer see the chat-oriented home page. */
@@ -112,6 +114,22 @@ function AppShell() {
           />
 
           {/* ADMIN-only area */}
+          <Route
+            path="/sales"
+            element={
+              <ProtectedRoute allowedRole="admin">
+                <SalesManagementPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/observability"
+            element={
+              <ProtectedRoute allowedRole="admin">
+                <ObservabilityPage />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/documents"
             element={

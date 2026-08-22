@@ -13,6 +13,9 @@ services:
       QDRANT_URL: http://qdrant:6333
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
+      # Persist Admin tool/token/trace metrics in MySQL. JSONL tracing remains an
+      # independent opt-in export for eval/debug datasets.
+      OBSERVABILITY_METRICS_ENABLED: ${OBSERVABILITY_METRICS_ENABLED:-true}
       # Browser-facing address for loading public images. Must be localhost, not
       # `minio:9000` — the <img> tag runs on the host machine, not in the Docker network.
       MINIO_PUBLIC_ENDPOINT: localhost:9000

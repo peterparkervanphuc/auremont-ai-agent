@@ -5,6 +5,8 @@ pydantic[email]>=2.10.0
 pydantic-settings>=2.7.0
 python-dotenv>=1.0.0
 python-multipart>=0.0.12
+# IANA timezone database for ZoneInfo on Windows/minimal containers.
+tzdata>=2025.2
 
 # AI orchestration
 # Pinned to the 1.x line: agent_pipeline uses the LangGraph 1.x StateGraph API, which

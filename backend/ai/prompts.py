@@ -766,27 +766,25 @@ def _format_units(units: list[InventoryUnit], zero_result: ZeroResultDiagnosis |
             return format_zero_result(zero_result)
         return "Hiện không còn căn nào khớp với yêu cầu."
 
-    status_labels = {"available": "còn trống", "reserved": "đã giữ chỗ", "sold": "đã bán"}
-    return "\n".join(
-        f"- {unit.unit_code} | phân khu {unit.subdivision or 'không rõ'} | "
-        f"tòa {unit.tower or 'chưa có'} | tầng {unit.floor or 'chưa có'} | "
-        f"loại {unit.unit_type or 'không rõ'} | "
-        f"diện tích {f'{unit.area_m2:g} m²' if unit.area_m2 is not None else 'chưa có'} | "
-        f"hướng {unit.direction or 'chưa có'} | "
-        f"view {', '.join(unit.view_type) if unit.view_type else 'chưa có'} | "
-        f"giá {f'{unit.price:,.0f} VNĐ' if unit.price is not None else 'chưa có'} | "
-        f"{status_labels.get(unit.status.strip().lower(), unit.status)}"
-        for unit in units
+    return "\n".join(f"- {_format_unit_fields(unit)}" for unit in units)
+
+
+def _format_unit_fields(unit: InventoryUnit) -> str:
+    """Expose every supported MockAPI field with stable names for Generate and Verify."""
+
+    area = f"{unit.area_m2:g}" if unit.area_m2 is not None else "unknown"
+    price = f"{unit.price:.0f}" if unit.price is not None else "unknown"
+    view = ", ".join(unit.view_type) if unit.view_type else "unknown"
+    return (
+        f"unit_code={unit.unit_code} | project_id={unit.project_id} | "
+        f"subdivision={unit.subdivision or 'unknown'} | tower={unit.tower or 'unknown'} | "
+        f"floor={unit.floor or 'unknown'} | unit_type={unit.unit_type or 'unknown'} | "
+        f"area_m2={area} | direction={unit.direction or 'unknown'} | view_type={view} | "
+        f"price_vnd={price} | status={unit.status} | "
+        f"diện tích {area} m² | phân khu {unit.subdivision or 'chưa xác định'}"
     )
 
 
 def format_unit_for_verifier(unit: InventoryUnit) -> str:
     """Give the verifier the same live facts that were supplied to the LLM."""
-    return (
-        f"Live inventory: {unit.unit_code}; subdivision {unit.subdivision or 'unknown'}; "
-        f"tower {unit.tower or 'unknown'}; floor {unit.floor or 'unknown'}; "
-        f"type {unit.unit_type or 'unknown'}; area {unit.area_m2 if unit.area_m2 is not None else 'unknown'} m2; "
-        f"direction {unit.direction or 'unknown'}; "
-        f"view {', '.join(unit.view_type) if unit.view_type else 'unknown'}; "
-        f"price {unit.price if unit.price is not None else 'unknown'}; status {unit.status}."
-    )
+    return f"Live inventory: {_format_unit_fields(unit)}."

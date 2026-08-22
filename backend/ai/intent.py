@@ -38,6 +38,39 @@ _REALTIME_INTENT_KEYWORDS = (
     "giữ chỗ",
     "căn nào",
     "suất nào",
+    # Queries over fields exposed by the live MockAPI. These must never fall back to a
+    # stale document just because the Sale did not include the words "tồn kho".
+    "mã căn",
+    "diện tích",
+    "giá căn",
+    "trạng thái",
+    "loại căn",
+    "unit_code",
+    "project_id",
+    "subdivision",
+    "unit_type",
+    "area_m2",
+    "price_vnd",
+    "status",
+    "m2",
+    "m²",
+)
+
+_INVENTORY_FOLLOWUP_FIELD_KEYWORDS = (
+    "mã căn",
+    "diện tích",
+    "giá",
+    "trạng thái",
+    "loại căn",
+    "unit_code",
+    "project_id",
+    "subdivision",
+    "unit_type",
+    "area_m2",
+    "price_vnd",
+    "status",
+    "m2",
+    "m²",
 )
 
 # Natural filtering requests often omit an explicit verb: "những căn dưới 5 tỷ", "căn
@@ -102,6 +135,13 @@ def needs_inventory(query: str) -> bool:
     return any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS) or bool(
         _FILTERED_UNIT_QUERY_PATTERN.search(normalized)
     )
+
+
+def mentions_inventory_followup_field(query: str) -> bool:
+    """Whether a follow-up asks for another field of the inventory rows already in scope."""
+
+    normalized = strip_diacritics(query)
+    return any(strip_diacritics(keyword) in normalized for keyword in _INVENTORY_FOLLOWUP_FIELD_KEYWORDS)
 
 
 def needs_document_retrieval(query: str) -> bool:

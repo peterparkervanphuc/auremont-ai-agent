@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend.core.deps import get_current_user
 from backend.core.enums import (
+    ConflictStatus,
     DocumentCategory,
     DocumentReviewStatus,
     DocumentStatus,
@@ -16,10 +17,15 @@ from backend.core.enums import (
 )
 from backend.core.mysql_client import Base, get_db
 from backend.main import app
+from backend.models.conflict_flag import ConflictFlag
+from backend.models.document import Document
+from backend.models.project import Project
 from backend.models.user import User
 from backend.repositories.document import create_document
 from backend.routers import documents as documents_router
 from backend.schemas.document import DocumentCreate
+from backend.services import ingestion_service
+from backend.services.parser_service import ParsedSection
 
 
 @pytest.fixture
@@ -74,7 +80,7 @@ def sale(db_session):
 
 
 @pytest.fixture
-def client(db_session, admin):
+def client(db_session, admin, monkeypatch):
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_current_user] = lambda: admin
     # API tests exercise the DB contract; Qdrant is tested independently.
@@ -83,6 +89,24 @@ def client(db_session, admin):
     vector_sync_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     documents_router.update_document_vector_metadata = lambda *args, **kwargs: vector_sync_calls.append((args, kwargs))
     documents_router.clear_cache = lambda: None
+    monkeypatch.setattr(ingestion_service, "_read_original_file", lambda _key: b"stored-file")
+    monkeypatch.setattr(
+        ingestion_service,
+        "parse_document",
+        lambda _title, _data: [ParsedSection(text="Nội dung kiểm thử hợp lệ.", page=1)],
+    )
+    monkeypatch.setattr(ingestion_service, "delete_document_vectors", lambda _document_id: None)
+    monkeypatch.setattr(ingestion_service, "_embed_and_index", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        ingestion_service,
+        "scan_conflicts_for",
+        lambda *_args, **_kwargs: ingestion_service.ConflictScanOutcome(),
+    )
+    monkeypatch.setattr(
+        ingestion_service,
+        "update_document_vector_metadata",
+        lambda *args, **kwargs: vector_sync_calls.append((args, kwargs)),
+    )
 
     test_client = TestClient(app)
     test_client.vector_sync_calls = vector_sync_calls
@@ -133,6 +157,56 @@ def test_metadata_list_returns_every_ingested_document(
     assert processing.id not in document_ids
 
 
+def test_upload_rejects_unknown_project_before_creating_document(client, db_session):
+    before = db_session.query(Document).count()
+
+    response = client.post(
+        "/api/v1/documents/upload",
+        data={"project_id": "project-does-not-exist"},
+        files={"file": ("metadata.pdf", b"%PDF-1.4\n", "application/pdf")},
+    )
+
+    assert response.status_code == 422
+    assert "does not exist" in response.json()["detail"]
+    assert db_session.query(Document).count() == before
+
+
+def test_upload_reports_ai_quota_as_actionable_service_unavailable(client, monkeypatch):
+    from backend.services.ingestion_service import (
+        AI_SERVICE_QUOTA_PUBLIC_MESSAGE,
+        DocumentAIQuotaExceededError,
+    )
+
+    def quota_exhausted(*_args, **_kwargs):
+        try:
+            raise RuntimeError("provider payload with secret-key-value")
+        except RuntimeError as exc:
+            raise DocumentAIQuotaExceededError() from exc
+
+    monkeypatch.setattr(documents_router, "ingest_uploaded_document", quota_exhausted)
+
+    response = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("metadata.pdf", b"%PDF-1.4\n", "application/pdf")},
+    )
+
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "60"
+    assert response.json()["detail"] == AI_SERVICE_QUOTA_PUBLIC_MESSAGE
+    assert "secret-key-value" not in response.text
+    assert "Gemini" not in response.text
+
+
+def test_admin_document_catalog_includes_projects_without_marketing_details(client, db_session):
+    db_session.add(Project(id="internal-project", name="Internal Project", details=None))
+    db_session.commit()
+
+    response = client.get("/api/v1/documents/project-catalog")
+
+    assert response.status_code == 200, response.text
+    assert {item["id"] for item in response.json()} >= {"internal-project"}
+
+
 def test_admin_can_approve_project_document_classification(
     client,
     db_session,
@@ -142,6 +216,7 @@ def test_admin_can_approve_project_document_classification(
         db_session,
         DocumentCreate(
             title="CSBH The Beverly T8.pdf",
+            file_path="documents/test/csbh.pdf",
             category=DocumentCategory.SALES_POLICY,
             subdivision_names=["The Beverly"],
             building_codes=["BE1", "BE2"],
@@ -150,6 +225,8 @@ def test_admin_can_approve_project_document_classification(
         uploaded_by=admin.id,
     )
     document.status = DocumentStatus.COMPLETED
+    document.is_current = False
+    document.classification_requires_admin_review = True
     db_session.commit()
 
     response = client.patch(
@@ -181,6 +258,8 @@ def test_admin_can_approve_project_document_classification(
     assert body["effective_date"] == "2026-08-01"
     assert body["reviewed_by"] == admin.id
     assert body["reviewed_at"] is not None
+    assert body["is_current"] is True
+    assert [metadata["is_current"] for _args, metadata in client.vector_sync_calls] == [True]
 
 
 def test_classification_approval_preserves_conflict_quarantine(
@@ -190,11 +269,29 @@ def test_classification_approval_preserves_conflict_quarantine(
 ):
     document = create_document(
         db_session,
-        DocumentCreate(title="CSBH can Admin chon.pdf", category=DocumentCategory.SALES_POLICY),
+        DocumentCreate(
+            title="CSBH can Admin chon.pdf",
+            file_path="documents/test/conflict.pdf",
+            category=DocumentCategory.SALES_POLICY,
+        ),
         uploaded_by=admin.id,
     )
     document.status = DocumentStatus.COMPLETED
     document.is_current = False
+    sibling = create_document(
+        db_session,
+        DocumentCreate(title="CSBH đang mâu thuẫn.pdf", category=DocumentCategory.SALES_POLICY),
+        uploaded_by=admin.id,
+    )
+    sibling.status = DocumentStatus.COMPLETED
+    sibling.review_status = DocumentReviewStatus.APPROVED
+    db_session.add(
+        ConflictFlag(
+            document_id_a=document.id,
+            document_id_b=sibling.id,
+            status=ConflictStatus.OPEN,
+        )
+    )
     db_session.commit()
 
     response = client.patch(
@@ -214,6 +311,7 @@ def test_metadata_can_be_edited_more_than_once(client, db_session, admin):
         uploaded_by=admin.id,
     )
     document.status = DocumentStatus.COMPLETED
+    document.review_status = DocumentReviewStatus.APPROVED
     db_session.commit()
     payload = {"category": "sales_policy", "legal_status": "unknown"}
 
@@ -280,11 +378,97 @@ def test_structural_classification_changes_require_controlled_reindex_or_rescan(
     assert client.vector_sync_calls == []
 
 
+def test_controlled_correction_accepts_live_project_category_and_scope(
+    client,
+    db_session,
+    admin,
+    monkeypatch,
+):
+    project = Project(id="the-beverly", name="The Beverly")
+    db_session.add(project)
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Can Admin sua scope.pdf", category=DocumentCategory.OTHER),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+    captured: dict[str, object] = {}
+
+    def controlled_correction(db, *, document_id, category, reviewed_by, metadata_updates):
+        captured.update(
+            document_id=document_id,
+            category=category,
+            reviewed_by=reviewed_by,
+            metadata_updates=metadata_updates,
+        )
+        document.category = category
+        document.project_id = metadata_updates["project_id"]
+        document.subdivision_names = metadata_updates["subdivision_names"]
+        document.review_status = DocumentReviewStatus.APPROVED
+        return document
+
+    monkeypatch.setattr(documents_router, "reclassify_document", controlled_correction)
+
+    response = client.post(
+        f"/api/v1/documents/{document.id}/reclassify",
+        json={
+            "category": "price_list",
+            "project_id": "the-beverly",
+            "subdivision_names": ["The Beverly"],
+            "building_codes": ["BE1"],
+            "unit_types": ["2PN"],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert captured["category"] == DocumentCategory.PRICE_LIST
+    assert captured["reviewed_by"] == admin.id
+    assert captured["metadata_updates"] == {
+        "project_id": "the-beverly",
+        "subdivision_names": ["The Beverly"],
+        "building_codes": ["BE1"],
+        "unit_types": ["2PN"],
+    }
+
+
+def test_controlled_correction_rejects_stale_project_before_starting(
+    client,
+    db_session,
+    admin,
+    monkeypatch,
+):
+    document = create_document(
+        db_session,
+        DocumentCreate(title="Sai project.pdf", category=DocumentCategory.OTHER),
+        uploaded_by=admin.id,
+    )
+    document.status = DocumentStatus.COMPLETED
+    db_session.commit()
+    called = False
+
+    def should_not_start(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("controlled correction must not start")
+
+    monkeypatch.setattr(documents_router, "reclassify_document", should_not_start)
+
+    response = client.post(
+        f"/api/v1/documents/{document.id}/reclassify",
+        json={"category": "other", "project_id": "deleted-project"},
+    )
+
+    assert response.status_code == 422
+    assert called is False
+
+
 def test_classification_patch_preserves_omitted_suggested_metadata(client, db_session, admin):
     document = create_document(
         db_session,
         DocumentCreate(
             title="CSBH giu metadata.pdf",
+            file_path="documents/test/preserve.pdf",
             category=DocumentCategory.SALES_POLICY,
             building_codes=["BE1"],
             version_label="V2",
@@ -304,25 +488,27 @@ def test_classification_patch_preserves_omitted_suggested_metadata(client, db_se
     assert response.json()["version_label"] == "V2"
 
 
-def test_classification_quarantine_failure_rolls_back_without_activating(
+def test_classification_index_failure_keeps_pending_document_unapproved(
     client,
     db_session,
     admin,
+    monkeypatch,
 ):
     document = create_document(
         db_session,
-        DocumentCreate(title="CSBH rollback.pdf", category=DocumentCategory.SALES_POLICY),
+        DocumentCreate(
+            title="CSBH rollback.pdf",
+            file_path="documents/test/rollback.pdf",
+            category=DocumentCategory.SALES_POLICY,
+        ),
         uploaded_by=admin.id,
     )
     document.status = DocumentStatus.COMPLETED
     db_session.commit()
-    calls: list[dict[str, object]] = []
-
-    def fail_quarantine(_document_id, **metadata):
-        calls.append(metadata)
+    def fail_index(*_args, **_kwargs):
         raise documents_router.VectorStoreError("Qdrant unavailable")
 
-    documents_router.update_document_vector_metadata = fail_quarantine
+    monkeypatch.setattr(ingestion_service, "_embed_and_index", fail_index)
 
     response = client.patch(
         f"/api/v1/documents/{document.id}/classification",
@@ -333,19 +519,24 @@ def test_classification_quarantine_failure_rolls_back_without_activating(
     db_session.expire_all()
     stored = db_session.get(type(document), document.id)
     assert stored.review_status == DocumentReviewStatus.PENDING
-    assert len(calls) == 1
-    assert calls[0]["review_status"] == DocumentReviewStatus.APPROVED
-    assert calls[0]["is_current"] is False
+    assert stored.is_current is False
+    assert client.vector_sync_calls[-1][1]["review_status"] == DocumentReviewStatus.PENDING
+    assert client.vector_sync_calls[-1][1]["is_current"] is False
 
 
 def test_classification_activation_failure_leaves_approved_document_quarantined(
     client,
     db_session,
     admin,
+    monkeypatch,
 ):
     document = create_document(
         db_session,
-        DocumentCreate(title="CSBH activation fail.pdf", category=DocumentCategory.SALES_POLICY),
+        DocumentCreate(
+            title="CSBH activation fail.pdf",
+            file_path="documents/test/activation.pdf",
+            category=DocumentCategory.SALES_POLICY,
+        ),
         uploaded_by=admin.id,
     )
     document.status = DocumentStatus.COMPLETED
@@ -357,7 +548,7 @@ def test_classification_activation_failure_leaves_approved_document_quarantined(
         if metadata["is_current"]:
             raise documents_router.VectorStoreError("Qdrant unavailable")
 
-    documents_router.update_document_vector_metadata = fail_activation
+    monkeypatch.setattr(ingestion_service, "update_document_vector_metadata", fail_activation)
 
     response = client.patch(
         f"/api/v1/documents/{document.id}/classification",
@@ -368,7 +559,8 @@ def test_classification_activation_failure_leaves_approved_document_quarantined(
     db_session.expire_all()
     stored = db_session.get(type(document), document.id)
     assert stored.review_status == DocumentReviewStatus.APPROVED
-    assert calls == [False, True]
+    assert stored.is_current is False
+    assert calls == [True, False]
 
 
 def test_tightening_visibility_updates_qdrant_before_mysql(
@@ -443,10 +635,15 @@ def test_loosening_visibility_quarantines_then_publishes_fresh_state(
 ):
     document = create_document(
         db_session,
-        DocumentCreate(title="Tai lieu noi bo.pdf", visibility="internal"),
+        DocumentCreate(
+            title="Tai lieu noi bo.pdf",
+            visibility="internal",
+            category=DocumentCategory.INTERNAL_GUIDE,
+        ),
         uploaded_by=admin.id,
     )
     document.status = DocumentStatus.COMPLETED
+    document.review_status = DocumentReviewStatus.APPROVED
     db_session.commit()
     calls: list[dict[str, object]] = []
     documents_router.update_document_vector_metadata = lambda _document_id, **metadata: calls.append(metadata)
@@ -542,7 +739,11 @@ def test_admin_can_approve_legal_document_classification(
 ):
     document = create_document(
         db_session,
-        DocumentCreate(title="Nghi dinh 96 2024 ND CP.pdf", category=DocumentCategory.LEGAL_DOCUMENT),
+        DocumentCreate(
+            title="Nghi dinh 96 2024 ND CP.pdf",
+            file_path="documents/test/legal.pdf",
+            category=DocumentCategory.LEGAL_DOCUMENT,
+        ),
         uploaded_by=admin.id,
     )
     document.status = DocumentStatus.COMPLETED
@@ -576,7 +777,11 @@ def test_approving_not_yet_effective_legal_document_keeps_it_quarantined(
 ):
     document = create_document(
         db_session,
-        DocumentCreate(title="Nghi dinh tuong lai.pdf", category=DocumentCategory.LEGAL_DOCUMENT),
+        DocumentCreate(
+            title="Nghi dinh tuong lai.pdf",
+            file_path="documents/test/future-legal.pdf",
+            category=DocumentCategory.LEGAL_DOCUMENT,
+        ),
         uploaded_by=admin.id,
     )
     document.status = DocumentStatus.COMPLETED
@@ -592,7 +797,7 @@ def test_approving_not_yet_effective_legal_document_keeps_it_quarantined(
 
     assert response.status_code == 200, response.text
     assert response.json()["is_current"] is False
-    assert [metadata["is_current"] for _args, metadata in client.vector_sync_calls] == [False, False]
+    assert [metadata["is_current"] for _args, metadata in client.vector_sync_calls] == [False]
 
 
 def test_sale_cannot_approve_document_classification(

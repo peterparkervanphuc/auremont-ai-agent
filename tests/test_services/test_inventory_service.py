@@ -99,6 +99,175 @@ def test_filters_by_vietnamese_bedroom_phrase(mock_get):
 
 
 @patch("httpx.get")
+def test_current_mockapi_query_filters_colloquial_bedrooms_and_parent_subdivision(mock_get, monkeypatch):
+    """The Sapphire groups children 1/2 and "2 ngủ" includes both 2PN layouts."""
+    mock_get.return_value = _response(
+        [
+            {
+                "unit_code": "OCP1-S1-0203",
+                "project_id": "ocp1",
+                "subdivision": "The Sapphire 1",
+                "unit_type": "2PN",
+                "status": "available",
+            },
+            {
+                "unit_code": "OCP1-S2-0303",
+                "project_id": "ocp1",
+                "subdivision": "The Sapphire 2",
+                "unit_type": "2PN+1",
+                "status": "available",
+            },
+            {
+                "unit_code": "OCP1-PA-0202",
+                "project_id": "ocp1",
+                "subdivision": "The Pavilion",
+                "unit_type": "2PN",
+                "status": "available",
+            },
+        ]
+    )
+    monkeypatch.setattr(settings, "inventory_project_map", "*=ocp1")
+
+    result = lookup_inventory(None, "Còn căn 2 ngủ nào trống ở The Sapphire không?")
+
+    assert mock_get.call_args.kwargs["params"] == {"project_id": "ocp1"}
+    assert [unit.unit_code for unit in result] == ["OCP1-S1-0203", "OCP1-S2-0303"]
+
+
+@patch("httpx.get")
+def test_specific_subdivision_child_wins_over_parent_alias(mock_get):
+    mock_get.return_value = _response(
+        [
+            {
+                "unit_code": "S1",
+                "project_id": "ocp1",
+                "subdivision": "The Sapphire 1",
+                "unit_type": "2PN+1",
+                "status": "available",
+            },
+            {
+                "unit_code": "S2",
+                "project_id": "ocp1",
+                "subdivision": "The Sapphire 2",
+                "unit_type": "2PN+1",
+                "status": "available",
+            },
+        ]
+    )
+
+    result = lookup_inventory("ocp1", "Sapphire 1 còn căn 2PN+1 không?")
+
+    assert [unit.unit_code for unit in result] == ["S1"]
+
+
+@patch("httpx.get")
+def test_named_subdivision_with_no_matching_type_does_not_leak_other_subdivisions(mock_get):
+    mock_get.return_value = _response(
+        [
+            {
+                "unit_code": "NT-BT",
+                "project_id": "ocp1",
+                "subdivision": "Ngọc Trai",
+                "unit_type": "BTDL",
+                "status": "available",
+            },
+            {
+                "unit_code": "S1-2PN",
+                "project_id": "ocp1",
+                "subdivision": "The Sapphire 1",
+                "unit_type": "2PN",
+                "status": "available",
+            },
+        ]
+    )
+
+    assert lookup_inventory("ocp1", "Ngọc Trai còn căn 2 ngủ không?") == []
+
+
+@patch("httpx.get")
+def test_follow_up_inherits_subdivision_type_and_status_but_uses_current_area(mock_get):
+    """Area follow-up remains scoped to the six available 2-bedroom Sapphire units."""
+    mock_get.return_value = _response(
+        [
+            {
+                "unit_code": "S1-MATCH",
+                "project_id": "ocp1",
+                "subdivision": "The Sapphire 1",
+                "unit_type": "2PN",
+                "area_m2": 54,
+                "status": "available",
+            },
+            {
+                "unit_code": "S2-TOO-LARGE",
+                "project_id": "ocp1",
+                "subdivision": "The Sapphire 2",
+                "unit_type": "2PN+1",
+                "area_m2": 75,
+                "status": "available",
+            },
+            {
+                "unit_code": "PAVILION-MATCH",
+                "project_id": "ocp1",
+                "subdivision": "The Pavilion",
+                "unit_type": "2PN",
+                "area_m2": 60,
+                "status": "available",
+            },
+            {
+                "unit_code": "S1-SOLD",
+                "project_id": "ocp1",
+                "subdivision": "The Sapphire 1",
+                "unit_type": "2PN",
+                "area_m2": 60,
+                "status": "sold",
+            },
+        ]
+    )
+
+    result = lookup_inventory(
+        "ocp1",
+        "có căn nào diện tích khoảng 45 đến 70 m2 không",
+        context_queries=["Còn căn 2 ngủ nào trống ở The Sapphire không?"],
+    )
+
+    assert [unit.unit_code for unit in result] == ["S1-MATCH"]
+
+
+@patch("httpx.get")
+def test_exact_unit_code_query_and_follow_up_read_one_record(mock_get):
+    mock_get.return_value = _response(
+        [
+            {
+                "unit_code": "OCP1-S1-0203",
+                "project_id": "ocp1",
+                "subdivision": "The Sapphire 1",
+                "unit_type": "2PN",
+                "area_m2": 54,
+                "price": 2_880_000_000,
+                "status": "available",
+            },
+            {
+                "unit_code": "OCP1-S2-0203",
+                "project_id": "ocp1",
+                "subdivision": "The Sapphire 2",
+                "unit_type": "2PN",
+                "area_m2": 53.8,
+                "price": 2_820_000_000,
+                "status": "available",
+            },
+        ]
+    )
+
+    result = lookup_inventory(
+        "ocp1",
+        "diện tích căn đó bao nhiêu?",
+        context_queries=["Cho tôi mã OCP1-S1-0203"],
+    )
+
+    assert [(unit.unit_code, unit.area_m2) for unit in result] == [("OCP1-S1-0203", 54.0)]
+
+
+@patch("httpx.get")
 def test_returns_all_units_when_question_has_no_unit_type(mock_get):
     """Hỏi chung chung thì không lọc — để Agent tự tóm tắt toàn bảng hàng."""
     mock_get.return_value = _response(MOCK_UNITS)

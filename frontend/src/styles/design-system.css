@@ -11,6 +11,7 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
 
   --bg: #0e1c2e;
+  --bg-1: var(--bg);
   --bg-2: #13233a;
   --bg-3: #1a2e47;
   --bg-glass: rgba(220, 235, 250, 0.04);
@@ -25,6 +26,7 @@
   --accent: #0050ef;
   --accent-2: #0a2e7a;
   --teal: #0f9aa8;
+  --cyan: var(--teal);
   --sage: #34946f;
   --emerald: #10b981;
   --amber: #f59e0b;
@@ -42,6 +44,7 @@
   --glow-accent: 0 0 40px rgba(0, 80, 239, 0.14);
   --glow-accent-2: 0 0 40px rgba(10, 46, 122, 0.12);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.24);
+  --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.14);
 
   /* Vertical rhythm between content blocks. Zone pages stack 20+ blocks in a
      row, so a shared scale keeps the page breathing instead of each block

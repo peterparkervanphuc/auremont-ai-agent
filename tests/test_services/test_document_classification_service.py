@@ -1,318 +1,328 @@
 from datetime import date
 
+import pytest
+from google.genai import errors as genai_errors
+from pydantic import ValidationError
+
 from backend.core.enums import DocumentCategory, LegalStatus
+from backend.services import document_classification_service as classification_service
 from backend.services.document_classification_service import (
-    classify_document,
+    ConflictFact,
+    DocumentClassification,
+    DocumentClassificationError,
+    DocumentClassificationQuotaError,
 )
 
 
-def test_classifies_sales_policy_with_project_scope():
-    result = classify_document(
+def _classification(**overrides) -> DocumentClassification:
+    values = {
+        "category": DocumentCategory.SUBDIVISION_INFO,
+        "document_summary": "Tổng quan phân khu The Beverly.",
+        "legal_status": LegalStatus.UNKNOWN,
+        "confidence": 0.94,
+        "reason": "Tiêu đề và nội dung chính mô tả tổng quan phân khu.",
+        "requires_admin_review": False,
+    }
+    values.update(overrides)
+    return DocumentClassification(**values)
+
+
+def test_classifier_uses_gemini_structured_output_as_the_authoritative_result(monkeypatch):
+    expected = _classification(
+        category=DocumentCategory.SALES_POLICY,
+        subdivision_names=["The Beverly"],
+        building_codes=["BE1"],
+        unit_types=["1PN+", "2PN", "3PN"],
+        effective_date=date(2026, 8, 1),
+        expiry_date=date(2026, 8, 31),
+    )
+    call: dict = {}
+
+    def fake_generate_json(prompt, schema, system_instruction=None, **generation_options):
+        call.update(
+            prompt=prompt,
+            schema=schema,
+            system_instruction=system_instruction,
+            generation_options=generation_options,
+        )
+        return expected
+
+    monkeypatch.setattr(classification_service, "generate_json", fake_generate_json)
+
+    result = classification_service.classify_document(
         "CSBH_The_Beverly_T8_2026.pdf",
-        """
-        CHÍNH SÁCH BÁN HÀNG
-        Phân khu: The Beverly
-        Áp dụng từ 01/08/2026 đến 31/08/2026.
-        Dành cho căn 1PN+, 2PN và 3PN tại tòa BE1.
-        """,
+        "CHÍNH SÁCH BÁN HÀNG\nPhân khu: The Beverly\nTòa BE1",
     )
 
-    assert result.category == DocumentCategory.SALES_POLICY
-    assert result.subdivision_names == ["The Beverly"]
-    assert result.building_codes == ["BE1"]
-    assert result.unit_types == ["1PN+", "2PN", "3PN"]
-    assert result.effective_date == date(2026, 8, 1)
-    assert result.expiry_date == date(2026, 8, 31)
-    assert result.confidence >= 0.9
+    assert result is expected
+    assert call["schema"] is DocumentClassification
+    assert "CSBH_The_Beverly_T8_2026.pdf" in call["prompt"]
+    assert "CHÍNH SÁCH BÁN HÀNG" in call["prompt"]
+    assert "KHÔNG ĐÁNG TIN CẬY" in call["system_instruction"]
+    assert "subdivision_info" in call["system_instruction"]
+    assert call["generation_options"] == {"temperature": 0.0}
 
 
-def test_classifies_price_list():
-    result = classify_document(
-        "Bang_gia_The_Beverly.pdf",
-        "BẢNG GIÁ bán căn hộ phân khu The Beverly.",
+def test_classifier_supplies_catalog_and_accepts_only_an_exact_project_id(monkeypatch):
+    expected = _classification(project_id="the-beverly", subdivision_names=["The Beverly"])
+    captured: dict = {}
+
+    def fake_generate_json(prompt, _schema, **_kwargs):
+        captured["prompt"] = prompt
+        return expected
+
+    monkeypatch.setattr(classification_service, "generate_json", fake_generate_json)
+
+    result = classification_service.classify_document(
+        "Beverly.pdf",
+        "Tổng quan phân khu The Beverly",
+        project_catalog=[
+            {"id": "the-beverly", "name": "The Beverly - Vinhomes Ocean Park"},
+            {"id": "the-zurich", "name": "The Zurich - Vinhomes Ocean Park"},
+        ],
     )
 
-    assert result.category == DocumentCategory.PRICE_LIST
-    assert result.confidence >= 0.88
+    assert result.project_id == "the-beverly"
+    assert '"id":"the-beverly"' in captured["prompt"]
 
 
-def test_extracts_legal_document_metadata():
-    result = classify_document(
-        "Nghi_dinh_96_2024_ND_CP.pdf",
-        """
-        NGHỊ ĐỊNH 96/2024/NĐ-CP
-        CỦA CHÍNH PHỦ
+def test_classifier_quarantines_an_invented_project_id(monkeypatch):
+    expected = _classification(project_id="du-an-khong-ton-tai")
+    monkeypatch.setattr(classification_service, "generate_json", lambda *_args, **_kwargs: expected)
 
-        Quy định chi tiết một số điều của Luật Kinh doanh bất động sản.
-        Nghị định này có hiệu lực thi hành kể từ ngày 01/08/2024.
-        """,
+    result = classification_service.classify_document(
+        "du-an.pdf",
+        "Nội dung tài liệu",
+        project_catalog=[{"id": "the-beverly", "name": "The Beverly"}],
     )
 
-    assert result.category == DocumentCategory.LEGAL_DOCUMENT
-    assert result.legal_document_type == "Nghị định"
-    assert result.legal_document_number == "96/2024/NĐ-CP"
-    assert result.legal_issuer == "Chính phủ"
-    assert result.legal_domain == "Kinh doanh bất động sản"
-    assert result.effective_date == date(2024, 8, 1)
-    assert result.legal_status == LegalStatus.EFFECTIVE
-    assert result.confidence >= 0.97
-    assert result.requires_admin_review is False
-
-
-def test_future_legal_effective_date_is_not_yet_effective():
-    result = classify_document(
-        "Nghi_dinh_123_2099_ND_CP.pdf",
-        """
-        NGHỊ ĐỊNH 123/2099/NĐ-CP
-        CỦA CHÍNH PHỦ
-        Nghị định này có hiệu lực thi hành kể từ ngày 01/01/2099.
-        """,
-    )
-
-    assert result.effective_date == date(2099, 1, 1)
-    assert result.legal_status == LegalStatus.NOT_YET_EFFECTIVE
-
-
-def test_expired_legal_document_is_not_marked_effective():
-    result = classify_document(
-        "Nghi_dinh_10_2020_ND_CP.pdf",
-        """
-        NGHỊ ĐỊNH 10/2020/NĐ-CP
-        CỦA CHÍNH PHỦ
-        Có hiệu lực từ 01/01/2020 và hết hiệu lực kể từ 01/01/2021.
-        """,
-    )
-
-    assert result.expiry_date == date(2021, 1, 1)
-    assert result.legal_status == LegalStatus.EXPIRED
-
-
-def test_body_only_legal_signature_still_requires_admin_review():
-    result = classify_document(
-        "6f42d13e-1908-4a30-a828-e197c1c673db.pdf",
-        """
-        NGHỊ ĐỊNH 96/2024/NĐ-CP
-        CỦA CHÍNH PHỦ
-        Quy định chi tiết một số điều của Luật Kinh doanh bất động sản.
-        """,
-    )
-
-    assert result.category == DocumentCategory.LEGAL_DOCUMENT
-    assert result.confidence <= 0.85
+    assert result.project_id is None
     assert result.requires_admin_review is True
+    assert "không tồn tại" in result.reason
 
 
-def test_unknown_document_stays_other():
-    result = classify_document(
-        "ghi_chu_cuoc_hop.pdf",
-        "Nội dung trao đổi chung, không có từ khóa tài liệu dự án.",
+def test_classifier_discards_conflict_fact_without_verbatim_source_evidence(monkeypatch):
+    expected = _classification(
+        conflict_facts=[
+            ConflictFact(
+                fact_key="payment.deadline",
+                claim="Thanh toan trong 45 ngay.",
+                value="45",
+                unit="day",
+                polarity="affirmative",
+                evidence="Thanh toan trong 45 ngay",
+            )
+        ]
+    )
+    monkeypatch.setattr(classification_service, "generate_json", lambda *_args, **_kwargs: expected)
+
+    result = classification_service.classify_document(
+        "payment.pdf",
+        "Tai lieu chi ghi thanh toan trong 30 ngay.",
+    )
+
+    assert result.conflict_facts == []
+    assert result.requires_admin_review is True
+    assert "discarded" in result.reason
+
+
+def test_response_schema_avoids_fields_rejected_by_gemini():
+    schema = DocumentClassification.model_json_schema()
+
+    assert "additionalProperties" not in schema
+    assert "maxItems" not in schema
+
+
+def test_classification_caps_conflict_facts_after_structured_decoding():
+    result = _classification(
+        conflict_facts=[
+            ConflictFact(
+                fact_key=f"payment.installment.{index}",
+                claim=f"Thanh toan dot {index}.",
+                value=str(index),
+                polarity="affirmative",
+                evidence=f"Thanh toan dot {index}",
+            )
+            for index in range(205)
+        ]
+    )
+
+    assert len(result.conflict_facts) == 200
+
+
+def test_classifier_has_no_local_keyword_override(monkeypatch):
+    """Even an obvious filename uses the API result; there is no hidden rule fallback."""
+
+    expected = _classification(
+        category=DocumentCategory.OTHER,
+        confidence=0.41,
+        reason="Tài liệu không đủ nội dung để xác định mục đích chính.",
+        requires_admin_review=True,
+    )
+    monkeypatch.setattr(classification_service, "generate_json", lambda *_args, **_kwargs: expected)
+
+    result = classification_service.classify_document(
+        "Bang_Gia_The_Zurich.pdf",
+        "Một đoạn nội dung không đầy đủ.",
     )
 
     assert result.category == DocumentCategory.OTHER
-    assert result.confidence == 0.3
+    assert result.confidence == 0.41
 
 
-def test_filename_signal_without_body_confirmation_is_not_auto_approved():
-    result = classify_document(
-        "CSBH_noi_bo.pdf",
-        "Tài liệu làm việc. Nội dung đang được tổng hợp và chưa có tiêu đề chính thức.",
+def test_classifier_sends_the_full_parsed_content(monkeypatch):
+    marker = "EVIDENCE_AFTER_OLD_12000_CHARACTER_LIMIT"
+    raw_text = ("A" * 12_500) + marker
+    captured: dict = {}
+
+    def fake_generate_json(prompt, _schema, system_instruction=None, **_generation_options):
+        captured["prompt"] = prompt
+        captured["system_instruction"] = system_instruction
+        return _classification()
+
+    monkeypatch.setattr(classification_service, "generate_json", fake_generate_json)
+
+    classification_service.classify_document("du-an.pdf", raw_text)
+
+    assert marker in captured["prompt"]
+
+
+def test_classification_model_normalizes_optional_strings_and_lists():
+    result = _classification(
+        subcategory="  Căn hộ   cao cấp ",
+        subdivision_names=[" The Beverly ", "the beverly", "", "The Zurich"],
+        building_codes=[" BE1 ", "be1"],
+        unit_types=[" 2BR ", "2pn", "3 phòng ngủ"],
+        applicable_area="   ",
+        reason="  Có   tiêu đề rõ ràng.  ",
     )
 
-    assert result.category == DocumentCategory.SALES_POLICY
-    assert result.confidence == 0.85
-    assert "Admin" in result.reason
+    assert result.subcategory == "Căn hộ cao cấp"
+    assert result.subdivision_names == ["The Beverly", "The Zurich"]
+    assert result.building_codes == ["BE1"]
+    assert result.unit_types == ["2PN", "3PN"]
+    assert result.applicable_area is None
+    assert result.reason == "Có tiêu đề rõ ràng."
 
 
-def test_sales_policy_mentioning_a_decision_is_not_a_legal_document():
-    """LEGAL_DOCUMENT khớp 'quyet dinh' và đứng đầu bảng rule.
-
-    Với first-match, một CSBH bình thường nhắc "theo quyết định của Chủ đầu tư" sẽ bị
-    xếp thành văn bản luật, rồi bị cắt bằng splitter Điều/Khoản — sai hoàn toàn với
-    cấu trúc một file chính sách.
-    """
-    result = classify_document(
-        "Chinh_sach_ban_hang_The_Beverly.pdf",
-        """
-        CHÍNH SÁCH BÁN HÀNG THÁNG 08/2026
-        Mức chiết khấu áp dụng theo quyết định của Chủ đầu tư.
-        Công văn hướng dẫn kèm theo.
-        """,
+def test_classifier_normalizes_and_deduplicates_grounded_conflict_facts():
+    result = _classification(
+        conflict_facts=[
+            ConflictFact(
+                fact_key=" Payment / First installment / Deadline ",
+                claim="Thanh toan dot mot trong 30 ngay.",
+                value="30",
+                unit="day",
+                scope="The Beverly",
+                polarity="affirmative",
+                evidence="Thanh toan dot mot trong vong 30 ngay",
+            ),
+            ConflictFact(
+                fact_key="payment.first_installment.deadline",
+                claim="Cach viet khac cua cung mot fact.",
+                value="30",
+                unit="day",
+                scope="the beverly",
+                polarity="affirmative",
+                evidence="Hoan tat dot mot trong 30 ngay",
+            ),
+        ]
     )
 
-    assert result.category == DocumentCategory.SALES_POLICY
+    assert result.conflict_facts[0].fact_key == "payment.first.installment.deadline"
+    assert len(result.conflict_facts) == 1
 
 
-def test_keyword_only_in_body_stays_below_the_auto_approve_bar():
-    """Một từ khóa lọt trong thân bài không đủ để tự động đưa tài liệu vào kho tri thức."""
-    result = classify_document(
-        "tai_lieu_gui_khach.pdf",
-        "Kèm theo bảng giá tham khảo của dự án.",
+def test_invalid_llm_metadata_is_rejected_by_schema():
+    with pytest.raises(ValidationError, match="less than or equal to 1"):
+        _classification(confidence=1.2)
+
+    with pytest.raises(ValidationError, match="expiry_date cannot be earlier"):
+        _classification(
+            effective_date=date(2026, 8, 31),
+            expiry_date=date(2026, 8, 1),
+        )
+
+    # Keep unit types on a controlled business vocabulary. Free-form model output such
+    # as "2PNConstructor" must never become coverage/conflict metadata.
+    with pytest.raises(ValidationError, match="unit_types"):
+        _classification(unit_types=["2PNConstructor"])
+
+
+def test_llm_review_decision_is_required_instead_of_defaulting_to_safe():
+    values = _classification().model_dump()
+    values.pop("requires_admin_review")
+
+    with pytest.raises(ValidationError, match="requires_admin_review"):
+        DocumentClassification.model_validate(values)
+
+
+def test_empty_llm_response_fails_closed(monkeypatch):
+    monkeypatch.setattr(classification_service, "generate_json", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(DocumentClassificationError, match="no document metadata"):
+        classification_service.classify_document("du-an.pdf", "Nội dung tài liệu")
+
+
+def test_provider_failure_is_wrapped_without_a_rule_fallback(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(classification_service, "generate_json", fail)
+
+    with pytest.raises(DocumentClassificationError, match="could not classify") as error:
+        classification_service.classify_document("du-an.pdf", "Nội dung tài liệu")
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+
+
+def test_quota_failure_has_a_distinct_safe_classification_error(monkeypatch):
+    provider_error = genai_errors.ClientError(
+        429,
+        {
+            "error": {
+                "code": 429,
+                "status": "RESOURCE_EXHAUSTED",
+                "message": "quota failed for secret-key-value",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        classification_service,
+        "generate_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(provider_error),
     )
 
-    assert result.category == DocumentCategory.PRICE_LIST
-    assert result.confidence < 0.9
-    assert "Cần Admin xác nhận" in result.reason
+    with pytest.raises(DocumentClassificationQuotaError) as error:
+        classification_service.classify_document("du-an.pdf", "Nội dung tài liệu")
+
+    assert "secret-key-value" not in str(error.value)
+    assert error.value.__cause__ is provider_error
 
 
-def test_keyword_in_filename_with_underscores_is_still_matched():
-    """Tên file thật dùng gạch dưới/gạch ngang, không phải dấu cách."""
-    result = classify_document("Bang-gia.Q3-2026_The-Palma.pdf", "Nội dung không có từ khóa nào.")
+@pytest.mark.parametrize(
+    ("filename", "raw_text", "message"),
+    [
+        ("", "Nội dung", "filename is empty"),
+        ("du-an.pdf", "   ", "no text"),
+    ],
+)
+def test_missing_classifier_input_is_rejected_before_the_api_call(
+    monkeypatch,
+    filename,
+    raw_text,
+    message,
+):
+    called = False
 
-    assert result.category == DocumentCategory.PRICE_LIST
-    assert result.confidence == 0.85
-    assert result.requires_admin_review is True
+    def fake_generate(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return _classification()
 
+    monkeypatch.setattr(classification_service, "generate_json", fake_generate)
 
-def test_price_list_filename_wins_over_policy_phrases_in_body():
-    """Bảng giá Zurich thật từng bị xếp thành sales_policy vì các mục chính sách bên trong."""
-    result = classify_document(
-        "Bang_Gia_The_Zurich_v1.pdf",
-        """
-        BẢNG GIÁ CĂN HỘ THE ZURICH
-        Phiên bản: V1.0 - Tháng 07/2026
-        Ngày ban hành: 01/07/2026
+    with pytest.raises(DocumentClassificationError, match=message):
+        classification_service.classify_document(filename, raw_text)
 
-        III. CHÍNH SÁCH BÁN HÀNG
-        IV. CHÍNH SÁCH GIÁ
-        Giá bán và đơn giá chi tiết theo từng mã căn.
-        """,
-    )
-
-    assert result.category == DocumentCategory.PRICE_LIST
-    assert result.version_label == "V1.0"
-    assert result.applicable_period == "07/2026"
-    assert result.issued_date == date(2026, 7, 1)
-
-
-def test_strong_body_heading_overrides_a_misleading_filename():
-    result = classify_document(
-        "Bang_Gia_Hai_Au.pdf",
-        """
-        CHÍNH SÁCH BÁN HÀNG HẢI ÂU
-        Chính sách kinh doanh quy định bảng giá, giá bán và đơn giá tham chiếu
-        cho từng loại căn hộ trong đợt mở bán.
-        """,
-    )
-
-    assert result.category == DocumentCategory.SALES_POLICY
-    assert result.confidence < 0.9
-    assert "Cần Admin xác nhận" in result.reason
-
-
-def test_body_only_sales_policy_is_not_overridden_by_legal_references():
-    """Các từ Luật/Quyết định trong điều kiện áp dụng không biến CSBH thành văn bản luật."""
-    result = classify_document(
-        "6f42d13e-1908-4a30-a828-e197c1c673db.pdf",
-        """
-        CHÍNH SÁCH BÁN HÀNG THE BEVERLY
-        Chính sách tuân thủ Luật Kinh doanh bất động sản.
-        Mức ưu đãi áp dụng theo quyết định của Chủ đầu tư và công văn hướng dẫn.
-        """,
-    )
-
-    assert result.category == DocumentCategory.SALES_POLICY
-    assert result.confidence < 0.9
-
-
-def test_project_overview_is_not_a_sales_policy_because_of_a_pricing_section():
-    """Mục “Chính sách giá” là phần con phổ biến trong tài liệu giới thiệu phân khu."""
-    result = classify_document(
-        "HaiAu_VHOP_ThongTinDuAn_Full.pdf",
-        """
-        TỔNG QUAN DỰ ÁN HẢI ÂU
-        Giới thiệu vị trí, quy hoạch, tiện ích và thiết kế của khu đô thị.
-
-        I. VỊ TRÍ
-        II. TIỆN ÍCH
-        III. MẶT BẰNG
-        IV. CHÍNH SÁCH GIÁ BÁN
-        Giá bán chỉ mang tính tham khảo tại thời điểm giới thiệu.
-        """,
-    )
-
-    assert result.category == DocumentCategory.SUBDIVISION_INFO
-
-
-def test_camel_case_filename_is_classified_without_body_keywords():
-    result = classify_document(
-        "HaiAu_VHOP_ThongTinDuAn_Full.pdf",
-        "Nội dung mô tả vị trí và tiện ích.",
-    )
-
-    assert result.category == DocumentCategory.SUBDIVISION_INFO
-    assert "tên file" in result.reason
-    assert result.requires_admin_review is True
-
-
-def test_subdivision_metadata_drops_generic_scope_noise():
-    result = classify_document(
-        "Thong_tin_du_an.pdf",
-        """
-        Phân khu thấp tầng - Vinhomes Ocean Park 1
-        Phân khu: Hải Âu
-        Phân khu cao tầng và thấp tầng
-        Phân khu | Vinhomes Ocean Park |
-        """,
-        parent_project_names=["Vinhomes Ocean Park", "Ocean Park 1"],
-    )
-
-    assert result.subdivision_names == ["Hai Au"]
-
-
-def test_prime_minister_is_not_reduced_to_government_issuer():
-    result = classify_document(
-        "Quyet_dinh_123_2026_QD_TTg.pdf",
-        """
-        QUYẾT ĐỊNH 123/2026/QĐ-TTG
-        CỦA THỦ TƯỚNG CHÍNH PHỦ
-        """,
-    )
-
-    assert result.legal_issuer == "Thủ tướng Chính phủ"
-
-
-def test_issue_date_uses_label_instead_of_first_unrelated_date():
-    result = classify_document(
-        "Bang_gia_The_Zurich_v2.pdf",
-        """
-        BẢNG GIÁ THE ZURICH
-        Thời hạn bảo hành một số hạng mục đến 31/01/2028.
-        Phiên bản | V2
-        Áp dụng tháng 8 năm 2026
-        Ngày ban hành | 15/08/2026
-        Áp dụng từ 15/08/2026 đến 31/08/2026
-        """,
-    )
-
-    assert result.version_label == "V2"
-    assert result.applicable_period == "08/2026"
-    assert result.issued_date == date(2026, 8, 15)
-    assert result.effective_date == date(2026, 8, 15)
-    assert result.expiry_date == date(2026, 8, 31)
-
-
-def test_sales_round_is_kept_as_a_meaningful_applicable_period():
-    result = classify_document(
-        "Bang gia The Beverly dot 2.docx",
-        """
-        BẢNG GIÁ BÁN CĂN HỘ
-        Đợt mở bán: Đợt 2
-        Áp dụng từ 01/09/2026 đến 30/09/2026
-        """,
-    )
-
-    assert result.category == DocumentCategory.PRICE_LIST
-    assert result.applicable_period == "Đợt 2"
-
-
-def test_explicit_sales_round_precedes_a_later_month_mention():
-    result = classify_document(
-        "Bang_gia_The_Beverly.pdf",
-        """
-        BẢNG GIÁ BÁN CĂN HỘ
-        Đợt áp dụng | Đợt 2
-        Lịch bàn giao dự kiến trong tháng 12/2026.
-        """,
-    )
-
-    assert result.applicable_period == "Đợt 2"
+    assert called is False

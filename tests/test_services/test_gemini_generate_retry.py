@@ -12,12 +12,19 @@ import pytest
 from google.genai import errors as genai_errors
 
 from backend.core import gemini_client
+from backend.core.config import settings
 
 
 class _FakeResponse:
     def __init__(self, text: str):
         self.text = text
         self.parsed = None
+
+
+class _Usage:
+    prompt_token_count = 120
+    candidates_token_count = 45
+    total_token_count = 165
 
 
 def _api_error(code: int) -> genai_errors.APIError:
@@ -100,3 +107,20 @@ def test_the_backoff_is_capped_so_a_long_retry_delay_cannot_stall_a_turn(monkeyp
     gemini_client.client_models_generate("câu hỏi", None)
 
     assert slept == [gemini_client._GENERATE_MAX_RETRY_DELAY_SECONDS]
+
+
+def test_provider_usage_is_persisted_even_without_a_pipeline_trace(monkeypatch):
+    response = _FakeResponse("ok")
+    response.usage_metadata = _Usage()
+    persisted: list[dict] = []
+    monkeypatch.setattr(settings, "observability_metrics_enabled", True)
+    monkeypatch.setattr("backend.core.observability_sink.persist_llm_usage", lambda **fields: persisted.append(fields))
+    _stub_generate(monkeypatch, [response])
+
+    gemini_client.client_models_generate("câu hỏi", None)
+
+    assert len(persisted) == 1
+    assert persisted[0]["run_id"] is None
+    assert persisted[0]["input_tokens"] == 120
+    assert persisted[0]["output_tokens"] == 45
+    assert persisted[0]["total_tokens"] == 165
