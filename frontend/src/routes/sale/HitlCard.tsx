@@ -3,6 +3,7 @@ import { api } from "../../api/client";
 import type { MessageResponse } from "../../types";
 import { AlertIcon, CheckIcon, CopyIcon, LoaderIcon } from "../../components/Icons";
 import { CitationList } from "../../components/CitationList";
+import { MessageContent } from "../../components/MessageContent";
 
 interface HitlCardProps {
   message: MessageResponse;
@@ -64,7 +65,9 @@ export function HitlCard({ message, onConfirmed }: HitlCardProps) {
         </button>
       </div>
 
-      <div className="hitl-body">{message.content}</div>
+      <div className="hitl-body">
+        <MessageContent content={message.content} />
+      </div>
 
       {message.citations && message.citations.length > 0 && (
         <CitationList citations={message.citations} className="hitl-sources" label="Tài liệu" />

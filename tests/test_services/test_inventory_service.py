@@ -4,8 +4,12 @@ import httpx
 import pytest
 
 from backend.core.config import settings
+from backend.services import inventory_service
 from backend.services.inventory_service import (
     InventoryApiError,
+    InventoryUnit,
+    _apply_query_filters,
+    _normalize_unit_type,
     _parse_unit,
     lookup_inventory,
     resolve_api_project_id,
@@ -182,6 +186,86 @@ def test_unit_type_matching_ignores_case_and_spacing(mock_get):
     result = lookup_inventory("ocean-park-3", "cho anh xin căn 3 pn")
 
     assert [unit.unit_code for unit in result] == ["OP3-B-1801"]
+
+
+def test_named_property_type_matching_ignores_vietnamese_diacritics():
+    assert _normalize_unit_type("Biệt thự") == _normalize_unit_type("biet thu")
+    assert _normalize_unit_type("Nhà phố") == _normalize_unit_type("nha pho")
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_codes"),
+    [
+        ("căn hộ", {"ST", "1P", "2P", "3P"}),
+        ("1PN+1", {"1P"}),
+        ("2 phòng ngủ + 1", {"2P"}),
+        ("biệt thự", {"DL", "SL", "LK"}),
+        ("biệt thự đơn lập", {"DL"}),
+        ("song lập", {"SL"}),
+        ("nhà phố", {"LK"}),
+        ("shophouse", {"SH"}),
+    ],
+)
+def test_every_mock_api_product_family_has_customer_aliases(query, expected_codes):
+    units = [
+        InventoryUnit("ST", "p", None, "Studio", 30, 1, "available"),
+        InventoryUnit("1P", "p", None, "1PN+", 45, 1, "available"),
+        InventoryUnit("2P", "p", None, "2PN+", 70, 1, "available"),
+        InventoryUnit("3P", "p", None, "3PN", 90, 1, "available"),
+        InventoryUnit("DL", "p", None, "BT_DL", 200, 1, "available"),
+        InventoryUnit("SL", "p", None, "BT_SL", 160, 1, "available"),
+        InventoryUnit("LK", "p", None, "LK", 100, 1, "available"),
+        InventoryUnit("SH", "p", None, "SH", 100, 1, "available"),
+    ]
+
+    assert {unit.unit_code for unit in _apply_query_filters(units, query)} == expected_codes
+
+
+def test_specific_unit_code_is_filtered_exactly():
+    units = [
+        InventoryUnit("A-1205", "p", None, "2PN", 65, 3_000_000_000, "available"),
+        InventoryUnit("A-1206", "p", None, "2PN", 65, 3_000_000_000, "available"),
+    ]
+
+    assert [unit.unit_code for unit in _apply_query_filters(units, "Căn A-1205 còn không?")] == ["A-1205"]
+
+
+@pytest.mark.parametrize(
+    "subdivision",
+    [
+        "Thời Đại",
+        "Ánh Dương",
+        "Chung cư CT1",
+        "Chung cư CT2",
+        "Hải Đăng",
+        "Phố Biển",
+        "Đảo Ngọc",
+        "Vịnh Tây",
+        "Vịnh Thiên Đường",
+        "Vịnh Xanh",
+    ],
+)
+def test_every_mock_inventory_subdivision_can_be_filtered_with_or_without_diacritics(subdivision):
+    units = [
+        InventoryUnit(str(index), "p", name, "2PN", 65, 3_000_000_000, "available")
+        for index, name in enumerate(
+            [
+                "Thời Đại",
+                "Ánh Dương",
+                "Chung cư CT1",
+                "Chung cư CT2",
+                "Hải Đăng",
+                "Phố Biển",
+                "Đảo Ngọc",
+                "Vịnh Tây",
+                "Vịnh Thiên Đường",
+                "Vịnh Xanh",
+            ]
+        )
+    ]
+    ascii_query = inventory_service._normalize_text(subdivision)
+
+    assert [unit.subdivision for unit in _apply_query_filters(units, f"căn ở {ascii_query}")] == [subdivision]
 
 
 @patch("httpx.get")

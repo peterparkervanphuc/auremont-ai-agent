@@ -24,7 +24,9 @@ between the two belongs to `agent_pipeline`, not to this module.
 """
 
 import logging
+import math
 import re
+from collections.abc import Sequence
 
 from qdrant_client import models
 
@@ -36,6 +38,7 @@ from backend.core.gemini_client import GeminiEmbeddingError, embed_query
 from backend.core.qdrant_client import get_qdrant_client
 from backend.core.sparse_embedding import SparseEmbeddingError, embed_query_sparse
 from backend.services.vector_store_service import DENSE_VECTOR, SPARSE_VECTOR
+from backend.utils.text import strip_diacritics
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +51,27 @@ OVERFETCH_FACTOR = 4
 IDENTIFIER_WEIGHT = 0.2
 
 _TOKEN_PATTERN = re.compile(r"\w+", re.UNICODE)
+# Preserve separators inside business identifiers so ``2PN`` and ``2PN+1`` remain
+# different constraints, as do a full unit code and any coincidentally shared component.
+_STRONG_IDENTIFIER_PATTERN = re.compile(r"[^\W_]+(?:[-.][^\W_]+)*(?:\+[^\W_]*)?", re.UNICODE)
+_BEDROOM_IDENTIFIER_PATTERN = re.compile(
+    r"^(?P<count>\d+)(?:pn|br)(?P<plus>\+(?:1)?)?$",
+    re.IGNORECASE,
+)
 
 
 class RetrievalError(RuntimeError):
     """The query could not be embedded, or Qdrant could not be queried."""
 
 
-def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None = None, top_k: int = 5) -> list[dict]:
+def retrieve(
+    query: str,
+    visibility: DocumentVisibility,
+    project_id: str | None = None,
+    top_k: int = 5,
+    *,
+    focus_query: str | None = None,
+) -> list[dict]:
     """Return retrieved chunks: [{"document_id": int, "title": str, "content": str, "score": float}, ...].
 
     `visibility` is **the asker's clearance level**, not a label to match exactly:
@@ -105,10 +122,17 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
             match=models.MatchValue(value=True),
         ),
     ]
+    project_scope: list[models.Condition] | None = None
     if project_id:
-        conditions.append(models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id)))
+        # Project-scoped documents OR company/global documents. Uploading a general
+        # buying guide without a project assignment must not make it disappear from every
+        # project conversation, while documents assigned to another project remain out.
+        project_scope = [
+            models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id)),
+            models.IsNullCondition(is_null=models.PayloadField(key="project_id")),
+        ]
 
-    query_filter = models.Filter(must=conditions)
+    query_filter = models.Filter(must=conditions, should=project_scope)
     candidate_limit = top_k * OVERFETCH_FACTOR
 
     client = get_qdrant_client()
@@ -204,7 +228,8 @@ def retrieve(query: str, visibility: DocumentVisibility, project_id: str | None 
             }
         )
 
-    return _rerank(query, hits, fused=fused)[:top_k]
+    ranked = _rerank(query, hits, fused=fused)
+    return _select_context(focus_query or query, ranked, top_k=top_k)
 
 
 def _visibility_condition(visibility: DocumentVisibility) -> models.Condition:
@@ -241,7 +266,7 @@ def _rerank(query: str, hits: list[dict], fused: bool = False) -> list[dict]:
     network error, empty response), and this function falls back to the previous
     behaviour rather than letting a Cohere outage take retrieval down with it.
     """
-    if settings.rerank_enabled:
+    if settings.rerank_enabled and settings.cohere_api_key:
         reranked = _rerank_cohere(query, hits)
         if reranked is not None:
             return reranked
@@ -264,12 +289,33 @@ def _rerank_cohere(query: str, hits: list[dict]) -> list[dict] | None:
         )
         return None
 
+    # Treat hosted output as untrusted tool data. A stale SDK/API response containing an
+    # invalid or duplicate index must degrade to the local ranker, not select the wrong
+    # passage or crash retrieval with IndexError.
+    if not _valid_rerank_results(scored, candidate_count=len(hits)):
+        logger.warning(
+            "Cohere returned invalid rerank indexes; falling back to the identifier heuristic.",
+            extra={"event": "retrieval.rerank.invalid", "candidate_count": len(hits)},
+        )
+        return None
+
     reordered = []
     for index, relevance_score in scored:
-        hit = hits[index]
+        hit = dict(hits[index])
         hit["score"] = round(relevance_score, 6)
         reordered.append(hit)
     return reordered
+
+
+def _valid_rerank_results(scored: Sequence[tuple[int, float]], *, candidate_count: int) -> bool:
+    """Cohere is asked to score every candidate, so require one valid index for each."""
+    indexes = [index for index, _score in scored]
+    return (
+        len(indexes) == candidate_count
+        and len(set(indexes)) == candidate_count
+        and all(isinstance(index, int) and 0 <= index < candidate_count for index in indexes)
+        and all(isinstance(score, int | float) and math.isfinite(score) for _index, score in scored)
+    )
 
 
 def _rerank_heuristic(query: str, hits: list[dict], fused: bool = False) -> list[dict]:
@@ -300,3 +346,123 @@ def _rerank_heuristic(query: str, hits: list[dict], fused: bool = False) -> list
         )
 
     return sorted(hits, key=lambda hit: hit["score"], reverse=True)
+
+
+def _select_context(query: str, hits: list[dict], *, top_k: int) -> list[dict]:
+    """Choose a compact, non-redundant context after all retrieval scoring.
+
+    Ranking models are deliberately fuzzy, but identifiers are not: when the current
+    question says ``2PN`` or ``OP3-CT1-0504``, a passage carrying that exact token must
+    precede an otherwise semantic-near ``3PN`` passage. This final stable ordering applies
+    to dense, RRF and hosted rerank results alike.
+
+    The second pass removes near-duplicate overlap from the same document and enforces a
+    total context budget. It never truncates a chunk (which could sever a table row or
+    legal clause), and always keeps the best hit even when that one chunk exceeds budget.
+    """
+    if not hits or top_k <= 0:
+        return []
+
+    ordered = _prioritize_identifier_coverage(query, hits)
+    selected: list[dict] = []
+    selected_tokens: list[tuple[object, set[str]]] = []
+    used_chars = 0
+    duplicate_count = 0
+    budget_count = 0
+
+    for hit in ordered:
+        content = str(hit.get("content") or "").strip()
+        if not content:
+            continue
+
+        tokens = _content_tokens(content)
+        document_id = hit.get("document_id")
+        if document_id is not None and any(
+            document_id == existing_document_id and _near_duplicate(tokens, existing_tokens)
+            for existing_document_id, existing_tokens in selected_tokens
+        ):
+            duplicate_count += 1
+            continue
+
+        if selected and used_chars + len(content) > settings.rag_max_context_chars:
+            budget_count += 1
+            continue
+
+        selected.append(hit)
+        selected_tokens.append((document_id, tokens))
+        used_chars += len(content)
+        if len(selected) == top_k:
+            break
+
+    if duplicate_count or budget_count:
+        logger.debug(
+            "RAG context selection removed redundant or over-budget candidates.",
+            extra={
+                "event": "retrieval.context.selected",
+                "candidate_count": len(hits),
+                "selected_count": len(selected),
+                "duplicate_count": duplicate_count,
+                "budget_count": budget_count,
+                "context_chars": used_chars,
+            },
+        )
+
+    return selected
+
+
+def _prioritize_identifier_coverage(query: str, hits: list[dict]) -> list[dict]:
+    """Stable-sort strong exact identifiers ahead of fuzzy relevance scores.
+
+    Pure numbers are deliberately excluded here: a year or budget is useful as a small
+    heuristic signal, but must not make an unrelated paragraph outrank a semantically
+    correct one. Product/unit codes such as ``2PN`` and ``OP3`` contain both letters and
+    digits and are safe enough to act as hard ordering constraints.
+    """
+    wanted = _strong_identifiers(query)
+    if not wanted:
+        return hits
+
+    return sorted(
+        hits,
+        key=lambda hit: len(wanted & _strong_identifiers(str(hit.get("content") or ""))) / len(wanted),
+        reverse=True,
+    )
+
+
+def _strong_identifiers(text: str) -> set[str]:
+    tokens = {_normalise_identifier(match.group(0)) for match in _STRONG_IDENTIFIER_PATTERN.finditer(text)}
+    return {
+        token
+        for token in tokens
+        if any(character.isalpha() for character in token) and any(character.isdigit() for character in token)
+    }
+
+
+def _normalise_identifier(token: str) -> str:
+    """Collapse equivalent Vietnamese/English real-estate unit labels.
+
+    The corpus commonly uses ``BR`` while users type ``PN``; ``2BR+`` and ``2PN+1``
+    likewise name the same layout. This normalisation is intentionally narrow so an
+    arbitrary product code is never rewritten by accident.
+    """
+    lowered = token.lower()
+    bedroom = _BEDROOM_IDENTIFIER_PATTERN.fullmatch(lowered)
+    if bedroom is None:
+        return lowered
+    plus = "+1" if bedroom.group("plus") else ""
+    return f"{bedroom.group('count')}br{plus}"
+
+
+def _content_tokens(text: str) -> set[str]:
+    return set(_TOKEN_PATTERN.findall(strip_diacritics(text)))
+
+
+def _near_duplicate(left: set[str], right: set[str]) -> bool:
+    if left == right:
+        return bool(left)
+    # Very short passages share generic words too easily. Exact equality above still
+    # catches duplicated headings and one-line facts without creating false positives.
+    if min(len(left), len(right)) < 8:
+        return False
+    union = left | right
+    return bool(union) and len(left & right) / len(union) >= settings.rag_duplicate_similarity_threshold

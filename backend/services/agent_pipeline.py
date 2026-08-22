@@ -26,6 +26,7 @@ Two principles govern this whole file:
 """
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
@@ -36,28 +37,42 @@ from sqlalchemy.orm import Session
 from backend.ai import prompts
 from backend.ai.answer_cleanup import drop_image_denials
 from backend.ai.citations import build_citations
-from backend.ai.intent import names_specific_document_topic
+from backend.ai.intent import (
+    is_conversation_meta_query,
+    is_customer_memory_query,
+    is_search_refinement,
+    names_specific_document_topic,
+    preflight_policy,
+)
 from backend.ai.intent import needs_document_retrieval as query_needs_documents
 from backend.ai.intent import needs_inventory as query_needs_inventory
 from backend.core import tracing
+from backend.core.config import get_settings
 from backend.core.enums import DocumentVisibility, MessageEmotion, MessageSender
-from backend.core.gemini_client import generate_json, generate_text
+from backend.core.gemini_client import generate_json
 from backend.models.project import Project
 from backend.services import (
     answer_images_service,
     cache_service,
+    catalog_context_service,
+    catalog_offer_service,
+    memory_service,
     reflection_memory,
     risk_service,
+    search_criteria,
     verifier_service,
 )
 from backend.services.inventory_service import (
     InventoryApiError,
     InventoryProjectUnresolvedError,
     InventoryUnit,
+    apply_criteria,
+    fetch_units,
+    has_exact_project_mapping,
     lookup_inventory,
 )
 from backend.services.rag_service import RetrievalError, retrieve
-from backend.utils.text import strip_markdown
+from backend.utils.text import strip_diacritics, strip_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +121,29 @@ LOW_CONFIDENCE_MESSAGE_PUBLIC = (
 )
 RETRIEVAL_ERROR_MESSAGE = "Tạm thời không tra cứu được tài liệu, vui lòng thử lại sau."
 GENERATION_ERROR_MESSAGE = "Tạm thời không tạo được câu trả lời, vui lòng thử lại sau."
+PREFLIGHT_MESSAGES = {
+    "illegal_request": (
+        "Mình không thể hỗ trợ lách luật, trốn thuế hoặc làm giả hồ sơ. Mình có thể giúp "
+        "anh/chị kiểm tra quy trình giao dịch và các giấy tờ cần chuẩn bị theo hướng hợp pháp."
+    ),
+    "privacy_request": (
+        "Mình không thể cung cấp thông tin cá nhân chưa được phép công khai của chủ nhà hoặc cư dân. "
+        "Anh/chị có thể liên hệ qua kênh chính thức của dự án để được kết nối đúng người phụ trách."
+    ),
+    "discrimination_request": (
+        "Mình không thể lọc hoặc đánh giá nơi ở theo dân tộc, tôn giáo hay quốc tịch của cư dân. "
+        "Mình có thể giúp so sánh theo các tiêu chí phù hợp như an ninh, tiện ích, ngân sách và thời gian di chuyển."
+    ),
+    "scam_warning": (
+        "Đây là dấu hiệu giao dịch có rủi ro. Anh/chị chưa nên chuyển tiền; hãy kiểm tra giấy tờ gốc, "
+        "đối chiếu người nhận tiền với chủ thể có quyền giao dịch và chỉ ký/cọc khi điều khoản, căn hộ và "
+        "tài khoản nhận tiền đã được xác minh qua kênh chính thức."
+    ),
+    "rental_out_of_scope": (
+        "Hiện Auremont chỉ có dữ liệu căn hộ dự án đang bán, chưa có nguồn nhà cho thuê để lọc chính xác. "
+        "Nếu anh/chị cân nhắc mua để ở hoặc mua đầu tư, mình có thể tiếp tục tư vấn theo ngân sách."
+    ),
+}
 
 # Every message above, as one set. These are UI states rather than things the assistant
 # said about a project, so the router filters them out when assembling conversation
@@ -169,24 +207,38 @@ class PipelineResult:
     # never reach the pipeline at all, set it directly rather than through this field).
     emotion: str | None = None
     # Short reply options the customer can tap — only ever non-empty on a PUBLIC-clearance
-    # answer (see prompts.ConsultAnswer); Sale/INTERNAL answers keep this empty, they're
-    # generated as plain text.
+    # answer (see prompts.ConsultAnswer); Sale/INTERNAL answers keep this empty (see
+    # prompts.SaleAnswer).
     quick_replies: list[str] = field(default_factory=list)
     # Recommended units rendered as their own cards — see PipelineState.listings above.
     listings: list[dict] = field(default_factory=list)
+    # Plausible NEXT questions about the topic already on the table, for both audiences.
+    # Distinct from `quick_replies`, which answer a question the assistant just asked —
+    # see prompts.ConsultAnswer.
+    suggested_questions: list[str] = field(default_factory=list)
 
 
 class PipelineState(TypedDict, total=False):
     """State threaded through the nodes — as described in ARCHITECTURE.md §3."""
 
     query: str
+    session_id: int | None
     project_id: str | None
+    resolved_project_ids: list[str]
     # Long-term memory, already rendered by memory_service.format_profile.
     memory_profile: str
+    # Structured twin used only by the deterministic customer-profile recall path.
+    memory_profile_data: memory_service.UserProfile
+    # A deterministic answer sourced only from this session's customer profile. When
+    # true, Preflight ends the graph before cache/retrieval/model calls.
+    answered_from_memory: bool
     # Lessons the agent learned from its own earlier mistakes, already rendered by
     # reflection_memory.format_lessons. Unlike memory_profile this is about the agent,
     # not the asker — see backend/services/reflection_memory.py.
     reflection_lessons: str
+    # Optional isolation boundary for learned lessons. Sale chat supplies one scope per
+    # consultation session so one customer's lessons cannot affect another customer.
+    reflection_scope: str | None
     # The asker's clearance for `rag_service.retrieve`/`cache_service`: INTERNAL for Sale/
     # Admin (full access), PUBLIC for the customer chat flow (anonymous or logged-in
     # customer). See backend/routers/customer_chat.py.
@@ -197,10 +249,24 @@ class PipelineState(TypedDict, total=False):
     # _generate) and _retrieve's query-expansion touch it; no node ever writes it back.
     history: list[dict]
     retrieved_docs: list[dict]
+    # Exact tower-level facts from Project.details. This complements RAG documents that
+    # may only describe an aggregate range for the whole cluster.
+    catalog_context: str
+    # True only when the structured tower record has every field this query asks for.
+    # Aggregate document chunks are excluded only in that case.
+    catalog_context_complete: bool
+    # Structured price/type ranges from every matching Project.details.pricing row.
+    catalog_offers: list[catalog_offer_service.CatalogOffer]
+    catalog_offer_context: str
     needs_inventory: bool
     needs_document_retrieval: bool
     inventory_units: list[InventoryUnit]
+    # Raw inventory is retained only for deterministic zero-result diagnosis. It never
+    # enters the generation prompt, which receives only the filtered subset below.
+    all_units: list[InventoryUnit]
     inventory_failed: bool
+    criteria: search_criteria.SearchCriteria
+    zero_result_diagnosis: search_criteria.ZeroResultDiagnosis
     draft_answer: str
     citations: list[dict]
     quick_replies: list[str]
@@ -209,6 +275,7 @@ class PipelineState(TypedDict, total=False):
     # SYSTEM_INSTRUCTION_PUBLIC. Each dict already carries a resolved image_url/project_id
     # (see _resolve_listing_images), never the model's own guess.
     listings: list[dict]
+    suggested_questions: list[str]
     verifier_score: float
     faithfulness: float
     answer_relevancy: float
@@ -243,6 +310,54 @@ class PipelineState(TypedDict, total=False):
 # --------------------------------------------------------------------------- nodes
 
 
+def _preflight(state: PipelineState) -> dict[str, Any]:
+    """Stop unsafe or unsupported requests before cache, retrieval, and model calls."""
+    policy = preflight_policy(state["query"])
+    if policy is None:
+        if is_customer_memory_query(state["query"]):
+            answer = memory_service.format_recall_answer(
+                state["query"], state.get("memory_profile_data") or memory_service.UserProfile()
+            )
+            tracing.step("preflight", decision="memory_recall", has_profile=bool(state.get("memory_profile")))
+            return {
+                "draft_answer": answer,
+                "answered_from_memory": True,
+                "verifier_score": 1.0,
+                "requires_hitl": False,
+            }
+        return {}
+    tracing.step("preflight", policy=policy)
+    return {
+        "notice": PREFLIGHT_MESSAGES[policy],
+        "notice_emotion": MessageEmotion.RESPECTFUL,
+    }
+
+
+def _scope_resolve(state: PipelineState) -> dict[str, Any]:
+    """Resolve project, sub-zone or tower names before cache/RAG/tool selection."""
+    db = state.get("db")
+    current = state.get("project_id")
+    if db is None:
+        return {"resolved_project_ids": [current] if current else []}
+
+    project_ids = answer_images_service.resolve_project_ids(db, state["query"])
+    if not project_ids:
+        for turn in reversed(state.get("history") or []):
+            if turn.get("sender") == MessageSender.AGENT:
+                continue
+            project_ids = answer_images_service.resolve_project_ids(db, turn.get("content", ""))
+            if project_ids:
+                break
+    if not project_ids and current:
+        project_ids = [current]
+
+    # A single project can safely hard-scope Qdrant. A comparison retains all ids for
+    # catalogue filtering but leaves RAG unscoped so both projects can contribute.
+    rag_project_id = project_ids[0] if len(project_ids) == 1 else None
+    tracing.step("scope.resolve", project_ids=project_ids, rag_project_id=rag_project_id)
+    return {"project_id": rag_project_id, "resolved_project_ids": project_ids}
+
+
 def _cache_check(state: PipelineState) -> dict[str, Any]:
     """Check the Semantic Cache before spending any tokens.
 
@@ -263,6 +378,16 @@ def _cache_check(state: PipelineState) -> dict[str, Any]:
     if state.get("memory_profile"):
         tracing.step("cache_check", hit=False, skipped="has_memory_profile")
         return {"used_cache": False}
+
+    # A shared semantic-cache key knows nothing about this session's accumulated unit
+    # filters. The same words under a 2PN search and a 3PN search are different questions,
+    # so replaying either answer into the other session would leak context silently.
+    session_id = state.get("session_id")
+    if session_id is not None and get_settings().search_criteria_enabled:
+        criteria, _ = search_criteria.load(session_id)
+        if not criteria.is_empty():
+            tracing.step("cache_check", hit=False, skipped="has_search_criteria")
+            return {"used_cache": False, "criteria": criteria}
 
     clearance = state.get("clearance", DocumentVisibility.INTERNAL)
     cached = cache_service.lookup_cache(state["query"], state.get("project_id"), clearance)
@@ -373,6 +498,10 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     # longer needs them. Only the string actually embedded for retrieval is expanded.
     needs_inventory = query_needs_inventory(query)
     needs_document_retrieval = query_needs_documents(query)
+    catalog = catalog_context_service.resolve_tower_context(
+        state.get("db"), state.get("project_id"), query
+    )
+    catalog_context = catalog.text
     hits: list[dict] = []
 
     # Retrieval embeds the question expanded with the previous one, so a bare follow-up
@@ -413,7 +542,16 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
 
     if needs_document_retrieval:
         try:
-            hits = retrieve(retrieval_query, clearance, project_id, RETRIEVAL_TOP_K)
+            hits = retrieve(
+                retrieval_query,
+                clearance,
+                project_id,
+                RETRIEVAL_TOP_K,
+                # Embedding/reranking needs history to resolve a follow-up, but exact
+                # identifier constraints must come from the current turn. Otherwise a
+                # previous "2PN" contaminates "còn 3PN thì sao?" and both look required.
+                focus_query=query,
+            )
         except RetrievalError:
             logger.exception(
                 "Qdrant retrieval failed.",
@@ -426,7 +564,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
             tracing.step("retrieve", ok=False, error="qdrant_unavailable")
             # A combined inventory + policy question can still answer from its
             # live source when Qdrant is temporarily unavailable.
-            if not needs_inventory:
+            if not needs_inventory and not catalog_context:
                 return {"notice": RETRIEVAL_ERROR_MESSAGE}
         else:
             # Scores travel with the count: a run that retrieved five documents whose best
@@ -441,7 +579,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
                 document_ids=[hit.get("document_id") for hit in hits],
             )
 
-    if not hits and not needs_inventory and names_specific_document_topic(query):
+    if not hits and not needs_inventory and not catalog_context and names_specific_document_topic(query):
         # Zero hits for a query that named something specific (policy, discount, legal,
         # price list...) -> genuinely missing data, Empty State rather than a system error.
         #
@@ -457,9 +595,74 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
 
     return {
         "retrieved_docs": hits,
+        "catalog_context": catalog_context,
+        "catalog_context_complete": catalog.complete,
         "needs_inventory": needs_inventory,
         "needs_document_retrieval": needs_document_retrieval,
         "project_id": inventory_project_id,
+    }
+
+
+def _criteria_resolve(state: PipelineState) -> dict[str, Any]:
+    """Merge this turn's unit filters with the session's working search state."""
+    if state.get("session_id") is None or not get_settings().search_criteria_enabled:
+        criteria = search_criteria.merge_criteria(
+            search_criteria.SearchCriteria(), search_criteria.parse_criteria(state["query"])
+        )
+        return _catalog_search_result(state, criteria)
+    if not state.get("needs_inventory") and not is_search_refinement(state["query"]):
+        return _catalog_search_result(state, search_criteria.SearchCriteria())
+
+    criteria, delta = search_criteria.resolve(state["session_id"], state["query"])
+    conflict = search_criteria.detect_conflict(criteria)
+    if conflict:
+        tracing.step("criteria", ok=False, conflict=True)
+        return {
+            "criteria": criteria,
+            "notice": conflict,
+            "notice_emotion": MessageEmotion.RESPECTFUL,
+        }
+
+    # A comparative such as "giá mềm" has no deterministic meaning until an earlier
+    # numeric bound exists. Ask one focused question instead of inventing a budget.
+    if delta.unresolved_vague and criteria.is_empty():
+        topic = delta.unresolved_vague[0]
+        question = (
+            "Anh/chị dự kiến ngân sách tối đa khoảng bao nhiêu ạ?"
+            if topic == "giá"
+            else "Anh/chị mong muốn diện tích tối thiểu khoảng bao nhiêu m² ạ?"
+        )
+        tracing.step("criteria", ok=False, unresolved=topic)
+        return {
+            "criteria": criteria,
+            "notice": question,
+            "notice_emotion": MessageEmotion.RESPECTFUL,
+        }
+
+    tracing.step("criteria", ok=True, constraint_count=len(criteria.constraints))
+    return {
+        "criteria": criteria,
+        "needs_inventory": True,
+        **_catalog_search_result(state, criteria),
+    }
+
+
+def _catalog_search_result(
+    state: PipelineState, criteria: search_criteria.SearchCriteria
+) -> dict[str, Any]:
+    """Attach structured catalogue tiers for property-search questions."""
+    if not state.get("needs_inventory") and criteria.is_empty():
+        return {}
+    offers = catalog_offer_service.search_offers(
+        state.get("db"),
+        state["query"],
+        project_ids=state.get("resolved_project_ids") or None,
+        criteria=criteria,
+    )
+    tracing.step("catalog.search", offer_count=len(offers))
+    return {
+        "catalog_offers": offers,
+        "catalog_offer_context": catalog_offer_service.format_offers(offers),
     }
 
 
@@ -477,8 +680,51 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
     clearance = state.get("clearance", DocumentVisibility.INTERNAL)
     started = time.perf_counter()
 
+    session_id = state.get("session_id")
+    stateful = session_id is not None and get_settings().search_criteria_enabled
+    all_units: list[InventoryUnit] = []
+    if (
+        state.get("db") is not None
+        and project_id
+        and state.get("resolved_project_ids")
+        and not has_exact_project_mapping(project_id)
+    ):
+        # Never relabel rows obtained through the '*' demo/default mapping as stock for a
+        # named catalogue subdivision. The structured catalogue remains available below.
+        tracing.step("tool.inventory", ok=False, skipped="no_exact_project_mapping")
+        return {"inventory_failed": True, "inventory_units": [], "all_units": []}
     try:
-        units = lookup_inventory(project_id, state["query"])
+        if stateful:
+            all_units = fetch_units(project_id)
+            criteria = state.get("criteria") or search_criteria.SearchCriteria()
+
+            # Subdivision names are project data, so they can only be recognized after
+            # the raw inventory arrives. Enrich the already-resolved logical turn without
+            # adding a second undo snapshot.
+            known = sorted({unit.subdivision for unit in all_units if unit.subdivision})
+            enriched = search_criteria.merge_criteria(
+                criteria, search_criteria.parse_criteria(state["query"], known)
+            )
+            conflict = search_criteria.detect_conflict(enriched)
+            if conflict:
+                return {
+                    "criteria": enriched,
+                    "all_units": all_units,
+                    "notice": conflict,
+                    "notice_emotion": MessageEmotion.RESPECTFUL,
+                }
+            if enriched != criteria:
+                # `stateful` implies this, but spelling it out keeps the narrowing local
+                # and protects a future edit from accidentally calling Redis with None.
+                assert session_id is not None
+                _, history = search_criteria.load(session_id)
+                search_criteria.save(session_id, enriched, history)
+                criteria = enriched
+            units = apply_criteria(all_units, criteria)
+        else:
+            # Exact legacy path for callers without a session or when the feature flag is
+            # off: all old regex semantics, including SOFT-like area/subdivision filters.
+            units = lookup_inventory(project_id, state["query"])
     except InventoryProjectUnresolvedError:
         # Not an API failure — nothing to log/alert on. This is a normal, frequent shape
         # of question (no project on the session, several projects in the catalogue) with
@@ -506,7 +752,7 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
         if state.get("retrieved_docs"):
-            return {"inventory_failed": True, "inventory_units": []}
+            return {"inventory_failed": True, "inventory_units": [], "all_units": []}
         return {"inventory_failed": True, "notice": INVENTORY_UNAVAILABLE_MESSAGE}
 
     tracing.step(
@@ -517,18 +763,65 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
     )
     # An empty `units` list is a valid answer ("no 2PN units left"), not a failure —
     # inventory_service keeps those two cases distinct.
-    return {"inventory_units": units, "inventory_failed": False}
+    result: dict[str, Any] = {"inventory_units": units, "inventory_failed": False}
+    if stateful:
+        result.update({"all_units": all_units, "criteria": criteria})
+    return result
+
+
+def _criteria_diagnose(state: PipelineState) -> dict[str, Any]:
+    """Explain an empty filtered set using leave-one-out counts over raw inventory."""
+    if state.get("inventory_failed") or state.get("inventory_units"):
+        return {}
+    criteria = state.get("criteria")
+    all_units = state.get("all_units") or []
+    if criteria is None or not all_units:
+        return {}
+    diagnosis = search_criteria.diagnose_zero_results(all_units, criteria)
+    if diagnosis is None:
+        return {}
+    tracing.step(
+        "criteria.diagnose",
+        active_count=len(diagnosis.active_constraints),
+        option_count=len(diagnosis.relax_options),
+    )
+    return {"zero_result_diagnosis": diagnosis}
 
 
 def _generate(state: PipelineState) -> dict[str, Any]:
     """Generate an answer with citations from the collected context."""
     docs = state.get("retrieved_docs") or []
+    # Exact tower identity/height/location questions are fully covered by the structured
+    # catalogue record. Feeding aggregate PDF chunks too reintroduced "30-32 tầng" and
+    # unrelated density/layout fields into an otherwise exact P4 answer. Mixed questions
+    # retain the documents so price/policy/etc. can still be answered.
+    prompt_docs = (
+        []
+        if state.get("catalog_context_complete") and catalog_context_service.is_tower_profile_query(state["query"])
+        else docs
+    )
     units = state.get("inventory_units") or []
+    # A broad "find me a home" request means stock that can still be offered. Keep
+    # unavailable rows in the pipeline state for diagnosis/audit, but do not expose them
+    # to the generator unless the person explicitly asked for a status such as sold or
+    # reserved. This is deterministic protection around the prompt rule: the model cannot
+    # accidentally recommend an unavailable unit it never received.
+    if units:
+        criteria = state.get("criteria")
+        if criteria is not None:
+            status_requested = criteria.get(search_criteria.FIELD_STATUSES) is not None
+        else:
+            turn = search_criteria.parse_criteria(state["query"])
+            status_requested = any(
+                constraint.field == search_criteria.FIELD_STATUSES for constraint in turn.constraints
+            )
+        if not status_requested:
+            units = [unit for unit in units if unit.status.strip().lower() == "available"]
     is_public = state.get("clearance", DocumentVisibility.INTERNAL) == DocumentVisibility.PUBLIC
 
     prompt = prompts.build_prompt(
         state["query"],
-        docs,
+        prompt_docs,
         units,
         state.get("needs_inventory", False),
         state.get("inventory_failed", False),
@@ -538,21 +831,27 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         is_public=is_public,
         correction=state.get("verifier_feedback") or "",
         lessons=state.get("reflection_lessons") or "",
+        criteria_summary=search_criteria.format_criteria(state.get("criteria") or search_criteria.SearchCriteria()),
+        zero_result=state.get("zero_result_diagnosis"),
+        catalog_context=state.get("catalog_context") or "",
+        catalog_offer_context=state.get("catalog_offer_context") or "",
     )
     quick_replies: list[str] = []
     listings: list[dict] = []
+    suggested_questions: list[str] = []
     attempt = state.get("retry_count", 0) + 1
     started = time.perf_counter()
 
+    parsed: prompts.ConsultAnswer | prompts.SaleAnswer | None
     try:
+        # Structured output on the SAME call (schema-constrained decoding), not a second
+        # LLM call — see prompts.ConsultAnswer/SaleAnswer. Both audiences are structured
+        # now: INTERNAL moved off plain generate_text once it gained follow-up suggestions
+        # to render, and it carries no quick_replies (see SaleAnswer for why).
         if is_public:
-            # Structured output on the SAME call (schema-constrained decoding), not a
-            # second LLM call — see prompts.ConsultAnswer. Sale/INTERNAL has no quick-reply
-            # UI to feed, so it stays on the simpler plain-text generate_text.
             parsed = generate_json(prompt, prompts.ConsultAnswer, system_instruction=prompts.SYSTEM_INSTRUCTION_PUBLIC)
         else:
-            parsed = None
-            answer = generate_text(prompt, system_instruction=prompts.SYSTEM_INSTRUCTION)
+            parsed = generate_json(prompt, prompts.SaleAnswer, system_instruction=prompts.SYSTEM_INSTRUCTION)
     except Exception:
         logger.exception(
             "Answer generation failed.",
@@ -566,16 +865,20 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         tracing.step("generate", attempt=attempt, ok=False)
         return {"notice": GENERATION_ERROR_MESSAGE}
 
-    if is_public:
-        if parsed is None:
-            # Same fail-closed posture as verifier_service: a judge/consult call that
-            # returns nothing parseable is a generation failure, not an empty answer.
-            logger.warning(
-                "Consult LLM returned no parseable answer.",
-                extra={"event": "pipeline.generate.unparseable", "project_id": state.get("project_id")},
-            )
-            return {"notice": GENERATION_ERROR_MESSAGE}
-        answer, quick_replies = parsed.text, parsed.quick_replies
+    if parsed is None:
+        # Same fail-closed posture as verifier_service: a consult call that returns
+        # nothing parseable is a generation failure, not an empty answer.
+        logger.warning(
+            "Consult LLM returned no parseable answer.",
+            extra={"event": "pipeline.generate.unparseable", "project_id": state.get("project_id")},
+        )
+        return {"notice": GENERATION_ERROR_MESSAGE}
+
+    answer = parsed.text
+    suggested_questions = parsed.suggested_questions
+    # Only the customer-facing schema carries these; SaleAnswer has no such field.
+    quick_replies = getattr(parsed, "quick_replies", [])
+    if is_public and isinstance(parsed, prompts.ConsultAnswer):
         listings = _resolve_listing_images(state.get("db"), parsed.listings)
 
     # Strip before checking for emptiness: an answer made up of only Markdown characters
@@ -606,9 +909,10 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     )
     return {
         "draft_answer": answer,
-        "citations": _citations_for(docs),
+        "citations": _citations_for(prompt_docs, answer=answer),
         "quick_replies": quick_replies,
         "listings": listings,
+        "suggested_questions": suggested_questions,
     }
 
 
@@ -656,7 +960,10 @@ def _resolve_listing_images(db: Session | None, listings: list["prompts.Property
     return resolved
 
 
-def _citations_for(docs: list[dict]) -> list[dict]:
+_CITATION_TOKEN_PATTERN = re.compile(r"\d+(?:[.,]\d+)*|[^\W\d_]+(?:\+\d+)?", re.UNICODE)
+
+
+def _citations_for(docs: list[dict], *, answer: str = "") -> list[dict]:
     """Citations are only worth showing when they point at one coherent source.
 
     An unscoped search (no `project_id` on the session/query) can return top hits from
@@ -670,7 +977,39 @@ def _citations_for(docs: list[dict]) -> list[dict]:
     project_ids = {doc.get("project_id") for doc in docs if doc.get("project_id")}
     if len(project_ids) > 1:
         return []
-    return build_citations(docs)
+    return build_citations(_rank_citation_evidence(docs, answer))
+
+
+def _rank_citation_evidence(docs: list[dict], answer: str) -> list[dict]:
+    """Put the passage that best supports the generated claims first per document.
+
+    ``build_citations`` intentionally emits one chip per source file. Retrieval order is
+    not sufficient for choosing that chip's page: a broad overview can rank first while
+    the answer's exact price or area came from a later table chunk. Shared numeric tokens
+    are weighted more heavily than prose because they are the facts for which a precise
+    page anchor matters most. Sorting is stable, so answers without useful overlap retain
+    retrieval order.
+    """
+    answer_tokens = _citation_tokens(answer)
+    if not answer_tokens:
+        return docs
+
+    def evidence_score(doc: dict) -> tuple[int, int, float]:
+        shared = answer_tokens & _citation_tokens(str(doc.get("content") or ""))
+        numeric = sum(any(character.isdigit() for character in token) for token in shared)
+        lexical = len(shared) - numeric
+        retrieval_score = doc.get("score")
+        return (
+            numeric,
+            lexical,
+            float(retrieval_score) if isinstance(retrieval_score, int | float) else 0.0,
+        )
+
+    return sorted(docs, key=evidence_score, reverse=True)
+
+
+def _citation_tokens(text: str) -> set[str]:
+    return set(_CITATION_TOKEN_PATTERN.findall(strip_diacritics(text)))
 
 
 def _verify(state: PipelineState) -> dict[str, Any]:
@@ -680,8 +1019,18 @@ def _verify(state: PipelineState) -> dict[str, Any]:
     `verifier_feedback`, `next_action`). The feedback is what `_generate` reads on a
     retry, so a regeneration is aimed at the specific defect rather than blind.
     """
-    context = [doc["content"] for doc in state.get("retrieved_docs") or []]
+    docs = state.get("retrieved_docs") or []
+    if state.get("catalog_context_complete") and catalog_context_service.is_tower_profile_query(state["query"]):
+        docs = []
+    context = [doc["content"] for doc in docs]
+    if state.get("catalog_context"):
+        context.append(state["catalog_context"])
+    if state.get("catalog_offer_context"):
+        context.append(state["catalog_offer_context"])
     context.extend(prompts.format_unit_for_verifier(unit) for unit in state.get("inventory_units") or [])
+    diagnosis = state.get("zero_result_diagnosis")
+    if diagnosis is not None:
+        context.append(search_criteria.format_diagnosis_for_verifier(diagnosis))
     # Same history-expanded query as retrieval (see _retrieval_query) — otherwise the judge
     # sees a bare "có" as "the question" next to a correct, on-topic draft answer about
     # chiết khấu, marks it irrelevant to "có", and the pipeline discards a good answer for
@@ -713,6 +1062,7 @@ def _verify(state: PipelineState) -> dict[str, Any]:
             query=state["query"],
             failure_mode=result.failure_mode.value,
             feedback=result.feedback,
+            scope=state.get("reflection_scope"),
         )
 
     return {
@@ -743,7 +1093,11 @@ def _risk_check(state: PipelineState) -> dict[str, Any]:
 
 
 def _image_tool(state: PipelineState) -> dict[str, Any]:
-    """Fetch project photos, but only for a question that asked to see something.
+    """Fetch the project photos that belong under this answer.
+
+    Covers both routes in answer_images_service: photos a question explicitly asked to
+    see, and photos attached automatically to illustrate an answer that only asked to
+    know something. That service decides which applies and how strictly to filter.
 
     Runs *before* Generate, like the inventory tool: the model has to know the photos are
     coming. When this ran afterwards it read "the context contains no images" off its own
@@ -766,7 +1120,9 @@ def _image_tool(state: PipelineState) -> dict[str, Any]:
     context = "\n".join(
         f"{doc.get('title') or ''} {doc.get('content') or ''}" for doc in state.get("retrieved_docs") or []
     )
-    images = answer_images_service.collect_images(db, state["query"], context)
+    images = answer_images_service.collect_images(
+        db, state["query"], context, project_id=state.get("project_id")
+    )
     tracing.step("tool.images", ok=True, image_count=len(images))
     return {"images": images}
 
@@ -778,10 +1134,24 @@ def _route_after_cache(state: PipelineState) -> str:
     return "hit" if state.get("used_cache") else "miss"
 
 
+def _route_after_preflight(state: PipelineState) -> str:
+    if state.get("notice"):
+        return "stop"
+    if state.get("answered_from_memory"):
+        return "answer"
+    return "continue"
+
+
 def _route_after_retrieve(state: PipelineState) -> str:
     if state.get("notice"):
         return "stop"
-    return "tool_call" if state.get("needs_inventory") else "generate"
+    return "criteria_resolve"
+
+
+def _route_after_criteria(state: PipelineState) -> str:
+    if state.get("notice"):
+        return "stop"
+    return "tool_call" if state.get("needs_inventory") or is_search_refinement(state["query"]) else "generate"
 
 
 def _route_after_tool_call(state: PipelineState) -> str:
@@ -804,6 +1174,19 @@ def _route_after_generate(state: PipelineState) -> str:
     if state.get("images") and answer_images_service.wants_images(state["query"]):
         return "risk_check"
 
+    # A question about the conversation itself ("tôi vừa hỏi về phân khu nào") is answered
+    # from the history block in the prompt, never from a document. Verify would score
+    # faithfulness against retrieved documents that say nothing about what was asked two
+    # turns ago — always 0.0, however correct the answer — and bury it under
+    # "Không đủ thông tin, liên hệ Admin." Same reasoning as the images branch above:
+    # there is nothing here for Verify to check against.
+    #
+    # Only applies once there IS history: without it the model has nothing to recall, and
+    # whatever it produces should still face the normal checks rather than skip them.
+    if state.get("history") and is_conversation_meta_query(state["query"]):
+        tracing.step("route.after_generate", decision="skip_verify", reason="conversation_meta_query")
+        return "risk_check"
+
     # No documents, no inventory units — the only way Generate is reached with both empty
     # is the "nothing specific was asked for" fallthrough in _retrieve (see
     # names_specific_document_topic there). Verify scores faithfulness against context
@@ -811,7 +1194,13 @@ def _route_after_generate(state: PipelineState) -> str:
     # send every ordinary "tư vấn giúp em" opener through a retry and then the low-
     # confidence wall, exactly the canned-answer problem this fallthrough exists to avoid.
     # Same reasoning as the images branch above: nothing here for Verify to check.
-    if not state.get("retrieved_docs") and not state.get("inventory_units"):
+    if (
+        not state.get("retrieved_docs")
+        and not state.get("inventory_units")
+        and not state.get("zero_result_diagnosis")
+        and not state.get("catalog_context")
+        and not state.get("catalog_offer_context")
+    ):
         return "risk_check"
 
     return "verify"
@@ -857,9 +1246,13 @@ def _low_confidence(state: PipelineState) -> dict[str, Any]:
 def _build_graph():
     graph = StateGraph(PipelineState)
 
+    graph.add_node("preflight", _preflight)
+    graph.add_node("scope_resolve", _scope_resolve)
     graph.add_node("cache_check", _cache_check)
     graph.add_node("retrieve", _retrieve)
+    graph.add_node("criteria_resolve", _criteria_resolve)
     graph.add_node("tool_call", _tool_call)
+    graph.add_node("criteria_diagnose", _criteria_diagnose)
     graph.add_node("generate", _generate)
     graph.add_node("verify", _verify)
     graph.add_node("risk_check", _risk_check)
@@ -867,12 +1260,20 @@ def _build_graph():
     graph.add_node("bump_retry", _bump_retry)
     graph.add_node("low_confidence", _low_confidence)
 
-    graph.add_edge(START, "cache_check")
-    graph.add_conditional_edges("cache_check", _route_after_cache, {"hit": END, "miss": "retrieve"})
+    graph.add_edge(START, "preflight")
     graph.add_conditional_edges(
-        "retrieve", _route_after_retrieve, {"stop": END, "tool_call": "tool_call", "generate": "image_tool"}
+        "preflight",
+        _route_after_preflight,
+        {"stop": END, "answer": END, "continue": "scope_resolve"},
     )
-    graph.add_conditional_edges("tool_call", _route_after_tool_call, {"stop": END, "generate": "image_tool"})
+    graph.add_edge("scope_resolve", "cache_check")
+    graph.add_conditional_edges("cache_check", _route_after_cache, {"hit": END, "miss": "retrieve"})
+    graph.add_conditional_edges("retrieve", _route_after_retrieve, {"stop": END, "criteria_resolve": "criteria_resolve"})
+    graph.add_conditional_edges(
+        "criteria_resolve", _route_after_criteria, {"stop": END, "tool_call": "tool_call", "generate": "image_tool"}
+    )
+    graph.add_conditional_edges("tool_call", _route_after_tool_call, {"stop": END, "generate": "criteria_diagnose"})
+    graph.add_edge("criteria_diagnose", "image_tool")
     graph.add_conditional_edges(
         "generate", _route_after_generate, {"stop": END, "verify": "verify", "risk_check": "risk_check"}
     )
@@ -910,6 +1311,9 @@ def run_pipeline(
     history: list[dict] | None = None,
     memory_profile: str = "",
     clearance: DocumentVisibility = DocumentVisibility.INTERNAL,
+    session_id: int | None = None,
+    reflection_scope: str | None = None,
+    memory_profile_data: memory_service.UserProfile | None = None,
 ) -> PipelineResult:
     """Entry point for the Sale and customer chat flows.
 
@@ -937,7 +1341,17 @@ def run_pipeline(
 
     tracing.start_run(query_len=len(query), project_id=project_id, clearance=str(clearance))
     try:
-        return _run_traced(query, project_id, db, history, memory_profile, clearance)
+        return _run_traced(
+            query,
+            project_id,
+            db,
+            history,
+            memory_profile,
+            clearance,
+            session_id,
+            reflection_scope,
+            memory_profile_data,
+        )
     finally:
         # In a `finally` so a trace is still written when the graph raises. The outcome
         # fields are read off the result inside `_run_traced`; this only guarantees the
@@ -952,16 +1366,33 @@ def _run_traced(
     history: list[dict] | None,
     memory_profile: str,
     clearance: DocumentVisibility,
+    session_id: int | None,
+    reflection_scope: str | None,
+    memory_profile_data: memory_service.UserProfile | None,
 ) -> PipelineResult:
     """The body of `run_pipeline`, split out so tracing can wrap every exit path."""
+    # Preserve the legacy one-argument call when no namespace is requested. Besides
+    # keeping older callers/mocks compatible, it makes the default global behaviour
+    # explicit; Sale consultation sessions take the scoped branch.
+    reflection_lessons = (
+        _lessons_for(query, reflection_scope) if reflection_scope is not None else _lessons_for(query)
+    )
     initial: PipelineState = {
         "query": query.strip(),
+        "session_id": session_id,
         "project_id": project_id,
+        "resolved_project_ids": [],
         "memory_profile": memory_profile,
-        "reflection_lessons": _lessons_for(query),
+        "memory_profile_data": memory_profile_data or memory_service.UserProfile(),
+        "reflection_lessons": reflection_lessons,
+        "reflection_scope": reflection_scope,
         "clearance": clearance,
         "history": (history or [])[-MAX_HISTORY_MESSAGES:],
         "retrieved_docs": [],
+        "catalog_context": "",
+        "catalog_context_complete": False,
+        "catalog_offers": [],
+        "catalog_offer_context": "",
         "citations": [],
         "verifier_score": 0.0,
         "requires_hitl": False,
@@ -1019,6 +1450,7 @@ def _run_traced(
         citations=state.get("citations") or [],
         quick_replies=state.get("quick_replies") or [],
         listings=state.get("listings") or [],
+        suggested_questions=state.get("suggested_questions") or [],
         verifier_score=state.get("verifier_score", 0.0),
         requires_hitl=state.get("requires_hitl", False),
         used_cache=state.get("used_cache", False),
@@ -1043,8 +1475,14 @@ def _run_traced(
     # the cache for every later session asking those same words.
     # `memory_profile` is excluded for the same reason: the answer was shaped by one
     # person's remembered preferences, so it is not a safe generic answer to replay.
-    if not result.used_cache and not initial["history"] and not memory_profile:
-        _store_cache(query, result, project_id, clearance)
+    active_criteria = state.get("criteria")
+    if (
+        not result.used_cache
+        and not initial["history"]
+        and not memory_profile
+        and (active_criteria is None or active_criteria.is_empty())
+    ):
+        _store_cache(query, result, state.get("project_id"), clearance)
 
     tracing.set_outcome(
         outcome="answered",
@@ -1064,15 +1502,21 @@ def _store_cache(query: str, result: PipelineResult, project_id: str | None, cle
     Price-touching answers must re-run RiskCheck every time so the Sale always gets the
     HITL card — serving them from cache would skip that mandatory confirmation step.
 
-    Image requests are never cached either. The cache matches on meaning, and "cho xem
-    hình ảnh The Palma" and "cho xem mặt bằng The Palma" are close enough to collide —
-    which served the whole gallery to someone who asked only for floor plans. The photo
-    set is chosen per question, so it cannot be shared between two questions.
+    Answers carrying photos are never cached either. The cache matches on meaning, and
+    "cho xem hình ảnh The Palma" and "cho xem mặt bằng The Palma" are close enough to
+    collide — which served the whole gallery to someone who asked only for floor plans.
+    The photo set is chosen per question, so it cannot be shared between two questions.
+
+    Keyed off `result.images` rather than off `wants_images(query)`: photos now also ride
+    along automatically on questions that never asked for any (see
+    answer_images_service's automatic route), and those are just as topic-specific — the
+    amenity shots attached to "tiện ích có gì" must not be replayed under a cache-matched
+    "mặt bằng thế nào".
     """
     if result.requires_hitl or result.verifier_score < _threshold():
         return
 
-    if answer_images_service.wants_images(query):
+    if result.images:
         return
 
     cache_service.store_cache(
@@ -1103,7 +1547,7 @@ def _reflection_enabled() -> bool:
     return get_settings().reflection_memory_enabled
 
 
-def _lessons_for(query: str) -> str:
+def _lessons_for(query: str, scope: str | None = None) -> str:
     """Lessons from earlier mistakes that apply to this question, rendered for the prompt.
 
     Never raises: reflection memory is an improvement layer, and a Redis problem here must
@@ -1113,7 +1557,7 @@ def _lessons_for(query: str) -> str:
         return ""
 
     try:
-        return reflection_memory.format_lessons(reflection_memory.relevant_lessons(query))
+        return reflection_memory.format_lessons(reflection_memory.relevant_lessons(query, scope=scope))
     except Exception:  # pragma: no cover - defensive; the service already fails open
         logger.warning(
             "Doc reflection memory that bai; tra loi khong kem bai hoc nao.",

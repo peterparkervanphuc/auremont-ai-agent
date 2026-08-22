@@ -1,252 +1,224 @@
-# Architecture Document
+# Architecture
 
-## System Overview
+## Overview
 
-Auremont AI Agent là một ứng dụng RAG một-SPA-hai-vai-trò: một React SPA duy nhất phân nhánh giao diện Sale/Admin theo `role` trong JWT, một backend FastAPI điều phối pipeline trả lời qua LangGraph (cache → retrieve → tool-call tồn kho → generate → verify → risk-check), và ba kho dữ liệu tách biệt theo vai trò — MySQL (quan hệ/metadata), Qdrant (vector) và MinIO (file gốc). Toàn bộ hệ thống chạy bằng Docker Compose cho local dev; chưa có hạ tầng deploy production nào được cấu hình trong repo.
+One React SPA, role-routed (Sale / Admin / Customer) via JWT. One FastAPI backend orchestrating a LangGraph pipeline (cache → retrieve → inventory tool → image tool → generate → verify → risk-check). Four data stores: MySQL (relational), Qdrant (vectors + semantic cache), Redis (memory, fail-open), MinIO (files). Docker Compose for local dev; no production infra configured.
 
-## Architecture Diagram
+## Diagram
 
 ```mermaid
 flowchart TB
-    subgraph CLIENT["🖥️ Client Layer"]
-        SPA["React SPA (single app)<br/>React 19 + Vite + TS<br/>role-based routing: Sale / Admin"]
+    subgraph CLIENT["Client"]
+        SPA["React SPA<br/>Sale / Admin / Customer"]
     end
 
-    FeNginx["nginx<br/>(trong container frontend)<br/>serve SPA + proxy /api/ -> backend"]
+    FeNginx["nginx (in frontend container)"]
 
-    subgraph BACKEND["⚙️ Backend - FastAPI"]
+    subgraph BACKEND["FastAPI Backend"]
         direction TB
-        API["FastAPI REST API<br/>Swagger UI tại /docs"]
-        Auth["JWT (HS256) + RBAC<br/>role claim SALE/ADMIN<br/>+ filter payload Qdrant theo visibility"]
+        API["REST API — /docs"]
+        Auth["JWT + RBAC"]
 
-        subgraph AGENT["🤖 Agent Pipeline - LangGraph StateGraph (agent_pipeline.py)"]
+        subgraph AGENT["Agent Pipeline (LangGraph)"]
             direction TB
             CacheNode["cache_check"]
             RetrieveNode["retrieve"]
-            ToolCallNode["tool_call<br/>(inventory API)"]
-            ImageNode["image_tool<br/>(ảnh dự án)"]
+            ToolCallNode["tool_call"]
+            ImageNode["image_tool"]
             GenerateNode["generate"]
-            VerifyNode["verify<br/>(Verifier: Gemini LLM-as-judge)"]
+            VerifyNode["verify"]
             RiskNode["risk_check"]
             RetryNode["bump_retry / low_confidence"]
         end
 
-        subgraph INGEST["📥 Ingestion Pipeline (ingestion_service.py)"]
+        subgraph MEM["Memory (Redis)"]
+            LongTerm["memory_service — per-user profile"]
+            Reflection["reflection_memory — agent's own lessons"]
+        end
+
+        subgraph INGEST["Ingestion"]
             direction TB
-            Sanitizer["sanitize_and_scan()<br/>regex prompt-injection check"]
-            Classifier["document_classification_service<br/>auto-classify + confidence score"]
-            Chunker["chunking_service.py<br/>custom section-aware splitter<br/>(không dùng LlamaIndex)"]
-            Embedder["gemini_client.embed_content<br/>gemini-embedding-001"]
+            Sanitizer["prompt-injection scan"]
+            Classifier["auto-classify"]
+            Chunker["chunk"]
+            Embedder["embed"]
         end
     end
 
-    subgraph DATA["🗄️ Data Layer"]
+    subgraph DATA["Data"]
         direction LR
-        MySQL[("MySQL 8.4<br/>users, documents, projects,<br/>document_relations, conflict_flags,<br/>chat_sessions, messages,<br/>hitl_logs, feedback, audit_logs")]
-        Qdrant[("Qdrant<br/>collection tài liệu (vector)<br/>+ collection salesmate_qa_cache<br/>(Semantic Cache, cosine >= 0.95)")]
-        MinIO[("MinIO<br/>file gốc PDF/Excel/Word<br/>+ bucket project-images")]
+        MySQL[("MySQL 8.4")]
+        Qdrant[("Qdrant<br/>docs + semantic cache")]
+        Redis[("Redis<br/>fail-open")]
+        MinIO[("MinIO")]
     end
 
-    subgraph EXTERNAL["🌐 External Services"]
+    subgraph EXTERNAL["External"]
         direction LR
-        Gemini["Google Gemini<br/>gemini-3.5-flash-lite (generate/verify)<br/>gemini-embedding-001 (embed)"]
-        InventoryAPI["Inventory API<br/>⚠️ hiện trỏ tới mock (mockapi.io)<br/>đổi qua API thật chỉ cần đổi env var"]
+        Gemini["Gemini<br/>generate/verify/embed"]
+        Cohere["Cohere Rerank<br/>optional"]
+        InventoryAPI["Inventory API<br/>mock (mockapi.io)"]
     end
 
-    DeepEvalOffline["DeepEval<br/>(offline, thư mục eval/ — KHÔNG chạy live trong request path)"]
-
-    subgraph DEV["🐳 Local Dev - Docker Compose"]
+    subgraph DEV["Docker Compose (local)"]
         direction LR
-        DcFrontend["frontend :5173→80"]
+        DcFrontend["frontend :5173"]
         DcBackend["backend :8000"]
-        DcMysql["mysql :3307→3306"]
+        DcMysql["mysql :3307"]
         DcQdrant["qdrant :6333"]
+        DcRedis["redis :6379"]
         DcMinio["minio :9000/9001"]
     end
 
-    SPA --> FeNginx
-    FeNginx -->|"/api/*"| API
-    API --> Auth
-
-    Auth --> CacheNode
-    Auth --> Sanitizer
-
-    CacheNode -->|hit| END1(("trả lời ngay"))
-    CacheNode -->|miss| RetrieveNode
-    RetrieveNode --> Qdrant
-    RetrieveNode -->|cần tồn kho| ToolCallNode
-    ToolCallNode --> InventoryAPI
-    RetrieveNode --> ImageNode
-    ToolCallNode --> ImageNode
-    ImageNode --> GenerateNode
+    SPA --> FeNginx --> API --> Auth --> CacheNode
+    CacheNode -->|hit| END1(("answer"))
+    CacheNode -->|miss| RetrieveNode --> Qdrant
+    RetrieveNode -->|needs inventory| ToolCallNode --> InventoryAPI
+    RetrieveNode -->|no inventory| ImageNode
+    ToolCallNode --> ImageNode --> GenerateNode
     GenerateNode --> Gemini
-    GenerateNode --> VerifyNode
-    VerifyNode --> Gemini
-    VerifyNode -->|điểm thấp, còn lượt retry| RetryNode
-    RetryNode --> GenerateNode
-    VerifyNode -->|đạt| RiskNode
-    RiskNode --> END2(("HITL nếu có rủi ro giá/cam kết"))
+    GenerateNode --> LongTerm
+    GenerateNode --> Reflection
+    GenerateNode --> VerifyNode --> Gemini
+    VerifyNode -->|low score, retry left| RetryNode --> GenerateNode
+    VerifyNode -->|pass| RiskNode --> END2(("HITL if price/commitment"))
+    VerifyNode -.reject.-> Reflection
 
-    Sanitizer -->|an toàn| Classifier
-    Sanitizer -->|phát hiện mẫu prompt injection| BlockFile["Chặn file, cảnh báo Admin"]
-    Classifier --> MinIO
-    Classifier --> Chunker
-    Chunker --> Embedder
+    Sanitizer -->|clean| Classifier --> MinIO
+    Classifier --> Chunker --> Embedder -.optional.-> Cohere
     Embedder --> Qdrant
 
     API --> MySQL
-    MinIO -.đường dẫn tham chiếu.-> MySQL
+    MinIO -.reference.-> MySQL
 
-    VerifierScores["Verifier scores (faithfulness/relevancy)<br/>ghi vào MySQL"] --> MySQL
-    MySQL -.Admin đọc trực tiếp, KHÔNG qua DeepEval.-> EvalDash["Admin Eval Dashboard"]
-
-    classDef client fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
     classDef backend fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef data fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef external fill:#fce7f3,stroke:#db2777,color:#831843
     classDef dev fill:#e0e7ff,stroke:#4f46e5,color:#312e81
-    classDef caveat fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
-
-    class SPA client
-    class API,Auth,CacheNode,RetrieveNode,ToolCallNode,ImageNode,GenerateNode,VerifyNode,RiskNode,RetryNode,Sanitizer,Classifier,Chunker,Embedder backend
-    class MySQL,Qdrant,MinIO data
-    class Gemini,InventoryAPI external
-    class DcFrontend,DcBackend,DcMysql,DcQdrant,DcMinio dev
-    class DeepEvalOffline,InventoryAPI caveat
+    class API,Auth,CacheNode,RetrieveNode,ToolCallNode,ImageNode,GenerateNode,VerifyNode,RiskNode,RetryNode,Sanitizer,Classifier,Chunker,Embedder,LongTerm,Reflection backend
+    class MySQL,Qdrant,Redis,MinIO data
+    class Gemini,Cohere,InventoryAPI external
+    class DcFrontend,DcBackend,DcMysql,DcQdrant,DcRedis,DcMinio dev
 ```
 
 ## Components
 
-### 1. Frontend (React + Vite + TS)
-- **Purpose:** Một SPA duy nhất (`frontend/`) phục vụ cả 2 vai trò — Sale (chat tư vấn, duyệt catalogue tồn kho) và Admin (quản lý kho tài liệu, giám sát chất lượng AI). Phân nhánh theo `role` đọc từ JWT ngay trong `App.tsx` (`ProtectedRoute allowedRole=...`), **không phải hai ứng dụng build/deploy riêng**.
-- **Key Features:**
-  - Sale: sidebar Session (chat), khung chat Text, trạng thái Loading theo bước xử lý, Thẻ HITL (`HitlCard.tsx`) bắt buộc xác nhận trước khi copy nội dung gửi khách, nút Feedback (`FeedbackButtons.tsx`) trên từng câu trả lời, dải ảnh minh họa (`AnswerImageStrip.tsx`), và khu vực duyệt catalogue tồn kho theo dự án/phân khu (`routes/sale/inventory/*`).
-  - Admin: kéo-thả upload PDF/Excel, bảng danh sách tài liệu, tab Đánh giá AI (đọc điểm Verifier từ MySQL), tab Cảnh báo mâu thuẫn (`ConflictsTab.tsx`), tab Document Relations (`DocumentRelationsTab.tsx`), tab Duyệt phân loại tài liệu (`DocumentReviewTab.tsx`), Cài đặt chung.
-  - Swagger UI (`/docs`) dùng nội bộ để dev/test API, không expose cho end-user.
-- **State Management:** React Context (`context/AuthContext.tsx`, `context/ThemeContext.tsx`) + hooks (`hooks/useAuth.ts`) cho state cục bộ, gọi API trực tiếp qua `api/client.ts` (fetch thuần). **Không dùng Zustand hay TanStack Query** — bản thiết kế ban đầu đề xuất hai thư viện này nhưng chưa được đưa vào (`package.json` chỉ có `react`, `react-dom`, `react-router-dom`).
+### Frontend
+Single SPA, role-routed via JWT claim (`ProtectedRoute`). Sale: chat, HITL confirm card, feedback, inventory catalogue, live-inbox handoff. Customer: public/anon chat, quick-replies, registration gate. Admin: document ingestion, eval dashboard, conflict resolution. State via React Context + hooks — no Zustand/TanStack Query.
 
-### 2. Backend (FastAPI)
-- **Purpose:** Điều phối toàn bộ pipeline — nhận câu hỏi từ Sale, chạy Agent Pipeline, quản lý ingestion tài liệu từ Admin, cung cấp dữ liệu cho Dashboard đánh giá.
-- **API Design:** RESTful, tự sinh docs qua Swagger UI tại `/docs`. Routers thực tế: `auth`, `users`, `projects`, `documents`, `document_relations`, `sale_chat`, `hitl`, `feedback`, `admin_conflicts`, `admin_eval`, `admin_stats`, `admin_settings`, `dev_seed` (chỉ dùng để seed dữ liệu E2E, không dùng production).
-- **Authentication:** JWT (HS256, `python-jose`) với claim `role` (SALE/ADMIN) — đã triển khai thật, không còn là đề xuất (`backend/core/security.py`, `backend/routers/auth.py`). RBAC 2 lớp: chặn ở route (`require_role` trong `backend/core/deps.py`) và filter ở tầng retrieval (`rag_service._visibility_condition` lọc payload Qdrant theo `visibility`).
-- **Reverse proxy:** nginx **không phải một service hạ tầng độc lập** — nó là web server bên trong Docker image của `frontend/` (`frontend/Dockerfile`, `frontend/nginx.conf`), phục vụ SPA đã build và proxy `/api/*` sang container backend.
+### Backend
+FastAPI, RESTful, Swagger at `/docs`. JWT (HS256) with `role` claim (SALE/ADMIN/CUSTOMER); anonymous customers use a `visitor_token` instead. RBAC enforced at the route (`require_role`) and retrieval layer (Qdrant payload filter on `visibility`).
 
-### 3. Agent Pipeline (LangGraph `StateGraph`)
-- **Kiến trúc thật:** Một `StateGraph` LangGraph duy nhất (`backend/services/agent_pipeline.py`), không phải nhiều "agent" độc lập theo đúng nghĩa Multi-Agent — chỉ có một model Gemini gọi 2 lần với 2 prompt khác nhau (generate và verify).
-- **State (`PipelineState`):** `query, project_id, retrieved_docs, needs_inventory, needs_document_retrieval, inventory_units, inventory_failed, draft_answer, citations, verifier_score, faithfulness, answer_relevancy, requires_hitl, images, db, retry_count, notice, used_cache`.
-- **9 nodes thật:**
-  - `cache_check` — tra Semantic Cache (collection Qdrant riêng `salesmate_qa_cache`, ngưỡng cosine ≥ 0.95) trước khi tốn token.
-  - `retrieve` — truy vấn Qdrant lấy context; xác định câu hỏi có cần tồn kho real-time không.
-  - `tool_call` — gọi API tồn kho (hiện là mock `mockapi.io`, xem mục External Services).
-  - `image_tool` — lấy ảnh minh họa dự án cho câu hỏi kiểu "cho xem mặt bằng/hình ảnh"; chạy **trước** `generate` để model biết ảnh sẽ đính kèm.
-  - `generate` — sinh câu trả lời kèm trích nguồn (Gemini `gemini-3.5-flash-lite`).
-  - `verify` — Verifier chấm Faithfulness/Relevancy độc lập (cũng bằng Gemini, LLM-as-judge, **không dùng DeepEval inline** vì DeepEval mặc định gọi OpenAI, chậm hơn).
-  - `risk_check` — phát hiện rủi ro giá/cam kết trong câu trả lời, gắn cờ HITL.
-  - `bump_retry` — tăng bộ đếm và quay lại `generate` (tối đa 1 lần retry khi điểm Verifier thấp).
-  - `low_confidence` — node kết thúc khi hết lượt retry mà điểm vẫn thấp, trả về "Không đủ thông tin, liên hệ Admin".
-- **Câu hỏi ảnh bỏ qua `verify`:** answer-relevancy chấm *văn bản* so với câu hỏi nên không thể chấm đúng khi câu trả lời là ảnh; `risk_check` vẫn chạy bình thường.
-- **Tools:** `rag_service.retrieve` (Qdrant + rerank), `inventory_service.lookup_inventory` (API tồn kho), `answer_images_service.collect_images` (ảnh dự án), `citations.build_citations` (chuẩn hóa trích nguồn).
-- **Re-ranker:** **không phải model cross-encoder riêng** — `rag_service._rerank` là một hàm keyword-overlap nhẹ (khớp token có chữ số như "2PN"/"OP3" giữa câu hỏi và kết quả, trộn 20% trọng số vào điểm vector), được comment rõ trong code là placeholder có thể thay bằng cross-encoder/Cohere Rerank sau này.
-- **Flow:**
+Routers: `auth`, `users`, `projects`, `documents`, `document_relations`, `sale_chat`, `customer_chat`, `sale_live`, `hitl`, `feedback`, `admin_conflicts`, `admin_eval`, `admin_stats`, `admin_settings`, `dev_seed` (dev-only).
+
+### Customer chat & AI↔Sale handoff
+Separate flow from Sale's own chat. Anonymous sessions use a `visitor_token`; logged-in customers use `customer_id`. Three gates for anonymous visitors — `turn_limit`, `closing_intent`, `human_request` — each short-circuits before the pipeline runs (zero LLM cost). Logged-in customers can be handed off to a live Sale (`WAITING_SALE`); `sale_live.py` is the claim/reply/co-pilot inbox for that queue. Anonymous endpoints are per-IP rate-limited.
+
+### Agent Pipeline (LangGraph)
+One `StateGraph`, 9 nodes: `cache_check → retrieve → tool_call → image_tool → generate → verify → risk_check`, with `bump_retry`/`low_confidence` on the retry path.
+
+- **cache_check** — semantic cache (Qdrant, cosine ≥ 0.95); skipped when there's conversation history or a personalization profile.
+- **retrieve** — Qdrant search + inventory-need detection.
+- **tool_call** — live inventory API.
+- **image_tool** — runs *before* generate, so the model knows what photos will attach. Two strategies: uncapped when explicitly requested, capped at 3 with strict topic match when auto-attached.
+- **generate** — answer + citations + suggested follow-ups (+ quick-replies for customers), one Gemini call. Reads memory profile and reflection lessons from Redis.
+- **verify** — Faithfulness/Relevancy/Completeness (Gemini-as-judge). Rejections are distilled into a reflection lesson.
+- **risk_check** — flags HITL for price/commitment content.
+- **bump_retry / low_confidence** — one retry max, always carrying the Verifier's feedback (never a blind repeat); declines to "insufficient information" when still low.
+
+Verify is skipped for image-only answers, conversation-meta questions, and empty-context openers — `risk_check` still runs in all three.
+
 ```mermaid
 graph LR
     START --> Cache{cache_check}
     Cache -->|hit| END
-    Cache -->|miss| Retrieve[retrieve: Qdrant Search]
-    Retrieve -->|lỗi/rỗng, không cần tồn kho| END
-    Retrieve --> NeedInv{Cần tồn kho?}
-    NeedInv -->|Yes| ToolCall[tool_call: Inventory API]
-    NeedInv -->|No| ImageTool[image_tool]
-    ToolCall --> ImageTool
-    ImageTool --> Generate[generate]
-    Generate -->|câu hỏi ảnh| RiskCheck
-    Generate --> Verify[verify: Faithfulness/Relevancy]
-    Verify -->|điểm thấp, còn retry| BumpRetry[bump_retry] --> Generate
-    Verify -->|điểm thấp, hết retry| LowConf[low_confidence] --> END
-    Verify -->|đạt| RiskCheck{risk_check}
+    Cache -->|miss| Retrieve
+    Retrieve -->|needs inventory| ToolCall --> ImageTool
+    Retrieve -->|no inventory| ImageTool
+    ImageTool --> Generate
+    Generate -->|image/meta/empty| RiskCheck
+    Generate --> Verify
+    Verify -->|low, retry left| BumpRetry --> Generate
+    Verify -->|low, exhausted| LowConf --> END
+    Verify -->|pass| RiskCheck
     RiskCheck --> END
 ```
 
-### 4. Database (MySQL 8.4 + SQLAlchemy + Alembic)
-- **Migrations:** Alembic thật (`alembic.ini`, `migrations/versions/`, 10 migration files).
-- **Bảng thật (`backend/models/*.py`):**
-  - `users` — id, username, email, hashed_password, role, is_active, created_at.
-  - `documents` — ~30 cột, gồm title, file_path (đường dẫn MinIO), visibility (internal/public), category/subcategory, review_status, classification_confidence, legal_document_type, legal_status, is_current, version_label, effective_date, uploaded_by, uploaded_at...
-  - `projects` — id, name, location, description, details (JSON) — thực thể catalogue dự án, được tham chiếu bởi chat_sessions/documents/inventory mapping.
-  - `document_relations` — liên kết tài liệu này thay thế/liên quan tài liệu khác (relation_type, confidence, review_status) — nguồn cho tab Document Relations, **khác** với `conflict_flags`.
-  - `conflict_flags` — document_id_a, document_id_b, status, resolved_by, resolved_at — cờ mâu thuẫn nội dung giữa 2 tài liệu.
-  - `chat_sessions` — phiên tư vấn theo sale/khách hàng.
-  - `messages` — nội dung chat, citations, risk_flag, timestamp.
-  - `hitl_logs` — nhật ký xác nhận HITL của Sale.
-  - `feedback` — phản hồi đúng/sai của Sale trên từng câu trả lời.
-  - `audit_logs` — nhật ký sự kiện nghiệp vụ (login/logout, xác nhận HITL...), phục vụ `/admin/eval/audit`.
+### Memory (Redis)
+Two independent namespaces, both fail-open (Redis down → pipeline still answers, just without personalization):
+- **Long-term** (`memory_service.py`) — per-user profile (unit types, budget, project, topics), extracted from the user's own questions only, never the model's answers. TTL 90 days.
+- **Reflection** (`reflection_memory.py`) — lessons from the agent's own Verifier rejections, global by failure mode, keyword-matched. TTL 30 days.
 
-### 5. Vector Store (Qdrant)
-- **Type:** Qdrant self-host, chỉ lưu vector embedding — tách biệt hoàn toàn với MinIO.
-- **Embedding model đã chốt (không còn là đề xuất mở):** `gemini-embedding-001` (768 chiều), gọi trực tiếp qua `google-genai` SDK (`backend/core/gemini_client.py`) — **không dùng LlamaIndex**. Chunking là code tự viết (`backend/services/chunking_service.py`): bộ tách theo cấu trúc văn bản (số La Mã, "ĐIỀU", "CHƯƠNG", heading breadcrumb, gom bảng/bullet).
-- **2 collection:** một collection tài liệu chính, một collection Semantic Cache (`salesmate_qa_cache`) lưu câu hỏi đã trả lời đạt điểm Verifier để tái sử dụng.
-- **Purpose:** RAG — truy hồi ngữ cảnh từ bảng giá, mặt bằng, chính sách, tiện ích đã ingest; hỗ trợ payload filter theo `visibility` để phục vụ RBAC.
+`.env.example` currently omits `REDIS_URL`/`MEMORY_TTL_SECONDS` despite code defaults — should be added.
 
-### 6. Ingestion Pipeline (`backend/services/ingestion_service.py`)
-- **Prompt Injection Scanner (`sanitize_and_scan`):** danh sách ~6 regex pattern cố định (ví dụ "ignore previous instructions", "system prompt", "jailbreak"...), chạy như một bước inline trong `ingest_uploaded_document`, **không phải một service/model quét riêng**.
-- **Document Classification (`document_classification_service.py`):** bước AI tự động phân loại tài liệu kèm điểm tin cậy, có ngưỡng tự-duyệt cấu hình được (`classification_auto_approve_threshold`), đưa vào hàng chờ duyệt Admin (`review_status`, tab Document Review) — hoàn toàn chưa có trong bản thiết kế gốc.
-- **Flow thật:** Admin upload → `sanitize_and_scan` → (an toàn) → lưu MinIO → `document_classification_service` (phân loại + confidence) → `chunking_service` (chunk) → `gemini_client.embed_content` (embed) → Qdrant.
+### Database (MySQL + Alembic)
+Key tables: `users` (SALE/ADMIN/CUSTOMER share one table), `documents`, `projects`, `document_relations`, `conflict_flags`, `chat_sessions` (shared by Sale self-consult and customer chat, tracks handoff status), `messages` (citations, images, `quick_replies`, `suggested_questions`, `emotion`, Verifier scores), `hitl_logs`, `feedback`, `audit_logs`.
 
-### 7. Tính năng khác chưa có trong thiết kế gốc
-- **Answer images / project gallery** (`backend/services/answer_images_service.py`, bucket MinIO `project-images`, biến môi trường `PROJECT_IMAGES_BASE_URL`/`PROJECT_IMAGES_ARCHIVE_URL`, frontend `AnswerImageStrip.tsx`) — Sale hỏi "cho xem mặt bằng/hình ảnh" sẽ nhận kèm ảnh thật từ catalogue.
-- **Inventory catalogue browsing UI** (`frontend/src/routes/sale/inventory/*` — theo từng phân khu, ví dụ `the-metropolitan.tsx`, `tieu-khu-hai-au.tsx`) — khu vực duyệt tồn kho dạng catalogue ngoài luồng chat.
+### Vector Store & Answer Images
+Qdrant, two collections: main document store (dense, optional BM25 hybrid) and semantic cache. Embedding: `gemini-embedding-001` (768d), direct via `google-genai` — no LlamaIndex. Custom section-aware chunker.
+
+Answer images (`answer_images_service.py`) — two strategies:
+- **Requested** (e.g. "cho xem mặt bằng") — every matching photo, uncapped; falls back to the full gallery if nothing matches.
+- **Auto-attached** (e.g. "tiện ích có gì") — capped at 3, strict topic match, no fallback.
+
+### Ingestion
+`sanitize_and_scan` (regex prompt-injection check) → MinIO → `document_classification_service` (auto-classify + confidence) → chunk → embed → optional Cohere rerank prep → Qdrant.
+
+### Eval
+Three complementary layers, none replacing the others:
+1. **Tracing** (`backend/core/tracing.py`) — per-run JSONL trace, off by default.
+2. **Graders** (`eval/graders.py`) — deterministic checks over recorded traces (grounded, tool called when needed, retry carries a correction, latency budget). `scripts/run_eval.py --fail-under RATE` gates CI, but needs prior real traffic.
+3. **Golden regression gate** (`eval/golden_dataset.py`, `tests/test_services/test_golden_regression.py`) — fixed, hand-picked Sale questions run through the real pipeline with stubbed retrieval/inventory/LLM/Verifier — deterministic, no API key, catches routing/HITL/citation regressions on the PR itself.
+
+`admin_eval.py` (`/admin/eval`) reads live Verifier scores from MySQL directly — not a DeepEval batch. DeepEval itself is offline-only, never in the request path.
 
 ## Data Flow
-1. Sale gửi câu hỏi (Text) từ Frontend.
-2. FastAPI route nhận request, validate input bằng Pydantic, xác thực JWT + kiểm tra Role.
-3. `cache_check` tra Semantic Cache (Qdrant, cosine ≥ 0.95) — trùng câu hỏi đã cache thì trả ngay, bỏ qua các bước dưới.
-4. Cache miss: `retrieve` truy vấn Qdrant lấy context (áp payload filter theo `visibility`); nếu câu hỏi cần dữ liệu tồn kho, `tool_call` gọi API tồn kho (hiện là mock mockapi.io).
-5. `image_tool` lấy ảnh dự án nếu câu hỏi hỏi hình ảnh/mặt bằng.
-6. `generate` — Gemini (`gemini-3.5-flash-lite`) sinh câu trả lời kèm trích nguồn tài liệu.
-7. `verify` — Verifier (cũng Gemini, LLM-as-judge) chấm điểm Faithfulness/Relevance; điểm thấp → tối đa 1 lần quay lại `generate`; hết lượt vẫn thấp → "Không đủ thông tin, liên hệ Admin". Câu hỏi dạng ảnh bỏ qua bước này.
-8. `risk_check` — nếu câu trả lời chạm rủi ro cam kết/giá → gắn cờ HITL, Sale phải xác nhận (`hitl_logs` ghi nhận) mới được copy gửi khách.
-9. Response trả về Frontend kèm nút Feedback; điểm Verifier được ghi thẳng vào MySQL để Admin Eval Dashboard đọc trực tiếp — **không qua DeepEval** (DeepEval chỉ dùng offline, thư mục `eval/`, không nằm trong request path).
+1. Sale/Customer sends a question.
+2. Auth (JWT or visitor token) + role check; anonymous customers also pass rate-limit + 3 gates.
+3. `cache_check` — semantic cache hit answers immediately; skipped with history or a personalization profile.
+4. `retrieve` — Qdrant search; `tool_call` if live inventory is needed.
+5. `image_tool` — requested (uncapped) or auto-attached (capped at 3) photos.
+6. `generate` — Gemini answer + citations + suggested questions (+ quick-replies), informed by memory + reflection lessons.
+7. `verify` — score, one corrected retry max, decline if still low.
+8. `risk_check` — HITL flag for Sale; for customers, a risky answer never shows directly — it becomes a registration gate or a Sale handoff.
+9. Response returned; Verifier scores written to MySQL for the Admin dashboard; rejections feed reflection memory.
 
-## Deployment Architecture (local dev — Docker Compose)
+## Deployment (local — Docker Compose)
 
 ```mermaid
 graph LR
-    subgraph "Docker Compose - Local Dev (docker-compose.yml)"
-        FE["frontend<br/>host :5173 → container :80 (nginx + SPA build)"]
-        BE["backend<br/>:8000 (FastAPI)"]
-        DB_C[("mysql<br/>host :3307 → container :3306")]
-        VDB[("qdrant<br/>:6333")]
-        OBJ[("minio<br/>:9000 API / :9001 console")]
-    end
-    FE -->|"/api/*"| BE
-    BE --> DB_C
-    BE --> VDB
-    BE --> OBJ
+    FE["frontend :5173"] -->|"/api/*"| BE["backend :8000"]
+    BE --> DB[("mysql :3307")]
+    BE --> VDB[("qdrant :6333")]
+    BE --> RDS[("redis :6379")]
+    BE --> OBJ[("minio :9000/9001")]
 ```
 
-> **Production hosting (Vercel/Fly.io) chưa được triển khai.** Không có `vercel.json`, `fly.toml`, hay bước deploy nào trong `.github/workflows/ci.yml` (hiện chỉ chạy `ruff` lint + `pytest` trên self-hosted runner). Docker Compose là đường chạy thực tế duy nhất hiện có trong repo; Vercel/Fly.io vẫn là định hướng tương lai, không phải hiện trạng.
+> No production hosting configured — no `vercel.json`/`fly.toml`, no deploy step in CI (ruff + mypy + pytest + golden regression gate, self-hosted runner). Docker Compose is the only working deployment path today.
 
 ## Security
-- API keys (Gemini, MinIO, DB, JWT secret) lưu trong `.env`, không commit (`.env.example` làm mẫu).
-- Input validation qua Pydantic ở mọi endpoint.
-- CORS cấu hình qua `cors_origins` (mặc định `http://localhost:3000,http://localhost:5173`), không gắn cứng theo domain Vercel.
-- RBAC 2 lớp: chặn ở route (role SALE/ADMIN qua `require_role`) và filter ở tầng retrieval (payload Qdrant theo `visibility`) để phân biệt tài liệu nội bộ/công khai.
-- Prompt Injection scanning (regex pattern list) bắt buộc khi ingest tài liệu — chặn file trước khi vào MinIO/Qdrant.
-- HITL bắt buộc cho mọi câu trả lời có rủi ro cam kết/giá, có nhật ký xác nhận (`hitl_logs`) — lớp bảo vệ nghiệp vụ, không chỉ kỹ thuật.
-- **Rate limiting: chưa triển khai.** Không có middleware/thư viện rate limiting nào trong `backend/` hiện tại — đây là hạng mục còn thiếu, không phải đã có như thiết kế ban đầu mô tả.
+- Secrets in `.env`, not committed.
+- Pydantic validation on every endpoint.
+- CORS via `cors_origins`.
+- RBAC: route-level (`require_role`) + retrieval-level (Qdrant `visibility` filter).
+- Prompt-injection scanning blocks files before ingest.
+- HITL mandatory for price/commitment answers to Sale; never shown directly to customers.
+- Rate limiting: per-IP, anonymous customer endpoints only — not applied API-wide.
+- Redis fail-open: connection loss degrades personalization, never breaks a request.
 
 ## Design Decisions
+
 | Decision | Choice | Reason |
-|----------|--------|--------|
-| Framework | FastAPI | Async, auto-docs (Swagger UI), type-safe, phù hợp pipeline nhiều bước |
-| Agent orchestration | LangGraph `StateGraph` (1 graph, 9 node) | Quản lý state linh hoạt, dễ thêm vòng lặp retry khi Verifier chấm điểm thấp; không cần nhiều "agent" tách rời để đạt được vòng lặp tự sửa lỗi |
-| Database | MySQL 8.4 + Alembic | Quan hệ rõ ràng giữa Users/Documents/Projects/Sessions/Feedback, dễ join cho Admin dashboard |
-| Frontend | React + Vite (1 SPA, không SSR) | Internal tool yêu cầu đăng nhập, không cần SSR/SEO; 1 SPA phân nhánh role đơn giản hơn duy trì 2 app |
-| Vector Store | Qdrant | Self-host đáp ứng yêu cầu bảo mật enterprise, hỗ trợ payload filtering cho RBAC tài liệu |
-| Object Storage | MinIO | S3-compatible, tách file gốc khỏi vector DB, dùng để tải lại/tham chiếu khi cần |
-| Embedding | `gemini-embedding-001` (768d), gọi trực tiếp qua `google-genai` | Đồng bộ hệ sinh thái Gemini đang dùng cho generation, không cần thêm abstraction layer như LlamaIndex |
-| Generation/Verify LLM | Gemini `gemini-3.5-flash-lite` (chỉ 1 provider) | Chi phí/độ trễ thấp, đủ cho ngân sách phản hồi dưới 3 giây; Claude/GPT-4o trong thiết kế gốc chưa được tích hợp |
-| Re-rank | Keyword-overlap heuristic (không phải cross-encoder) | Đơn giản, không thêm dependency, đủ dùng cho các câu hỏi số phòng/mã căn; có thể thay bằng cross-encoder/Cohere Rerank sau |
-| Eval | Verifier score ghi trực tiếp MySQL, đọc trực tiếp cho Admin dashboard; DeepEval dùng offline riêng trong `eval/` | DeepEval mặc định gọi OpenAI nên chậm hơn ngân sách phản hồi real-time; tách biệt eval offline khỏi eval online giúp dashboard nhanh và không phụ thuộc thêm provider |
-| Inventory integration | Mock API (`mockapi.io`) qua biến môi trường `INVENTORY_API_URL` | Chưa có API tồn kho nội bộ thật trong giai đoạn build; đổi sang API thật chỉ cần đổi env var, không cần sửa code |
-| Deploy | Docker Compose (local); Vercel/Fly.io chưa triển khai | Ưu tiên chạy được end-to-end cục bộ trước; hạ tầng production để sau |
+|---|---|---|
+| Orchestration | LangGraph `StateGraph`, 1 graph | Simpler than multiple agents for a retry loop |
+| Database | MySQL + Alembic | Clear relations for Admin dashboard joins |
+| Frontend | React + Vite, 1 SPA, no SSR | Internal tool, auth-gated; role-branching beats multiple apps |
+| Vector store | Qdrant | Self-hosted, payload filtering for RBAC, doubles as semantic cache |
+| Memory | Redis, fail-open | Personalization is a nice-to-have, not a source of truth |
+| Embedding | `gemini-embedding-001` direct | Same ecosystem as generation, no LlamaIndex needed |
+| Generation/Verify | Gemini `gemini-3.5-flash-lite` only | Cost/latency fit the <3s budget |
+| Retrieval | Dense + optional BM25/Cohere rerank, fail-open to heuristic | Off by default (Render free tier); safe to enable later |
+| Eval | Live scores (dashboard) + trace/graders (real traffic) + golden set (CI) | Three needs: fast dashboard, real-traffic detection, pre-merge regression gate |
+| Customer chat | Separate flow, HITL never shown directly | AI must not commit pricing to an end customer unsupervised |
+| Inventory | Mock API via env var | No real internal API yet; swap is a config change |
+| Deploy | Docker Compose only | End-to-end locally first; production infra deferred |

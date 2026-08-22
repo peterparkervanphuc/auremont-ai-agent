@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str = ""
     qdrant_collection: str = "salesmate_documents"
+    # Bound vector-store latency on the interactive chat path. Qdrant's Python client
+    # otherwise inherits a comparatively generous transport default, which can leave a
+    # Sale staring at a request that will ultimately be degraded anyway.
+    qdrant_timeout_seconds: int = Field(default=5, ge=1, le=60)
 
     # Hybrid retrieval: BM25 keyword search alongside the dense vector search, fused by
     # Qdrant's own RRF. Off by default because it requires the named dense+sparse
@@ -78,6 +82,14 @@ class Settings(BaseSettings):
     rerank_enabled: bool = False
     cohere_api_key: str = ""
     cohere_rerank_model: str = "rerank-v3.5"
+    cohere_rerank_timeout_seconds: float = Field(default=2.5, gt=0, le=30)
+
+    # Context selection runs after retrieval/reranking. It keeps the prompt bounded and
+    # removes overlapping chunks from the same source before they consume several of the
+    # limited context slots. Values are character-based because chunking is character-
+    # based too; this remains provider/tokenizer independent.
+    rag_max_context_chars: int = Field(default=12_000, ge=1_000, le=100_000)
+    rag_duplicate_similarity_threshold: float = Field(default=0.88, ge=0.5, le=1.0)
 
     # Pipeline tracing: one JSONL record per question holding every routing decision,
     # tool call and retry. Separate from the audit log, which keeps one business row per
@@ -103,6 +115,17 @@ class Settings(BaseSettings):
     # Ngan hon memory_ttl_seconds (30 ngay): mot bai hoc rut ra tu bo tai lieu cu se sai
     # sau khi Admin thay tai lieu, nen no phai tu het han thay vi bam mai vao prompt.
     reflection_ttl_seconds: int = 60 * 60 * 24 * 30
+
+    # Tieu chi tim can tich luy qua nhieu luot cua mot phien (backend/services/
+    # search_criteria.py). Bat de "giu nguyen dieu kien, tang gia len 5 ty" khong lam mat
+    # cac tieu chi da neu truoc do; tat de quay ve hanh vi stateless: moi luot parse lai
+    # tu dau chi tu cau hoi hien tai.
+    search_criteria_enabled: bool = True
+    # 24 gio, ngan hon han memory_ttl_seconds (90 ngay): tieu chi tim kiem la bo nho lam
+    # viec cua MOT cuoc tu van, khong phai so thich lau dai cua mot nguoi. Mot bo loc cua
+    # phien hom qua song lai hom nay se am tham an di nhung can khach dang muon xem —
+    # loi nay khong co trieu chung nao ben ngoai, nen TTL phai ngan.
+    search_criteria_ttl_seconds: int = 60 * 60 * 24
 
     # Minimum Verifier confidence (0-1). Below this the Sale sees the
     # "Không đủ thông tin, liên hệ Admin" notice instead of the answer.

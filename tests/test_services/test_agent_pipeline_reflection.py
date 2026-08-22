@@ -51,7 +51,13 @@ def _verdict(score: float, **overrides) -> VerifierResult:
     return VerifierResult(**(base | overrides))
 
 
-def _run(monkeypatch, query: str, *, verdicts: list[VerifierResult]) -> list[str]:
+def _run(
+    monkeypatch,
+    query: str,
+    *,
+    verdicts: list[VerifierResult],
+    reflection_scope: str | None = None,
+) -> list[str]:
     """Run one question with scripted verdicts; return the Generate prompts it produced."""
     seen: list[str] = []
     remaining = list(verdicts)
@@ -63,18 +69,18 @@ def _run(monkeypatch, query: str, *, verdicts: list[VerifierResult]) -> list[str
     monkeypatch.setattr(agent_pipeline, "query_needs_inventory", lambda query: False)
     monkeypatch.setattr(agent_pipeline.risk_service, "detect_commitment_risk", lambda answer: False)
 
-    def _generate_text(prompt, system_instruction=None):
+    def _generate_json(prompt, schema, system_instruction=None):
         seen.append(prompt)
-        return "- Chinh sach thanh toan chia 5 dot."
+        return schema(text="- Chinh sach thanh toan chia 5 dot.")
 
-    monkeypatch.setattr(agent_pipeline, "generate_text", _generate_text)
+    monkeypatch.setattr(agent_pipeline, "generate_json", _generate_json)
     monkeypatch.setattr(
         agent_pipeline.verifier_service,
         "score_answer",
         lambda *a, **k: remaining.pop(0) if remaining else _verdict(0.9),
     )
 
-    agent_pipeline.run_pipeline(query)
+    agent_pipeline.run_pipeline(query, reflection_scope=reflection_scope)
     return seen
 
 
@@ -117,6 +123,33 @@ def test_the_lesson_is_stored_with_its_failure_mode(reflection_redis, monkeypatc
     stored = reflection_memory.load_lessons()
     assert len(stored) == 1
     assert stored[0].failure_mode == FailureMode.INCOMPLETE_ANSWER.value
+
+
+def test_pipeline_reads_and_writes_reflections_in_the_same_session_scope(reflection_redis, monkeypatch):
+    customer_a = reflection_memory.sale_session_scope(201)
+    customer_b = reflection_memory.sale_session_scope(202)
+
+    _run(
+        monkeypatch,
+        "Chinh sach thanh toan the nao?",
+        verdicts=[_verdict(0.3), _verdict(0.9)],
+        reflection_scope=customer_a,
+    )
+    other_customer = _run(
+        monkeypatch,
+        "Chinh sach thanh toan ra sao?",
+        verdicts=[_verdict(0.9)],
+        reflection_scope=customer_b,
+    )
+    same_customer = _run(
+        monkeypatch,
+        "Chinh sach thanh toan ra sao?",
+        verdicts=[_verdict(0.9)],
+        reflection_scope=customer_a,
+    )
+
+    assert "BÀI HỌC TỪ CÁC LỖI TRƯỚC ĐÂY" not in other_customer[0]
+    assert "BÀI HỌC TỪ CÁC LỖI TRƯỚC ĐÂY" in same_customer[0]
 
 
 # --- Tat/hong thi khong duoc anh huong cau tra loi -----------------------------------------

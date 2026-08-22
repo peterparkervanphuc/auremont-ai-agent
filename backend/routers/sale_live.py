@@ -166,5 +166,6 @@ async def suggest(
         db=db,
         clearance=DocumentVisibility.INTERNAL,
         history=history,
+        session_id=session_id,
     )
     return SaleSuggestResponse(draft=result.draft_answer, requires_hitl=result.requires_hitl)

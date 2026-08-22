@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { Link, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import { customerApi } from "../api/customerChat";
-import { getVisitorSession, setVisitorSession } from "../hooks/useVisitorToken";
+import { clearVisitorSession, getVisitorSession, setVisitorSession } from "../hooks/useVisitorToken";
 import { useAuth } from "../hooks/useAuth";
 import type {
   AnonymousSessionResponse,
@@ -16,6 +16,7 @@ import type {
 import { AlertTriangleIcon, ArrowRightIcon, LoaderIcon, SendIcon, UsersIcon, XIcon } from "./Icons";
 import { AuremontAvatar } from "./AuremontAvatar";
 import { RegisterGateModal } from "./RegisterGateModal";
+import { MessageContent } from "./MessageContent";
 
 const SUGGESTIONS = ["Còn căn 2PN dưới 3 tỷ không?", "Biệt thự song lập giá bao nhiêu?"];
 const PUBLIC_SUGGESTIONS = ["Dự án ở vị trí nào?", "Có những tiện ích gì?"];
@@ -49,6 +50,46 @@ export function ChatWidget() {
   const location = useLocation();
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sessionCreationRef = useRef<Promise<number> | null>(null);
+
+  // Customer and anonymous widget traffic must join the exact same durable conversation
+  // as the full /chat page. Previously the widget started with sessionId=null on every
+  // mount and created a second anonymous session even when localStorage already held one.
+  useEffect(() => {
+    if (isSale) return;
+    let cancelled = false;
+
+    const resume = async () => {
+      try {
+        let id: number | null = null;
+        if (isAuthenticated) {
+          const sessions = await customerApi.get<CustomerChatSessionResponse[]>("/customer/sessions");
+          id = sessions[0]?.id ?? null;
+        } else {
+          id = getVisitorSession()?.sessionId ?? null;
+        }
+        if (!id || cancelled) return;
+
+        const [detail, history] = await Promise.all([
+          customerApi.get<CustomerChatSessionResponse>(`/customer/sessions/${id}`),
+          customerApi.get<MessageResponse[]>(`/customer/sessions/${id}/messages`),
+        ]);
+        if (cancelled) return;
+        setSessionId(id);
+        setSessionStatus(detail.status);
+        // The full page owns the complete transcript. The compact widget only needs the
+        // recent visual tail; the backend still passes the canonical session history to AI.
+        setMessages(history.slice(-20));
+      } catch {
+        if (!isAuthenticated) clearVisitorSession();
+      }
+    };
+
+    resume();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, isSale]);
 
   // The widget never unmounts on page change (App.tsx only toggles it via
   // showChatWidget), so a panel left open on one page would stay open when
@@ -75,6 +116,7 @@ export function ChatWidget() {
 
   const ensureSession = async (): Promise<number> => {
     if (sessionId) return sessionId;
+    if (sessionCreationRef.current) return sessionCreationRef.current;
 
     if (isSale) {
       const session = await api.post<ChatSessionResponse>("/sale/sessions", {
@@ -84,16 +126,52 @@ export function ChatWidget() {
       return session.id;
     }
 
-    if (isAuthenticated) {
-      const session = await customerApi.post<CustomerChatSessionResponse>("/customer/sessions", {});
-      setSessionId(session.id);
-      return session.id;
+    // The resume effect may still be fetching history when the visitor sends immediately
+    // after opening the widget. Reuse the cached ownership pair synchronously instead of
+    // racing that fetch with a second anonymous-session creation.
+    if (!isAuthenticated) {
+      const visitor = getVisitorSession();
+      if (visitor) {
+        setSessionId(visitor.sessionId);
+        return visitor.sessionId;
+      }
     }
 
-    const anon = await customerApi.post<AnonymousSessionResponse>("/customer/sessions/anonymous");
-    setVisitorSession(anon.session_id, anon.visitor_token);
-    setSessionId(anon.session_id);
-    return anon.session_id;
+    const creation = (async () => {
+      if (isAuthenticated) {
+        const session = await customerApi.post<CustomerChatSessionResponse>("/customer/sessions", {});
+        setSessionId(session.id);
+        setSessionStatus(session.status);
+        return session.id;
+      }
+
+      const anon = await customerApi.post<AnonymousSessionResponse>("/customer/sessions/anonymous");
+      setVisitorSession(anon.session_id, anon.visitor_token);
+      setSessionId(anon.session_id);
+      return anon.session_id;
+    })();
+    sessionCreationRef.current = creation;
+    try {
+      return await creation;
+    } finally {
+      sessionCreationRef.current = null;
+    }
+  };
+
+  const handleAuthenticated = async (canonicalSessionId?: number) => {
+    setGate(null);
+    if (!canonicalSessionId) return;
+    setSessionId(canonicalSessionId);
+    try {
+      const [detail, history] = await Promise.all([
+        customerApi.get<CustomerChatSessionResponse>(`/customer/sessions/${canonicalSessionId}`),
+        customerApi.get<MessageResponse[]>(`/customer/sessions/${canonicalSessionId}/messages`),
+      ]);
+      setSessionStatus(detail.status);
+      setMessages(history.slice(-20));
+    } catch {
+      // Auth succeeded; the normal resume effect can retry if this immediate fetch fails.
+    }
   };
 
   const sendMessage = async (content: string, skipNameGate = false) => {
@@ -125,6 +203,7 @@ export function ChatWidget() {
       emotion: null,
       quick_replies: null,
       listings: null,
+      suggested_questions: null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
@@ -162,6 +241,7 @@ export function ChatWidget() {
           emotion: null,
           quick_replies: null,
           listings: null,
+          suggested_questions: null,
           created_at: new Date().toISOString(),
         },
       ]);
@@ -256,6 +336,15 @@ export function ChatWidget() {
                     const isLastMessage = index === messages.length - 1;
                     const showQuickReplies =
                       !isSale && isLastMessage && sessionStatus === "bot_handling" && !!m.quick_replies?.length;
+                    // Follow-ups are offered on both surfaces, but never alongside quick
+                    // replies: those answer the question the assistant just asked, and
+                    // showing both at once asks the reader to choose between answering and
+                    // changing the subject in one undifferentiated row of pills.
+                    const showSuggestedQuestions =
+                      isLastMessage &&
+                      sessionStatus === "bot_handling" &&
+                      !showQuickReplies &&
+                      !!m.suggested_questions?.length;
 
                     // A price/commitment answer must not be readable — let alone copyable —
                     // from this widget: the mandatory confirm-and-copy gate lives only in the
@@ -279,7 +368,7 @@ export function ChatWidget() {
                         <div
                           className={`chat-widget-msg ${m.sender === "sale" || m.sender === "customer" ? "chat-widget-msg--user" : ""}`}
                         >
-                          {m.content}
+                          <MessageContent content={m.content} />
                         </div>
                         {showQuickReplies && (
                           <div className="chat-quick-replies">
@@ -292,6 +381,21 @@ export function ChatWidget() {
                                 onClick={() => sendMessage(option)}
                               >
                                 {option}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {showSuggestedQuestions && (
+                          <div className="chat-suggested-questions">
+                            {m.suggested_questions?.map((question) => (
+                              <button
+                                key={question}
+                                type="button"
+                                className="chat-suggested-question"
+                                disabled={loading}
+                                onClick={() => sendMessage(question)}
+                              >
+                                {question}
                               </button>
                             ))}
                           </div>
@@ -345,7 +449,7 @@ export function ChatWidget() {
           sessionId={sessionId}
           visitorToken={visitor?.visitorToken ?? null}
           onClose={() => setGate(null)}
-          onAuthenticated={() => setGate(null)}
+          onAuthenticated={handleAuthenticated}
         />
       )}
     </div>

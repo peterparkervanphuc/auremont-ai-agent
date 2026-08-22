@@ -21,13 +21,27 @@ using the session's own (unresolved) project id.
 
 from backend.core.enums import MessageSender
 from backend.services import agent_pipeline
+from backend.services.catalog_context_service import TowerContextResult
 
 
 def _policy_hit() -> dict:
     return {"document_id": 1, "title": "policy.pdf", "content": "...", "score": 0.9}
 
 
+def _stub_catalog_context(monkeypatch) -> None:
+    """These tests use a bare `object()` as `db` — enough to satisfy `_retrieve`'s own
+    "is a db configured at all" check, but not a real Session. `resolve_tower_context`
+    (an unrelated concern to project resolution) would otherwise try real Session methods
+    on it and raise; stub it out so only the project-resolution behaviour under test runs.
+    """
+    monkeypatch.setattr(
+        agent_pipeline.catalog_context_service, "resolve_tower_context", lambda *_a, **_kw: TowerContextResult()
+    )
+
+
 def test_resolves_project_from_the_current_query_when_session_carries_none(monkeypatch):
+    _stub_catalog_context(monkeypatch)
+
     def fake_resolve(_db, text):
         assert text == "Ocean Park 1"
         return "ocean-park-1"
@@ -46,12 +60,13 @@ def test_resolution_never_scopes_the_qdrant_retrieve_call(monkeypatch):
     """The regression found while fixing the bug above: passing the resolved id into
     `retrieve()` would filter Qdrant by a `project_id` payload field that is NULL on every
     ingested chunk today, turning a working unscoped search into a silent zero-hit one."""
+    _stub_catalog_context(monkeypatch)
     seen_project_ids: list[str | None] = []
 
     def fake_resolve(_db, _text):
         return "ocean-park-1"
 
-    def fake_retrieve(_query, _clearance, project_id, _top_k):
+    def fake_retrieve(_query, _clearance, project_id, _top_k, **_kwargs):
         seen_project_ids.append(project_id)
         return [_policy_hit()]
 
@@ -68,6 +83,7 @@ def test_resolves_project_named_a_turn_earlier_for_a_short_followup(monkeypatch)
     """The exact shape of the live bug: the project was named three turns back and the
     current turn ("Dưới 3 tỷ") is a short quick-reply tap that carries no topic of its own —
     `_retrieval_query`'s history fold is what surfaces "Ocean Park 1" again."""
+    _stub_catalog_context(monkeypatch)
 
     def fake_resolve(_db, text):
         return "ocean-park-1" if "ocean park 1" in text.lower() else None
@@ -91,6 +107,7 @@ def test_resolves_project_named_a_turn_earlier_for_a_short_followup(monkeypatch)
 def test_the_sessions_own_project_id_wins_and_skips_resolution(monkeypatch):
     """A session that DOES carry a project (Sale flow, or a project-scoped customer page)
     must not have it second-guessed by whatever the conversation happens to mention."""
+    _stub_catalog_context(monkeypatch)
     calls: list[str] = []
 
     def fake_resolve(_db, _text):

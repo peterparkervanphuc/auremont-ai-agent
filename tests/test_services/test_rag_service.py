@@ -48,6 +48,9 @@ def qdrant(monkeypatch):
     monkeypatch.setattr(rag_service, "embed_query", lambda query: [0.1, 0.2, 0.3])
     monkeypatch.setattr(settings, "qdrant_collection", "test_documents")
     monkeypatch.setattr(settings, "hybrid_search_enabled", False)
+    # The developer's .env may enable hosted reranking. Unit tests choose explicitly when
+    # to exercise that path and must never make a real network call by accident.
+    monkeypatch.setattr(settings, "rerank_enabled", False)
     return fake_client
 
 
@@ -103,11 +106,17 @@ def test_accepts_plain_string_visibility(qdrant):
     assert _visibility_values(qdrant.query_calls[0]) == ["public"]
 
 
-def test_project_id_adds_filter(qdrant):
+def test_project_id_scopes_to_project_or_global_documents(qdrant):
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL, project_id="ocean-park-3")
 
-    keys = [condition.key for condition in _conditions(qdrant.query_calls[0])]
-    assert "project_id" in keys
+    query_filter = qdrant.query_calls[0]["query_filter"]
+    assert any(
+        isinstance(condition, models.FieldCondition)
+        and condition.key == "project_id"
+        and condition.match.value == "ocean-park-3"
+        for condition in query_filter.should
+    )
+    assert any(isinstance(condition, models.IsNullCondition) for condition in query_filter.should)
 
 
 def test_project_id_omitted_when_not_given(qdrant):
@@ -213,6 +222,102 @@ def test_pure_vector_order_when_query_has_no_identifier(qdrant):
     assert [hit["document_id"] for hit in result] == [2, 1]
 
 
+# --- Context selection ---------------------------------------------------------------
+
+
+def test_exact_identifier_is_a_final_safety_layer_over_fuzzy_scores(qdrant):
+    """A large semantic-score gap must not make 3PN answer a question about 2PN."""
+    qdrant.points = [
+        _point("Căn 3PN diện tích lớn.", score=0.99, document_id=1),
+        _point("Căn 2PN diện tích 68 m2.", score=0.40, document_id=2),
+    ]
+
+    result = rag_service.retrieve("Thông tin căn 2PN", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result] == [2, 1]
+
+
+def test_compound_unit_types_are_not_collapsed_into_their_base_type(qdrant):
+    qdrant.points = [
+        _point("Căn 2PN+1 diện tích 75 m2.", score=0.99, document_id=1),
+        _point("Căn 2PN diện tích 68 m2.", score=0.40, document_id=2),
+    ]
+
+    result = rag_service.retrieve("Thông tin căn 2PN", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result] == [2, 1]
+
+
+@pytest.mark.parametrize(
+    ("query_label", "document_label"),
+    [("2PN", "2BR"), ("2PN+1", "2BR+"), ("3PN", "3BR")],
+)
+def test_vietnamese_and_english_bedroom_labels_are_equivalent(qdrant, query_label, document_label):
+    qdrant.points = [
+        _point("Thông tin tổng quan không có loại căn.", score=0.99, document_id=1),
+        _point(f"Bảng giá căn {document_label}.", score=0.40, document_id=2),
+    ]
+
+    result = rag_service.retrieve(f"Giá căn {query_label}", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result] == [2, 1]
+
+
+def test_focus_query_keeps_old_identifier_out_of_current_turn_constraints(qdrant):
+    """History helps embedding, but the current 3PN turn alone decides exact matching."""
+    qdrant.points = [
+        _point("Căn 2PN diện tích 68 m2.", score=0.99, document_id=1),
+        _point("Căn 3PN diện tích 92 m2.", score=0.40, document_id=2),
+    ]
+
+    result = rag_service.retrieve(
+        "Trước đó hỏi 2PN. Còn 3PN thì sao?",
+        DocumentVisibility.INTERNAL,
+        focus_query="Còn 3PN thì sao?",
+    )
+
+    assert [hit["document_id"] for hit in result] == [2, 1]
+
+
+def test_near_duplicate_chunks_from_one_document_are_removed_and_backfilled(qdrant):
+    repeated = "Chính sách thanh toán sớm áp dụng chiết khấu năm phần trăm cho khách hàng trong tháng này."
+    qdrant.points = [
+        _point(repeated, score=0.99, document_id=1),
+        _point(repeated, score=0.98, document_id=1),
+        _point("Tiến độ thanh toán gồm sáu đợt theo hợp đồng mua bán.", score=0.80, document_id=2),
+    ]
+
+    result = rag_service.retrieve("chính sách thanh toán", DocumentVisibility.INTERNAL, top_k=3)
+
+    assert [hit["document_id"] for hit in result] == [1, 2]
+
+
+def test_identical_content_from_different_documents_is_preserved(qdrant):
+    repeated = "Điều khoản này xuất hiện trong hai tài liệu độc lập cần đối chiếu nguồn."
+    qdrant.points = [
+        _point(repeated, score=0.99, document_id=1),
+        _point(repeated, score=0.98, document_id=2),
+    ]
+
+    result = rag_service.retrieve("điều khoản", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result] == [1, 2]
+
+
+def test_context_budget_keeps_whole_chunks_and_always_keeps_best_hit(qdrant, monkeypatch):
+    monkeypatch.setattr(settings, "rag_max_context_chars", 30)
+    qdrant.points = [
+        _point("A" * 25, score=0.99, document_id=1),
+        _point("B" * 20, score=0.98, document_id=2),
+        _point("C" * 10, score=0.97, document_id=3),
+    ]
+
+    result = rag_service.retrieve("tiện ích", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result] == [1]
+    assert result[0]["content"] == "A" * 25
+
+
 # --- Rerank bằng Cohere (cross-encoder) ----------------------------------------------
 
 
@@ -220,6 +325,7 @@ def test_pure_vector_order_when_query_has_no_identifier(qdrant):
 def cohere_rerank(qdrant, monkeypatch):
     """Bật rerank và thay lời gọi API bằng hàm giả, ghi lại tham số để test soi."""
     monkeypatch.setattr(settings, "rerank_enabled", True)
+    monkeypatch.setattr(settings, "cohere_api_key", "test-key")
     calls = []
 
     def _fake_rerank(query, documents, *, top_n=None):
@@ -296,9 +402,43 @@ def test_rerank_disabled_never_calls_cohere(qdrant, monkeypatch):
     assert called == []
 
 
+def test_rerank_enabled_without_api_key_uses_local_ranker(qdrant, monkeypatch):
+    monkeypatch.setattr(settings, "rerank_enabled", True)
+    monkeypatch.setattr(settings, "cohere_api_key", "test-key")
+    monkeypatch.setattr(settings, "cohere_api_key", "")
+    called = []
+    monkeypatch.setattr(rag_service, "cohere_rerank", lambda *_a, **_kw: called.append(True) or [])
+    qdrant.points = [_point("Căn 2PN giá 3.6 tỷ.", score=0.60, document_id=2)]
+
+    result = rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL)
+
+    assert called == []
+    assert [hit["document_id"] for hit in result] == [2]
+
+
+@pytest.mark.parametrize(
+    "invalid_result",
+    [
+        [(99, 0.9)],
+        [(0, 0.9), (0, 0.8)],
+        [(0, float("nan"))],
+    ],
+)
+def test_invalid_cohere_output_falls_back_without_crashing(qdrant, monkeypatch, invalid_result):
+    monkeypatch.setattr(settings, "rerank_enabled", True)
+    monkeypatch.setattr(settings, "cohere_api_key", "test-key")
+    monkeypatch.setattr(rag_service, "cohere_rerank", lambda *_args, **_kwargs: invalid_result)
+    qdrant.points = [_point("Căn 2PN giá 3.6 tỷ.", score=0.60, document_id=2)]
+
+    result = rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL)
+
+    assert [hit["document_id"] for hit in result] == [2]
+
+
 def test_cohere_rerank_applies_to_hybrid_results(hybrid_qdrant, monkeypatch):
     """Hybrid bỏ qua heuristic vì RRF đã xếp hạng, nhưng cross-encoder thì vẫn chạy."""
     monkeypatch.setattr(settings, "rerank_enabled", True)
+    monkeypatch.setattr(settings, "cohere_api_key", "test-key")
     monkeypatch.setattr(
         rag_service,
         "cohere_rerank",
@@ -407,12 +547,8 @@ def test_hybrid_overfetches_on_both_branches(hybrid_qdrant):
     assert call["limit"] == expected
 
 
-def test_hybrid_keeps_fusion_order_instead_of_reranking(hybrid_qdrant, monkeypatch):
-    """Điểm RRF ~1/60 nên công thức boost cũ sẽ nhấn chìm nó — phải giữ nguyên thứ tự.
-
-    RRF thắng luôn, không dùng heuristic khi hybrid bật. Cross-encoder sẽ thắng nếu
-    bật, nên test này tắt rerank để kiểm tra RRF path.
-    """
+def test_hybrid_keeps_rrf_scores_but_exact_identifier_gets_final_priority(hybrid_qdrant, monkeypatch):
+    """Keep raw RRF scores, while an exact code match acts as a final safety layer."""
     monkeypatch.setattr(settings, "rerank_enabled", False)
     hybrid_qdrant.points = [
         _point("Chính sách chung, không có mã căn.", score=0.032, document_id=1),
@@ -421,9 +557,9 @@ def test_hybrid_keeps_fusion_order_instead_of_reranking(hybrid_qdrant, monkeypat
 
     result = rag_service.retrieve("giá căn 2PN", DocumentVisibility.INTERNAL)
 
-    assert [hit["document_id"] for hit in result] == [1, 2]
+    assert [hit["document_id"] for hit in result] == [2, 1]
     # Điểm RRF đi thẳng ra ngoài, không bị rescale kiểu cosine.
-    assert result[0]["score"] == 0.032
+    assert result[0]["score"] == 0.016
 
 
 def test_sparse_embedding_failure_falls_back_to_dense_only(hybrid_qdrant, monkeypatch):
@@ -514,6 +650,28 @@ def test_live_project_filter_excludes_other_projects(live_qdrant):
     assert rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL, project_id="khong-ton-tai") == []
 
 
+def test_live_project_scope_also_includes_global_documents(live_qdrant):
+    from backend.services import vector_store_service
+    from backend.services.chunking_service import DocumentChunk
+
+    vector_store_service.index_document_chunks(
+        document_id=3,
+        title="huong-dan-chung.pdf",
+        project_id=None,
+        visibility="public",
+        chunks=[DocumentChunk(index=0, text="Hướng dẫn giao dịch chung.", page=1)],
+        vectors=[[1.0, 0.0, 0.0]],
+        sparse_vectors=embed_documents_sparse(["Hướng dẫn giao dịch chung."]),
+        review_status="approved",
+    )
+
+    result = rag_service.retrieve(
+        "Hướng dẫn giao dịch", DocumentVisibility.INTERNAL, project_id="khong-ton-tai"
+    )
+
+    assert [hit["document_id"] for hit in result] == [3]
+
+
 def test_live_carries_page_for_citation(live_qdrant):
     """Không có page thì bước Generate không trích nguồn tới số trang được."""
     result = rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL, project_id="ocean-park-3")
@@ -570,18 +728,14 @@ def live_hybrid_qdrant(monkeypatch):
     return client
 
 
-def test_live_dense_only_misses_the_exact_code(live_hybrid_qdrant, monkeypatch):
-    """Điểm đối chứng: chỉ dùng vector thì tài liệu chứa đúng mã căn xếp sau.
-
-    Rerank tắt ở đây có chủ đích: bài test này đối chứng baseline dense-only trước
-    khi có BM25/RRF, không phải hành vi sau khi thêm cross-encoder.
-    """
+def test_live_dense_candidates_get_exact_identifier_safety_ranking(live_hybrid_qdrant, monkeypatch):
+    """Dense finds both candidates; final selection prevents the wrong unit code winning."""
     monkeypatch.setattr(settings, "hybrid_search_enabled", False)
     monkeypatch.setattr(settings, "rerank_enabled", False)
 
     result = rag_service.retrieve("Căn OP3-CT1-0504 còn không?", DocumentVisibility.INTERNAL)
 
-    assert [hit["document_id"] for hit in result][0] == 1
+    assert [hit["document_id"] for hit in result][0] == 2
 
 
 def test_live_rrf_promotes_exact_keyword_match(live_hybrid_qdrant, monkeypatch):

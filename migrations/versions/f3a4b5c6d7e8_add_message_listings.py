@@ -1,7 +1,7 @@
 """add listings column to messages
 
 Revision ID: f3a4b5c6d7e8
-Revises: f1a2b3c4d5e6
+Revises: a2b3c4d5e6f7
 Create Date: 2026-08-22
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f3a4b5c6d7e8"
-down_revision: str | Sequence[str] | None = "f1a2b3c4d5e6"
+down_revision: str | Sequence[str] | None = "a2b3c4d5e6f7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

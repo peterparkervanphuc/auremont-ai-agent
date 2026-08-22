@@ -7,6 +7,7 @@ import { BotIcon, LoaderIcon, SendIcon, TrashIcon, UserIcon } from "../../compon
 import { FeedbackButtons } from "../../components/FeedbackButtons";
 import { CitationList } from "../../components/CitationList";
 import { AuremontAvatar } from "../../components/AuremontAvatar";
+import { MessageContent } from "../../components/MessageContent";
 import { AnswerImageStrip } from "./AnswerImageStrip";
 import { ChatSuggestions } from "./ChatSuggestions";
 import { parseServerDate } from "../../utils/datetime";
@@ -82,6 +83,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
       emotion: null,
       quick_replies: null,
       listings: null,
+      suggested_questions: null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
@@ -169,7 +171,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
             </div>
           )}
 
-          {messages.map((m) => {
+          {messages.map((m, index) => {
             if (m.requires_hitl) {
               // A risky answer still stays in the feedback loop like any other message.
               return (
@@ -184,6 +186,10 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
             }
 
             const isUser = m.sender === "sale";
+            // Only the newest answer's follow-ups are still worth offering — an older
+            // message's suggestions have already been overtaken by the conversation.
+            const showSuggestedQuestions =
+              !isUser && index === messages.length - 1 && !loading && !!m.suggested_questions?.length;
             return (
               <div key={m.id} className={`chat-message ${isUser ? "chat-message--user" : "chat-message--bot"}`}>
                 <div className={`chat-avatar ${isUser ? "chat-avatar--user" : "chat-avatar--bot"}`}>
@@ -192,7 +198,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
 
                 <div className="chat-bubble-wrap">
                   <div className={`chat-bubble ${isUser ? "chat-bubble--user" : "chat-bubble--bot"}`}>
-                    <p className="chat-bubble-text">{m.content}</p>
+                    <MessageContent content={m.content} className="chat-bubble-text" />
 
                     {!isUser && m.citations && m.citations.length > 0 && (
                       <CitationList citations={m.citations} className="chat-citations" label="Nguồn" />
@@ -200,6 +206,23 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
 
                     {!isUser && m.images && m.images.length > 0 && <AnswerImageStrip images={m.images} />}
                   </div>
+                  {showSuggestedQuestions && (
+                    <div className="chat-suggested-questions">
+                      {m.suggested_questions?.map((question) => (
+                        <button
+                          key={question}
+                          type="button"
+                          className="chat-suggested-question"
+                          // Fills the input rather than sending outright, matching
+                          // ChatSuggestions' empty-state card: a Sale is mid-consultation
+                          // and usually wants to adjust the wording before asking.
+                          onClick={() => pickSuggestion(question)}
+                        >
+                          {question}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <span className="chat-timestamp">{formatTime(m.created_at)}</span>
                   {!isUser && <FeedbackButtons messageId={m.id} />}
                 </div>

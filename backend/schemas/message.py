@@ -70,6 +70,9 @@ class MessageResponse(BaseModel):
     quick_replies: list[str] | None = None
     # Recommended units rendered as their own cards — see Message.listings.
     listings: list[PropertyListing] | None = None
+    # Follow-up questions the asker may want next, for both Sale and customer — see
+    # Message.suggested_questions.
+    suggested_questions: list[str] | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

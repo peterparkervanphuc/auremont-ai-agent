@@ -31,9 +31,26 @@ INVENTORY_TIMEOUT_SECONDS = 5.0
 # are normalised to the API convention (for example, "2 phòng ngủ" -> "2PN").
 # \b at both ends so "21PN" is not mis-matched as "1PN".
 _UNIT_TYPE_PATTERN = re.compile(
-    r"\b(\d+\s*(?:pn|phòng\s*ngủ|phong\s*ngu)|penthouse|studio|shophouse|duplex)\b",
+    r"\b("
+    r"\d+\s*(?:pn|br|phòng\s*ngủ|phong\s*ngu|ngủ|ngu)(?:\s*\+\s*(?:1)?)?"
+    r"|penthouse|studio|shophouse|duplex|officetel"
+    r"|căn\s*hộ|can\s*ho|chung\s*cư|chung\s*cu"
+    r"|biệt\s*thự\s*(?:đơn\s*lập|song\s*lập|liền\s*kề)?"
+    r"|biet\s*thu\s*(?:don\s*lap|song\s*lap|lien\s*ke)?"
+    r"|đơn\s*lập|don\s*lap|song\s*lập|song\s*lap"
+    r"|nhà\s*phố\s*(?:thương\s*mại)?|nha\s*pho\s*(?:thuong\s*mai)?"
+    r"|liền\s*kề|lien\s*ke|shop\s*thương\s*mại|shop\s*thuong\s*mai"
+    r"|nhà\s*riêng|nha\s*rieng|nhà\s*(?:trong\s*)?(?:hẻm|ngõ)|nha\s*(?:trong\s*)?(?:hem|ngo)"
+    r"|nhà\s*mặt\s*tiền|nha\s*mat\s*tien|nhà\s*cấp\s*4|nha\s*cap\s*4"
+    r"|phòng\s*trọ|phong\s*tro|nhà\s*nguyên\s*căn|nha\s*nguyen\s*can"
+    r"|đất\s*nền|dat\s*nen|đất\s*thổ\s*cư|dat\s*tho\s*cu|đất\s*dự\s*án|dat\s*du\s*an"
+    r"|trang\s*trại|trang\s*trai|nhà\s*vườn|nha\s*vuon|kho(?:\s*,?\s*|\s+)xưởng|kho(?:\s*,?\s*|\s+)xuong"
+    r"|văn\s*phòng|van\s*phong|mặt\s*bằng\s*kinh\s*doanh|mat\s*bang\s*kinh\s*doanh"
+    r"|bất\s*động\s*sản\s*nghỉ\s*dưỡng|bat\s*dong\s*san\s*nghi\s*duong"
+    r")\b",
     re.IGNORECASE,
 )
+_UNIT_CODE_PATTERN = re.compile(r"\b[A-Z]{1,6}\d{0,3}-[A-Z0-9]{2,12}\b", re.IGNORECASE)
 _AREA_RANGE_PATTERN = re.compile(
     r"\b(?:từ\s*)?(\d+(?:[.,]\d+)?)\s*(?:-|đến|tới)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE
 )
@@ -110,6 +127,19 @@ def lookup_inventory(project_id: str | None, query: str) -> list[InventoryUnit]:
     Raises `InventoryProjectUnresolvedError` (a project no one can resolve — see that
     class) or `InventoryApiError` when data genuinely cannot be fetched from the API.
     """
+    return _apply_query_filters(fetch_units(project_id), query)
+
+
+def fetch_units(project_id: str | None) -> list[InventoryUnit]:
+    """Every unit of a project, unfiltered — the raw set before any question narrows it.
+
+    Split out of `lookup_inventory` because zero-result diagnosis has to re-filter the same
+    set several times over (dropping one criterion at a time to find which one emptied it),
+    and doing that through `lookup_inventory` would re-call the API for every attempt.
+    Fetching once and filtering in memory is also what this module already did internally.
+
+    Raises the same two errors as `lookup_inventory`, for the same reasons.
+    """
     api_project_id = resolve_api_project_id(project_id)
     if api_project_id is None:
         raise InventoryProjectUnresolvedError(
@@ -120,9 +150,7 @@ def lookup_inventory(project_id: str | None, query: str) -> list[InventoryUnit]:
     payload = _fetch_units(api_project_id)
 
     units = [unit for unit in (_parse_unit(item) for item in payload) if unit is not None]
-    units = [unit for unit in units if unit.project_id == api_project_id]
-
-    return _apply_query_filters(units, query)
+    return [unit for unit in units if unit.project_id == api_project_id]
 
 
 def resolve_api_project_id(project_id: str | None) -> str | None:
@@ -144,6 +172,17 @@ def resolve_api_project_id(project_id: str | None) -> str | None:
         return mapping.get(project_id) or mapping.get("*") or project_id
 
     return mapping.get("*")
+
+
+def has_exact_project_mapping(project_id: str | None) -> bool:
+    """True only when live inventory explicitly maps this catalogue project.
+
+    A ``*`` mapping is useful for an unscoped, broad inventory search, but it is not
+    evidence that rows from that API project belong to a named catalogue subdivision.
+    Treating it as such is how a question about The Pavilion previously displayed CT1/
+    CT2 units from another dataset.
+    """
+    return bool(project_id and project_id in _project_map())
 
 
 def _project_map() -> dict[str, str]:
@@ -271,29 +310,221 @@ def _to_float(value: object) -> float | None:
         return None
 
 
+def _extract_unit_types(query: str) -> list[str]:
+    """Extract every explicitly named type, preserving broad category aliases.
+
+    A broad request such as ``biệt thự`` is intentionally represented as ``BIETTHU``;
+    :func:`unit_type_matches` expands it to every compatible API code.  This keeps the
+    user's wording intact while still matching the mock/API codes ``BT_DL``, ``BT_SL``
+    and ``LK``.
+    """
+    return list(
+        dict.fromkeys(
+            normalized
+            for match in _UNIT_TYPE_PATTERN.finditer(query)
+            if (normalized := _normalize_unit_type(match.group(0))) is not None
+        )
+    )
+
+
+def _extract_unit_type_mentions(query: str) -> list[tuple[str, bool]]:
+    """Types with a local exclusion flag ("nhà phố, không lấy chung cư")."""
+    mentions: list[tuple[str, bool]] = []
+    for match in _UNIT_TYPE_PATTERN.finditer(query):
+        normalized = _normalize_unit_type(match.group(0))
+        if normalized is None:
+            continue
+        prefix = _normalize_text(query[max(0, match.start() - 28) : match.start()])
+        excluded = bool(
+            re.search(
+                r"(?:khong (?:lay|chon|muon)(?: (?:loai|can))?|loai tru(?: can)?|tranh(?: can)?)\s*$",
+                prefix,
+            )
+        )
+        if re.fullmatch(r"\d+PN\+?", normalized):
+            if re.search(r"(?:it nhat|toi thieu|tu)\s*$", prefix):
+                normalized = f"MIN{normalized}"
+            elif re.search(r"(?:toi da|khong qua)\s*$", prefix):
+                normalized = f"MAX{normalized}"
+        mentions.append((normalized, excluded))
+    return list(dict.fromkeys(mentions))
+
+
 def _extract_unit_type(query: str) -> str | None:
-    """Extract the unit type from a Sale's natural question. None means ask broadly, no filter."""
-    match = _UNIT_TYPE_PATTERN.search(query)
-    return _normalize_unit_type(match.group(0)) if match else None
+    """Backward-compatible single-type helper used by older callers/tests."""
+    matches = _extract_unit_types(query)
+    return matches[0] if matches else None
 
 
 def _normalize_unit_type(unit_type: str | None) -> str | None:
-    """Normalise bedroom synonyms to the API form, e.g. '3 phòng ngủ' -> '3PN'."""
+    """Normalise customer labels and API codes to one canonical vocabulary."""
     if unit_type is None:
         return None
 
     normalized = _normalize_text(unit_type)
-    bedroom_match = re.fullmatch(r"(\d+)\s*(?:pn|phong\s*ngu)", normalized)
+    bedroom_match = re.fullmatch(r"(\d+)\s*(?:pn|br|phong\s*ngu|ngu)(?:\s*\+\s*(?:1)?)?", normalized)
     if bedroom_match:
-        return f"{bedroom_match.group(1)}PN"
-    return re.sub(r"\s+", "", unit_type).upper()
+        suffix = "+" if "+" in normalized else ""
+        return f"{bedroom_match.group(1)}PN{suffix}"
+
+    compact = re.sub(r"[\s_-]+", "", normalized).upper()
+    aliases = {
+        "CANHO": "CANHO",
+        "CHUNGCU": "CANHO",
+        "BIETTHU": "BIETTHU",
+        "BIETTHUDONLAP": "BT_DL",
+        "DONLAP": "BT_DL",
+        "BTDL": "BT_DL",
+        "BIETTHUSONGLAP": "BT_SL",
+        "SONGLAP": "BT_SL",
+        "BTSL": "BT_SL",
+        "BIETTHULIENKE": "LK",
+        "LIENKE": "LK",
+        "NHAPHO": "LK",
+        "NHAPHOTHUONGMAI": "SH",
+        "SHOPTHUONGMAI": "SH",
+        "SHOPHOUSE": "SH",
+        "NHARIENG": "NHARIENG",
+        "NHAHEM": "NHAHEM",
+        "NHATRONGHEM": "NHAHEM",
+        "NHANGO": "NHAHEM",
+        "NHATRONGNGO": "NHAHEM",
+        "NHAMATTIEN": "NHAMATTIEN",
+        "NHACAP4": "NHACAP4",
+        "PHONGTRO": "PHONGTRO",
+        "NHANGUYENCAN": "NHANGUYENCAN",
+        "DATNEN": "DATNEN",
+        "DATTHOCU": "DATTHOCU",
+        "DATDUAN": "DATDUAN",
+        "TRANGTRAI": "NHAVUON",
+        "NHAVUON": "NHAVUON",
+        "KHOXUONG": "KHOXUONG",
+        "VANPHONG": "VANPHONG",
+        "MATBANGKINHDOANH": "MATBANG",
+        "BATDONGSANNGHIDUONG": "NGHIDUONG",
+    }
+    return aliases.get(compact, compact)
+
+
+def unit_type_matches(actual: str | None, wanted: str | None) -> bool:
+    """Whether one API/catalogue type satisfies a normalized requested type."""
+    actual_type = _normalize_unit_type(actual)
+    wanted_type = _normalize_unit_type(wanted)
+    if actual_type is None or wanted_type is None:
+        return False
+    if actual_type == wanted_type:
+        return True
+    minimum = re.fullmatch(r"MIN(\d+)PN\+?", wanted_type)
+    maximum = re.fullmatch(r"MAX(\d+)PN\+?", wanted_type)
+    actual_bedrooms = re.fullmatch(r"(\d+)PN\+?", actual_type)
+    if minimum and actual_bedrooms:
+        return int(actual_bedrooms.group(1)) >= int(minimum.group(1))
+    if maximum and actual_bedrooms:
+        return int(actual_bedrooms.group(1)) <= int(maximum.group(1))
+    if wanted_type == "CANHO":
+        return bool(re.fullmatch(r"\d+PN\+?", actual_type)) or actual_type in {
+            "STUDIO",
+            "PENTHOUSE",
+            "DUPLEX",
+            "OFFICETEL",
+        }
+    if wanted_type == "BIETTHU":
+        return actual_type in {"BT_DL", "BT_SL", "LK"}
+    return False
+
+
+def apply_criteria(units: list[InventoryUnit], criteria) -> list[InventoryUnit]:
+    """Filter units by accumulated criteria rather than by one question's text.
+
+    Takes a `search_criteria.SearchCriteria`, but is typed loosely and reads only
+    `criteria.filtering()` on purpose: `search_criteria` imports THIS module for its
+    regex patterns, so importing it back here would be a cycle. The contract is small
+    enough to hold by duck-typing — each constraint exposes `.field` and `.value`.
+
+    Only HARD and EXCLUDED constraints reach here (that is what `filtering()` returns).
+    SOFT ones must never exclude a unit; they exist to rank, which is a separate step.
+    """
+    for constraint in criteria.filtering():
+        if str(constraint.strength) == "excluded":
+            matched_ids = {id(unit) for unit in _apply_one(units, constraint.field, constraint.value)}
+            units = [unit for unit in units if id(unit) not in matched_ids]
+        else:
+            units = _apply_one(units, constraint.field, constraint.value)
+    return _sort_units(units, getattr(criteria, "sort_by", None))
+
+
+def _sort_units(units: list[InventoryUnit], sort_by: str | None) -> list[InventoryUnit]:
+    """Apply only orderings supported by fields that really exist on InventoryUnit."""
+    if sort_by == "price_asc":
+        return sorted(units, key=lambda unit: (unit.price is None, unit.price or 0))
+    if sort_by == "price_desc":
+        return sorted(units, key=lambda unit: (unit.price is None, -(unit.price or 0)))
+    if sort_by == "area_desc":
+        return sorted(units, key=lambda unit: (unit.area_m2 is None, -(unit.area_m2 or 0)))
+    if sort_by == "price_per_m2_asc":
+        return sorted(
+            units,
+            key=lambda unit: (
+                unit.price is None or not unit.area_m2,
+                unit.price / unit.area_m2 if unit.price is not None and unit.area_m2 else 0,
+            ),
+        )
+    return units
+
+
+def _apply_one(units: list[InventoryUnit], field_name: str, value) -> list[InventoryUnit]:
+    """Apply a single constraint. Unknown fields filter nothing.
+
+    Silently ignoring an unknown field is deliberate: criteria may carry advisory entries
+    with no InventoryUnit counterpart (features, purpose), and those must pass through
+    rather than match zero units and empty the whole result.
+    """
+    if field_name == "unit_types":
+        return [unit for unit in units if any(unit_type_matches(unit.unit_type, item) for item in value)]
+
+    if field_name == "unit_codes":
+        wanted = {str(item).strip().casefold() for item in value}
+        return [unit for unit in units if unit.unit_code.strip().casefold() in wanted]
+
+    if field_name == "subdivisions":
+        wanted = {_normalize_text(item) for item in value}
+        return [unit for unit in units if _normalize_text(unit.subdivision) in wanted]
+
+    if field_name == "statuses":
+        wanted = {str(item).strip().lower() for item in value}
+        return [unit for unit in units if unit.status.strip().lower() in wanted]
+
+    if field_name == "price":
+        minimum, maximum = value
+        return [unit for unit in units if unit.price is not None and minimum <= unit.price <= maximum]
+
+    if field_name == "area":
+        minimum, maximum = value
+        return [unit for unit in units if unit.area_m2 is not None and minimum <= unit.area_m2 <= maximum]
+
+    return units
 
 
 def _apply_query_filters(units: list[InventoryUnit], query: str) -> list[InventoryUnit]:
-    """Apply all explicit natural-language filters with AND semantics."""
-    wanted_type = _extract_unit_type(query)
-    if wanted_type is not None:
-        units = [unit for unit in units if _normalize_unit_type(unit.unit_type) == wanted_type]
+    """Apply all explicit natural-language filters with AND semantics.
+
+    Kept as the stateless path: one question in, filtered units out, no memory of earlier
+    turns. `lookup_inventory` still routes through here, so every existing caller and test
+    behaves exactly as before. The stateful path goes through `apply_criteria` instead.
+    """
+    type_mentions = _extract_unit_type_mentions(query)
+    wanted_types = [item for item, excluded in type_mentions if not excluded]
+    excluded_types = [item for item, excluded in type_mentions if excluded]
+    if wanted_types:
+        units = [unit for unit in units if any(unit_type_matches(unit.unit_type, item) for item in wanted_types)]
+    if excluded_types:
+        units = [
+            unit for unit in units if not any(unit_type_matches(unit.unit_type, item) for item in excluded_types)
+        ]
+
+    wanted_code = _extract_unit_code(query)
+    if wanted_code is not None:
+        units = [unit for unit in units if unit.unit_code.casefold() == wanted_code.casefold()]
 
     wanted_subdivision = _extract_subdivision(query, units)
     if wanted_subdivision is not None:
@@ -320,6 +551,11 @@ def _extract_subdivision(query: str, units: list[InventoryUnit]) -> str | None:
     candidates = {_normalize_text(unit.subdivision) for unit in units if unit.subdivision}
     matches = [candidate for candidate in candidates if candidate and candidate in normalized_query]
     return max(matches, key=len) if matches else None
+
+
+def _extract_unit_code(query: str) -> str | None:
+    match = _UNIT_CODE_PATTERN.search(query)
+    return match.group(0).upper() if match else None
 
 
 def _extract_area_range(query: str) -> tuple[float, float] | None:

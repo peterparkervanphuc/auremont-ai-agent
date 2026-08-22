@@ -88,6 +88,10 @@ export interface MessageResponse {
   quick_replies: string[] | null;
   /** Recommended units rendered as their own cards — see PropertyListing above. */
   listings: PropertyListing[] | null;
+  /** Follow-up questions the asker may want next, offered on both the Sale and customer
+   * surfaces. Distinct from `quick_replies`: those answer a question the assistant just
+   * asked, these start the asker's next one. */
+  suggested_questions: string[] | null;
   created_at: string;
 }
 

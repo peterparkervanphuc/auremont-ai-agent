@@ -1,20 +1,25 @@
-"""Image tool: fetch project photos when a Sale actually asks to see something.
+"""Image tool: attach the project photos that illustrate an answer.
 
-The Agent calls this the way it calls the inventory API — only when the question calls
-for it. A Sale asking "giá căn 2PN bao nhiêu" wants a number, not a photo gallery; a Sale
-asking "cho xem mặt bằng The Palma" wants the floor plans and nothing else.
+Photos arrive by two different routes, and the distinction runs through this whole module:
 
-Two filters run in order, and both must pass before a photo is returned:
+**Requested** — the question asks to see something ("cho xem mặt bằng The Palma").
+`wants_images` is true, and the Sale gets every photo matching the topic they named, with
+no cap: each one is a photo they asked for. When the topic matches no filename the whole
+project gallery is returned rather than nothing, because refusing someone who explicitly
+asked to see something is the worse failure.
 
-1. **Intent** — the question has to ask for something visual ("hình ảnh", "mặt bằng",
-   "phối cảnh"). Without that the tool returns nothing at all.
-2. **Subject** — the project has to be named in the question or the answer, and the
-   photo's own filename has to match the topic asked about. Catalogue filenames carry
-   that topic (`mat-bang-phan-khu-...`, `phoi-canh-sao-bien-...`, `vi-tri-...`), which is
-   what makes per-image relevance possible rather than dumping the whole gallery.
+**Automatic** — the question asks to *know* something, and photos ride along to illustrate
+the answer ("tiện ích dự án có gì" gets the amenity photos alongside the text). Nobody
+asked, so the bar is higher and the posture inverts: capped at
+`_AUTO_ATTACH_MAX_IMAGES`, and when the topic matches no filename the answer goes out with
+no photos at all. An unasked-for photo of the wrong thing is worse than no photo, whereas
+an unasked-for photo of the right thing is the point of this route.
 
-There is deliberately no cap on how many images come back: once both filters have run,
-every remaining photo is one the Sale asked to see.
+Both routes then share the same subject filter: the project has to be named in the
+question or the answer, and each photo's filename has to match the topic. Catalogue
+filenames carry that topic (`mat-bang-phan-khu-...`, `phoi-canh-sao-bien-...`,
+`vi-tri-...`), which is what makes per-image relevance possible rather than dumping the
+whole gallery.
 """
 
 import logging
@@ -51,6 +56,17 @@ def public_gallery_url(value: str) -> str:
 # three-letter names would otherwise hit on ordinary words in the question.
 _MIN_NAME_LENGTH = 4
 
+# Cap for the automatic route only (see module docstring). Photos nobody asked for are
+# supporting material: a strip of three sits under an answer without displacing it, while
+# a dozen turns a text answer into a gallery the reader has to scroll past.
+_AUTO_ATTACH_MAX_IMAGES = 3
+
+# Filename tokens for "a photo of the project overall" — used on the automatic route when
+# the question names no visual topic of its own ("dự án này thế nào?"). These are the
+# establishing shots, the ones that illustrate any answer about the project without
+# claiming to depict a specific thing the asker did not mention.
+_OVERVIEW_TOKENS = ("phoi-canh", "tong-the", "toan-canh")
+
 # Asking for something visual. Two things are deliberately absent. "xem" on its own,
 # because "xem giá căn 2PN" is a text question. And bare "ảnh", because de-accented it is
 # "anh" — a word that also addresses a person ("anh ơi cho hỏi giá") and would fire on
@@ -83,7 +99,12 @@ _LOOK_VERBS = ("xem", "coi", "show")
 # de-accented filename, so the values here are already in slug form.
 _TOPIC_TOKENS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("mat bang", "layout", "so do", "ban ve", "mat cat"), ("mat-bang", "matbang")),
-    (("tien ich",), ("tien-ich", "tienich")),
+    # "phong-" covers catalogues that name amenity photos after the specific room
+    # ("phong-tap-gym-...", "phong-karaoke-...") rather than with the generic word. It is a
+    # FILENAME token only — deliberately not a question phrase, because "phòng" in a
+    # question is far more often "căn 2 phòng ngủ", and matching that would attach gym and
+    # pool photos to a price question.
+    (("tien ich",), ("tien-ich", "tienich", "phong-")),
     (("vi tri", "ket noi", "lien ket", "ban do"), ("vi-tri", "ket-noi", "lien-ket", "vitri")),
     (("phoi canh", "toan canh", "tong the"), ("phoi-canh", "tong-the", "toan-canh")),
     (("biet thu",), ("biet-thu", "bietthu")),
@@ -116,8 +137,15 @@ def wants_images(query: str) -> bool:
     return _contains_phrase(normalized, _LOOK_VERBS) and bool(_subject_tokens(normalized))
 
 
-def collect_images(db: Session, query: str, answer: str) -> list[dict]:
-    """Photos the question asked to see, or [] when it did not ask for any.
+def collect_images(
+    db: Session, query: str, answer: str, project_id: str | None = None
+) -> list[dict]:
+    """Photos to show under this answer — those asked for, or those that illustrate it.
+
+    Takes whichever of the two routes in the module docstring applies. `wants_images`
+    decides which: an explicit request gets everything matching, uncapped, falling back to
+    the project gallery; anything else gets at most `_AUTO_ATTACH_MAX_IMAGES` and only when
+    they genuinely match the topic.
 
     Reads the project name from question *and* answer: a Sale often asks "cho xem mặt
     bằng" without naming the project, and the name only appears in the answer that
@@ -127,26 +155,34 @@ def collect_images(db: Session, query: str, answer: str) -> list[dict]:
     their answer.
     """
     try:
-        if not wants_images(query):
-            return []
-
         haystack = _normalize(f"{query}\n{answer}")
         if not haystack.strip():
             return []
 
-        project = _best_match(db, haystack)
+        # A scoped chat session is authoritative. Project names nest ("The Pavilion -
+        # Vinhomes Ocean Park"), so resolving from prose alone can otherwise select the
+        # longer parent project and attach its maps instead of the named P4 plan.
+        project = db.get(Project, project_id) if project_id else _best_match(db, haystack)
         if project is None:
             return []
 
         details: dict = project.details or {}
+        overview_towers = ((details.get("project") or {}).get("overview") or {}).get("towers") or []
+        known_towers = overview_towers if isinstance(overview_towers, list) else []
         images: dict = details.get("images") or {}
         gallery = [url for url in images.get("gallery") or [] if isinstance(url, str) and url]
         if not gallery:
             return []
 
-        selected = _filter_by_topic(gallery, _normalize(query))
+        normalized_query = _normalize(query)
+        if wants_images(query):
+            selected = _filter_by_topic(gallery, normalized_query, known_towers)
+        else:
+            selected = _auto_attach_images(gallery, normalized_query, known_towers)
+
         return [
-            {"url": public_gallery_url(url), "project_id": project.id, "project_name": project.name} for url in selected
+            {"url": public_gallery_url(url), "project_id": project.id, "project_name": project.name}
+            for url in selected
         ]
     except Exception:
         logger.exception(
@@ -180,7 +216,67 @@ def resolve_project_id(db: Session, text: str) -> str | None:
         return None
 
 
-def _filter_by_topic(gallery: list[str], normalized_query: str) -> list[str]:
+def resolve_project_ids(db: Session, text: str) -> list[str]:
+    """Every catalogue project explicitly named in text, in mention order.
+
+    Unlike `resolve_project_id`, this supports comparison questions that name two or more
+    subdivisions. A parent project is suppressed when its only match is contained inside
+    a longer matched catalogue name.
+    """
+    try:
+        haystack = _normalize(text or "")
+        if not haystack:
+            return []
+
+        matches: list[tuple[int, int, str]] = []
+        for project in db.query(Project).all():
+            candidates = _project_aliases(project)
+
+            occurrences = [
+                (match.start(), len(candidate))
+                for candidate in candidates
+                if len(candidate) >= _MIN_NAME_LENGTH
+                for match in [re.search(rf"(?<!\w){re.escape(candidate)}(?!\w)", haystack)]
+                if match is not None
+            ]
+
+            # Tower codes such as P4 are shorter than the normal project-name safety
+            # threshold. Accept one only when it is explicitly a known tower of exactly
+            # one catalogue project; ambiguous tower codes are discarded below.
+            details = project.details or {}
+            tower_names = _known_project_towers(details)
+            for tower in tower_names:
+                match = re.search(rf"(?<!\w){re.escape(tower)}(?!\w)", haystack)
+                if match is not None:
+                    occurrences.append((match.start(), len(tower)))
+            if occurrences:
+                position, length = min(occurrences, key=lambda item: (item[0], -item[1]))
+                matches.append((position, -length, project.id))
+
+        # A bare tower identifier is useful only when unique. Names/sub-zones with the
+        # same start position remain multiple on purpose (e.g. The Ocean View scopes a
+        # comparison/search across all of its child projects).
+        grouped: dict[tuple[int, int], list[str]] = {}
+        for position, negative_length, project_id in matches:
+            grouped.setdefault((position, negative_length), []).append(project_id)
+        matches = [
+            item
+            for item in matches
+            if -item[1] >= _MIN_NAME_LENGTH or len(grouped[(item[0], item[1])]) == 1
+        ]
+        matches.sort()
+        return list(dict.fromkeys(project_id for _, _, project_id in matches))
+    except Exception:
+        logger.exception(
+            "Could not resolve projects from text.",
+            extra={"event": "answer_images.resolve_projects.failed"},
+        )
+        return []
+
+
+def _filter_by_topic(
+    gallery: list[str], normalized_query: str, known_towers: list[str] | None = None
+) -> list[str]:
     """Narrow the gallery to the topic the question named.
 
     Falls back to the whole gallery in two cases, both deliberate: the question named no
@@ -188,12 +284,57 @@ def _filter_by_topic(gallery: list[str], normalized_query: str) -> list[str]:
     the catalogue has no picture of. Returning nothing to someone who explicitly asked to
     see something is worse than returning that project's photos.
     """
+    exact_tower_tokens = _tower_tokens(normalized_query, known_towers)
+    if exact_tower_tokens:
+        exact = [url for url in gallery if any(token in _normalize_filename(url) for token in exact_tower_tokens)]
+        # A named tower is an exact visual request. Showing another tower because this
+        # one has no uploaded plan is materially misleading, so do not use the usual
+        # requested-photo gallery fallback here.
+        return exact
+
     tokens = _wanted_tokens(normalized_query)
     if not tokens:
         return gallery
 
     matched = [url for url in gallery if any(token in _normalize_filename(url) for token in tokens)]
     return matched or gallery
+
+
+def _auto_attach_images(
+    gallery: list[str], normalized_query: str, known_towers: list[str] | None = None
+) -> list[str]:
+    """The automatic route's selection: matching photos only, capped.
+
+    Two deliberate differences from `_filter_by_topic`, both following from nobody having
+    asked for these (see module docstring):
+
+    * No fall back to the whole gallery. A topic the catalogue has no photo of yields no
+      photo — attaching an unrelated one to an answer that never mentioned pictures reads
+      as the system padding itself out.
+    * A question naming no visual topic at all ("chính sách thanh toán thế nào?") is not
+      treated as "anything goes" either. It gets the project's establishing shots, which
+      illustrate the project without claiming to depict a specific thing, and nothing when
+      the catalogue has none of those either.
+    """
+    # An exact tower code is a stronger qualifier than the generic subject "tòa". Without
+    # this first pass, "tòa P4" matches every `mat-bang-toa-p*` filename and the cap keeps
+    # P1-P3 while dropping the one image the asker actually named.
+    exact_tower_tokens = _tower_tokens(normalized_query, known_towers)
+    if exact_tower_tokens:
+        exact = [url for url in gallery if any(token in _normalize_filename(url) for token in exact_tower_tokens)]
+        return exact[:_AUTO_ATTACH_MAX_IMAGES]
+
+    # Keyed off the SUBJECT, not `_wanted_tokens`: that also returns bedroom qualifiers
+    # ("2pn"), and "giá căn 2 phòng ngủ" would then count as naming a visual topic it never
+    # named — yielding no photo at all instead of the overview shots, since no filename
+    # carries a bare bedroom count.
+    if _subject_tokens(normalized_query):
+        tokens = _wanted_tokens(normalized_query)
+    else:
+        tokens = list(_OVERVIEW_TOKENS)
+
+    matched = [url for url in gallery if any(token in _normalize_filename(url) for token in tokens)]
+    return matched[:_AUTO_ATTACH_MAX_IMAGES]
 
 
 def _subject_tokens(normalized_query: str) -> list[str]:
@@ -216,6 +357,24 @@ def _wanted_tokens(normalized_query: str) -> list[str]:
     return tokens
 
 
+def _tower_tokens(normalized_query: str, known_towers: list[str] | None = None) -> list[str]:
+    """Exact named tower qualifiers in both dot and hyphen filename conventions."""
+    matched_names = [
+        tower
+        for tower in known_towers or []
+        if isinstance(tower, str)
+        and re.search(rf"(?<!\w){re.escape(_normalize(tower))}(?!\w)", normalized_query)
+    ]
+    if not matched_names:
+        matched_names = re.findall(r"\b(?:toa|tower)\s*([a-z]{1,5}\d+(?:\.\d+)?)\b", normalized_query)
+
+    tokens: list[str] = []
+    for name in matched_names:
+        slug = _normalize(name).replace(" ", "-")
+        tokens.extend((f"toa-{slug}", f"toa-{slug.replace('.', '-')}"))
+    return list(dict.fromkeys(tokens))
+
+
 def _best_match(db: Session, haystack: str) -> Project | None:
     """The project whose name or slug appears in the text, longest match winning.
 
@@ -227,16 +386,38 @@ def _best_match(db: Session, haystack: str) -> Project | None:
     best_length = 0
 
     for project in db.query(Project).all():
-        for candidate in (project.name, project.id):
-            if not candidate:
-                continue
-            normalized = _normalize(candidate.replace("-", " "))
+        for normalized in _project_aliases(project):
             if len(normalized) < _MIN_NAME_LENGTH or normalized not in haystack:
                 continue
             if len(normalized) > best_length:
                 best, best_length = project, len(normalized)
 
     return best
+
+
+def _project_aliases(project: Project) -> set[str]:
+    """All catalogue labels a customer can reasonably use for one project/sub-zone."""
+    details = project.details or {}
+    info = details.get("project") or {}
+    raw = {
+        project.id.replace("-", " "),
+        project.name,
+        project.name.split(" - ", 1)[0] if project.name else None,
+        info.get("name"),
+        info.get("full_name"),
+        info.get("alternate_name"),
+        info.get("sub_zone"),
+    }
+    aliases = {_normalize(str(value)) for value in raw if value}
+    aliases.update(alias.removeprefix("the ") for alias in tuple(aliases))
+    return {alias for alias in aliases if alias}
+
+
+def _known_project_towers(details: dict) -> set[str]:
+    overview = ((details.get("project") or {}).get("overview") or {}).get("towers") or []
+    tower_details = details.get("tower_details") or {}
+    raw = [*(overview if isinstance(overview, list) else []), *tower_details.keys()]
+    return {_normalize(str(value)) for value in raw if value}
 
 
 def _contains_phrase(haystack: str, phrases: tuple[str, ...]) -> bool:

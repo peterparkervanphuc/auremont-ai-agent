@@ -49,6 +49,15 @@ class Message(Base):
     # that recommends 1-2 specific units with a full set of figures (see
     # prompts.PropertyListing). NULL everywhere else, same reasoning as quick_replies above.
     listings: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    # Plausible NEXT questions about the topic just discussed, e.g. ["Giá căn 2PN bao
+    # nhiêu?", "Tiện ích nội khu có gì?"] — offered to BOTH audiences (Sale and customer),
+    # unlike `quick_replies` above. The distinction matters: quick_replies answer a
+    # question the assistant just asked, these start the asker's next one. Generated in the
+    # same schema-constrained call as the answer itself (ConsultAnswer/SaleAnswer in
+    # backend/ai/prompts.py), so they cost no extra LLM round trip. NULL on a
+    # Sale/customer's own message, a canned gate/notice, a cache hit, or a row from before
+    # this column existed.
+    suggested_questions: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     verifier_score: Mapped[float | None] = mapped_column(Float, nullable=True)  # Overall Verifier score: min of the three below
     # The component scores behind verifier_score, kept apart for the Admin dashboard:

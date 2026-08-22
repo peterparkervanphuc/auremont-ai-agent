@@ -33,3 +33,14 @@ jobs:
         env:
           APP_ENV: test
           GEMINI_API_KEY: test-key
+
+      - name: Golden RAG regression gate
+        # Fixed Sale questions (eval/golden_dataset.py) run through the real pipeline with
+        # retrieval/inventory/LLM stubbed at the same boundary as the rest of the suite —
+        # deterministic, no API key needed. Already covered by the step above; run again
+        # standalone so a routing/HITL/citation regression fails CI with its own clearly
+        # named step instead of being buried in the full test log.
+        run: pytest tests/test_services/test_golden_regression.py -v --tb=short
+        env:
+          APP_ENV: test
+          GEMINI_API_KEY: test-key

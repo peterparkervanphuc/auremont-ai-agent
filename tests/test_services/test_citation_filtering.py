@@ -8,8 +8,23 @@ of them — citing files from projects the reply never engaged with would be mis
 from backend.services.agent_pipeline import _citations_for
 
 
-def _doc(document_id: int, title: str, project_id: str | None) -> dict:
-    return {"document_id": document_id, "title": title, "content": "...", "page": 1, "project_id": project_id}
+def _doc(
+    document_id: int,
+    title: str,
+    project_id: str | None,
+    *,
+    page: int = 1,
+    content: str = "...",
+    score: float = 0.0,
+) -> dict:
+    return {
+        "document_id": document_id,
+        "title": title,
+        "content": content,
+        "page": page,
+        "project_id": project_id,
+        "score": score,
+    }
 
 
 def test_single_project_keeps_citations():
@@ -36,3 +51,42 @@ def test_missing_project_id_is_not_treated_as_ambiguous():
         {"document_id": 1, "title": "bang-gia.pdf", "qualifier": None, "page": 1, "y_position": None},
         {"document_id": 2, "title": "quy-dinh-chung.pdf", "qualifier": None, "page": 1, "y_position": None},
     ]
+
+
+def test_citation_page_is_selected_from_answer_evidence_not_first_hit():
+    docs = [
+        _doc(
+            1,
+            "bang-gia.pdf",
+            "the-palma",
+            page=2,
+            content="Tổng quan căn hộ 1PN, 2PN, 3PN.",
+            score=0.95,
+        ),
+        _doc(
+            1,
+            "bang-gia.pdf",
+            "the-palma",
+            page=4,
+            content="Căn 2PN có diện tích 64,3-69,9 m2 và giá 5,774-7,273 tỷ đồng.",
+            score=0.60,
+        ),
+    ]
+
+    citations = _citations_for(
+        docs,
+        answer="Căn 2PN rộng 64,3-69,9 m2, giá khoảng 5,774-7,273 tỷ đồng.",
+    )
+
+    assert citations[0]["page"] == 4
+
+
+def test_citation_ranking_without_answer_preserves_retrieval_order():
+    docs = [
+        _doc(1, "bang-gia.pdf", "the-palma", page=2, score=0.95),
+        _doc(1, "bang-gia.pdf", "the-palma", page=4, score=0.60),
+    ]
+
+    citations = _citations_for(docs)
+
+    assert citations[0]["page"] == 2

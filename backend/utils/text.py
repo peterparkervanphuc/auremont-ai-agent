@@ -52,6 +52,10 @@ _MD_HEADING = re.compile(r"^[ \t]*#{1,6}[ \t]*", re.MULTILINE)
 _MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 _MD_CODE_FENCE = re.compile(r"^[ \t]*```.*$", re.MULTILINE)
 _EXCESS_BLANK_LINES = re.compile(r"\n{3,}")
+# Models occasionally emit a bullet immediately after the preceding full stop (`.- `),
+# even when instructed to put each item on its own line. The UI can only render a real
+# list when the line break exists, so repair this harmless formatting slip centrally.
+_JOINED_BULLET = re.compile(r"(?<=[.!?])\s*-\s+(?=\S)")
 
 
 def strip_markdown(text: str) -> str:
@@ -81,6 +85,7 @@ def strip_markdown(text: str) -> str:
     # Normalise bullets after emphasis has been stripped, otherwise "*   **A**" would
     # still leave a stray asterisk behind.
     cleaned = _MD_BULLET.sub("- ", cleaned)
+    cleaned = _JOINED_BULLET.sub("\n- ", cleaned)
     cleaned = _EXCESS_BLANK_LINES.sub("\n\n", cleaned)
 
     return cleaned.strip()

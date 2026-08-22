@@ -20,6 +20,7 @@ def create_message(
     emotion: MessageEmotion | None = None,
     quick_replies: list[str] | None = None,
     listings: list[dict] | None = None,
+    suggested_questions: list[str] | None = None,
 ) -> Message:
     message = Message(
         session_id=session_id,
@@ -36,6 +37,7 @@ def create_message(
         emotion=emotion,
         quick_replies=quick_replies or None,
         listings=listings or None,
+        suggested_questions=suggested_questions or None,
     )
     db.add(message)
     db.commit()

@@ -61,7 +61,7 @@ def wired_pipeline(monkeypatch):
 
     retrieve: stands in for Qdrant — always returns one grounding chunk so `_generate`
     and `_verify` have context to work with.
-    generate_text: stands in for the Gemini call. Records the exact prompt it was given
+    generate_json: stands in for the Gemini call. Records the exact prompt it was given
     and returns a canned answer that never trips risk_service (no price/commitment
     wording) and never asks for images, so the graph takes the plain verify -> risk_check
     -> END path every time.
@@ -84,15 +84,15 @@ def wired_pipeline(monkeypatch):
             }
         ]
 
-    def fake_generate(prompt: str, system_instruction: str | None = None) -> str:
+    def fake_generate(prompt: str, schema, system_instruction: str | None = None):
         prompts_seen.append(prompt)
-        return "Can 2PN gia 3.6 ty dong."
+        return schema(text="Can 2PN gia 3.6 ty dong.")
 
     def fake_score(*_args, **_kwargs) -> VerifierResult:
         return VerifierResult(faithfulness=0.95, relevancy=0.95)
 
     monkeypatch.setattr(agent_pipeline, "retrieve", fake_retrieve)
-    monkeypatch.setattr(agent_pipeline, "generate_text", fake_generate)
+    monkeypatch.setattr(agent_pipeline, "generate_json", fake_generate)
     monkeypatch.setattr(verifier_service, "score_answer", fake_score)
 
     return prompts_seen

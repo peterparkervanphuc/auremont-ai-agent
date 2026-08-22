@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from backend.ai.intent import is_customer_memory_query
 from backend.core.audit import log_event, truncate
 from backend.core.config import settings
 from backend.core.deps import require_role
@@ -28,7 +29,7 @@ from backend.repositories.message import (
 )
 from backend.schemas.chat_session import ChatSessionCreate, ChatSessionResponse
 from backend.schemas.message import MessageResponse
-from backend.services import agent_pipeline, memory_service
+from backend.services import agent_pipeline, memory_service, reflection_memory, search_criteria
 
 router = APIRouter(
     prefix="/sale/sessions",
@@ -129,11 +130,23 @@ async def ask_in_session(
 
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
 
-    # Long-term memory is this Sale's own recurring topics, never another Sale's and
-    # never the end customer's. Read before the write below so the profile reflects
-    # earlier sessions rather than the question currently being answered.
-    memory_key = memory_service.sale_key(user.id)
-    memory_profile = memory_service.format_profile(memory_service.load_profile(memory_key))
+    # One Sales session represents one end customer. Keep both long-term preferences and
+    # learned corrections under that session: using user.id here would leak customer A's
+    # budget and lessons into customer B's consultation. Read before writing this turn.
+    memory_key = memory_service.sale_session_key(session_id)
+    reflection_scope = reflection_memory.sale_session_scope(session_id)
+    if is_customer_memory_query(payload.content):
+        # Existing sessions predate the per-session namespace. Rebuild only from this
+        # session's Sale-authored turns; never migrate the legacy Sale-wide profile,
+        # because it may contain preferences from several different customers.
+        memory_service.remember_many(
+            memory_key,
+            [turn["content"] for turn in history if turn.get("sender") == MessageSender.SALE],
+            session.project_id,
+            db,
+        )
+    memory_profile_data = memory_service.load_profile(memory_key)
+    memory_profile = memory_service.format_profile(memory_profile_data)
 
     started = time.perf_counter()
     result = agent_pipeline.run_pipeline(
@@ -142,6 +155,9 @@ async def ask_in_session(
         db=db,
         history=history,
         memory_profile=memory_profile,
+        session_id=session_id,
+        reflection_scope=reflection_scope,
+        memory_profile_data=memory_profile_data,
     )
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
 
@@ -184,6 +200,7 @@ async def ask_in_session(
         completeness=result.completeness,
         failure_mode=result.failure_mode,
         emotion=MessageEmotion(result.emotion) if result.emotion else None,
+        suggested_questions=result.suggested_questions,
     )
 
 
@@ -200,6 +217,7 @@ async def clear_session_messages(
     delete_hitl_logs_for_session(db, session_id)
     delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)
+    _forget_session_memory(session_id)
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -211,4 +229,12 @@ async def remove_sale_session(
     delete_hitl_logs_for_session(db, session_id)
     delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)
+    _forget_session_memory(session_id)
     delete_session(db, session_id)
+
+
+def _forget_session_memory(session_id: int) -> None:
+    """Forget every non-MySQL memory layer belonging to one represented customer."""
+    memory_service.forget(memory_service.sale_session_key(session_id))
+    reflection_memory.forget_all(reflection_memory.sale_session_scope(session_id))
+    search_criteria.clear(session_id)
