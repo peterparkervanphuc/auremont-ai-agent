@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from backend.models.project import Project
 from backend.utils.text import strip_diacritics
 
-
 _PROFILE_TERMS = (
     "thong tin toa",
     "thuoc phan khu",
