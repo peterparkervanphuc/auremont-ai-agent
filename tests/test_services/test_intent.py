@@ -1,6 +1,27 @@
 """Keyword classifiers behind the customer-chat gates and the AI→Sale handoff trigger."""
 
-from backend.ai.intent import needs_human_handoff, needs_registration_gate, wants_human_agent
+from backend.ai.intent import needs_human_handoff, needs_inventory, needs_registration_gate, wants_human_agent
+
+
+def test_needs_inventory_matches_a_budget_threshold():
+    """A budget-based recommendation is an inventory question too — see intent.py's
+    _PRICE_THRESHOLD_PATTERN: without it this falls through to document retrieval, which
+    has nothing shaped like "under 5 billion" to match."""
+    assert needs_inventory("tư vấn cho tôi căn hộ dưới 5 tỷ")
+    assert needs_inventory("con can nao duoi 5 ty khong")  # no diacritics
+    assert needs_inventory("có căn nào trên 3 tỷ không")
+    assert needs_inventory("tối đa 4,5 tỷ thì xem được căn nào")
+
+
+def test_needs_inventory_matches_a_budget_range():
+    assert needs_inventory("từ 3 tỷ đến 5 tỷ có căn nào không")
+    assert needs_inventory("căn hộ tầm 3-5 tỷ")
+
+
+def test_needs_inventory_ignores_a_bare_price_answer_without_a_threshold_word():
+    """A plain price question ("giá căn 2PN?") still belongs to the price-list document,
+    not the live inventory tool — only an explicit threshold routes to the tool."""
+    assert not needs_inventory("Giá căn 2PN dự án Ocean Park 3 là bao nhiêu?")
 
 
 def test_needs_registration_gate_matches_closing_questions():

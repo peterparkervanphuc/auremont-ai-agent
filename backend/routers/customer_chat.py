@@ -47,6 +47,7 @@ from backend.schemas.customer import (
 from backend.schemas.message import MessageResponse
 from backend.schemas.user import TokenResponse, UserResponse
 from backend.services import agent_pipeline
+from backend.services.risk_service import detect_hard_commitment_risk
 
 router = APIRouter(prefix="/customer", tags=["Customer Chat"])
 
@@ -266,6 +267,7 @@ async def ask_in_customer_session(
     # Only the real pipeline branch below ever fills this in — a gate/handoff message is
     # fixed copy, never a discovery question with options to tap.
     quick_replies: list[str] = []
+    listings: list[dict] = []
 
     if is_anonymous and needs_registration_gate(payload.content):
         gate = "closing_intent"
@@ -294,7 +296,13 @@ async def ask_in_customer_session(
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         used_cache = result.used_cache
 
-        if result.requires_hitl:
+        # A logged-in customer only escalates for a *hard* commitment (discount, financing,
+        # deposit, contract, legal, payment terms) — see detect_hard_commitment_risk.
+        # `result.requires_hitl` alone (risk_service.detect_commitment_risk) also trips on a
+        # bare price figure, which is exactly what a logged-in customer asking for advice
+        # expects the AI to answer directly instead of being bounced to a human.
+        hard_risk = result.requires_hitl and detect_hard_commitment_risk(result.draft_answer)
+        if result.requires_hitl and (is_anonymous or hard_risk):
             # Belt-and-suspenders: the PUBLIC-tier answer itself tripped risk_service's
             # price/commitment detector even though the keyword gates above missed it.
             # Withhold it rather than showing a "requires confirmation" answer nobody on
@@ -314,10 +322,11 @@ async def ask_in_customer_session(
             verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
         else:
             answer_text = result.draft_answer
-            verifier_score, requires_hitl = result.verifier_score, result.requires_hitl
+            verifier_score, requires_hitl = result.verifier_score, False
             faithfulness, answer_relevancy = result.faithfulness, result.answer_relevancy
             emotion = MessageEmotion(result.emotion) if result.emotion else None
             quick_replies = result.quick_replies
+            listings = result.listings
 
     log_event(
         "customer.query",
@@ -347,6 +356,7 @@ async def ask_in_customer_session(
         answer_relevancy=answer_relevancy,
         emotion=emotion,
         quick_replies=quick_replies,
+        listings=listings,
     )
 
     response = CustomerAskResponse.model_validate(message)

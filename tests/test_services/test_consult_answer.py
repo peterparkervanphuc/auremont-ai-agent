@@ -36,3 +36,38 @@ def test_internal_clearance_uses_plain_text_and_no_quick_replies(monkeypatch):
 
     assert result["draft_answer"] == "Giá căn 2PN là 3.6 tỷ."
     assert result["quick_replies"] == []
+    assert result["listings"] == []
+
+
+def test_public_clearance_carries_listings_through(monkeypatch):
+    """Numeric details for a recommendation now live in `listings` (rendered as their own
+    cards) rather than as bullet lines in `text` — see prompts.PropertyListing. No `db` on
+    state here, so the image/project_id can't resolve; the listing must still come through
+    with those two fields null rather than being dropped."""
+    from backend.ai.prompts import PropertyListing
+
+    monkeypatch.setattr(
+        agent_pipeline,
+        "generate_json",
+        lambda *_a, **_kw: ConsultAnswer(
+            text="Với ngân sách này, em gợi ý lựa chọn sau ạ:",
+            listings=[
+                PropertyListing(
+                    project_name="The Sapphire 2", unit_type="2PN", area_range="55-64 m²", price_range="3,1-4,3 tỷ đồng"
+                )
+            ],
+        ),
+    )
+
+    result = agent_pipeline._generate({"query": "tư vấn căn hộ dưới 5 tỷ", "clearance": DocumentVisibility.PUBLIC})
+
+    assert result["listings"] == [
+        {
+            "project_name": "The Sapphire 2",
+            "unit_type": "2PN",
+            "area_range": "55-64 m²",
+            "price_range": "3,1-4,3 tỷ đồng",
+            "image_url": None,
+            "project_id": None,
+        }
+    ]

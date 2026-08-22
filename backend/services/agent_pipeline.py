@@ -42,6 +42,7 @@ from backend.ai.intent import needs_inventory as query_needs_inventory
 from backend.core import tracing
 from backend.core.enums import DocumentVisibility, MessageEmotion, MessageSender
 from backend.core.gemini_client import generate_json, generate_text
+from backend.models.project import Project
 from backend.services import (
     answer_images_service,
     cache_service,
@@ -171,6 +172,8 @@ class PipelineResult:
     # answer (see prompts.ConsultAnswer); Sale/INTERNAL answers keep this empty, they're
     # generated as plain text.
     quick_replies: list[str] = field(default_factory=list)
+    # Recommended units rendered as their own cards — see PipelineState.listings above.
+    listings: list[dict] = field(default_factory=list)
 
 
 class PipelineState(TypedDict, total=False):
@@ -201,6 +204,11 @@ class PipelineState(TypedDict, total=False):
     draft_answer: str
     citations: list[dict]
     quick_replies: list[str]
+    # Recommended units rendered as their own cards (with paging arrows) instead of as
+    # bullet lines in draft_answer — see prompts.PropertyListing and the LISTINGS block in
+    # SYSTEM_INSTRUCTION_PUBLIC. Each dict already carries a resolved image_url/project_id
+    # (see _resolve_listing_images), never the model's own guess.
+    listings: list[dict]
     verifier_score: float
     faithfulness: float
     answer_relevancy: float
@@ -358,6 +366,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     """
     query = state["query"]
     clearance = state.get("clearance", DocumentVisibility.INTERNAL)
+    project_id = state.get("project_id")
 
     # Keyword classification stays on the bare current-turn query — expanding it here
     # would let an old turn's inventory/document keywords leak into a question that no
@@ -365,6 +374,33 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     needs_inventory = query_needs_inventory(query)
     needs_document_retrieval = query_needs_documents(query)
     hits: list[dict] = []
+
+    # Retrieval embeds the question expanded with the previous one, so a bare follow-up
+    # ("còn 3PN thì sao?") still carries the project and topic into the vector. Intent
+    # detection above deliberately keeps reading the raw query: the question at hand
+    # decides whether inventory is needed, not the one before it.
+    retrieval_query = _retrieval_query(query, state.get("history"))
+
+    # A customer-chat session carries no project by default (see _tool_call's docstring:
+    # "the picker was dropped from session creation") — the only place a project the
+    # customer named ever appears is inside the conversation itself. Without this, a
+    # session can never answer an inventory question at all: `_tool_call` keeps raising
+    # InventoryProjectUnresolvedError and asking "which project?" forever, even several
+    # turns after the customer already named one ("Ocean Park 1"). Resolved from the same
+    # history-folded string as retrieval, so a project named a turn or two back still
+    # scopes this turn.
+    #
+    # Deliberately kept OUT of the Qdrant call below (separate `inventory_project_id`, not
+    # `project_id`): every ingested chunk's `project_id` payload field is still NULL as of
+    # 2026-08-22 (an ingestion-pipeline gap, documents are never linked to a project on
+    # upload) — passing a resolved id into `retrieve()`'s hard payload filter would match
+    # zero chunks and silently turn a working unscoped search into an empty one. Once
+    # ingestion starts tagging `project_id`, this can be threaded into `retrieve()` too.
+    inventory_project_id = project_id
+    if inventory_project_id is None:
+        db = state.get("db")
+        if db is not None:
+            inventory_project_id = answer_images_service.resolve_project_id(db, retrieval_query)
 
     # The routing decision itself, recorded before it is acted on: "why did this question
     # never call the inventory API?" is otherwise unanswerable after the fact.
@@ -377,16 +413,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
 
     if needs_document_retrieval:
         try:
-            # Retrieval embeds the question expanded with the previous one, so a bare
-            # follow-up ("còn 3PN thì sao?") still carries the project and topic into the
-            # vector. Intent detection above deliberately keeps reading the raw query: the
-            # question at hand decides whether inventory is needed, not the one before it.
-            hits = retrieve(
-                _retrieval_query(query, state.get("history")),
-                clearance,
-                state.get("project_id"),
-                RETRIEVAL_TOP_K,
-            )
+            hits = retrieve(retrieval_query, clearance, project_id, RETRIEVAL_TOP_K)
         except RetrievalError:
             logger.exception(
                 "Qdrant retrieval failed.",
@@ -432,6 +459,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
         "retrieved_docs": hits,
         "needs_inventory": needs_inventory,
         "needs_document_retrieval": needs_document_retrieval,
+        "project_id": inventory_project_id,
     }
 
 
@@ -512,6 +540,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         lessons=state.get("reflection_lessons") or "",
     )
     quick_replies: list[str] = []
+    listings: list[dict] = []
     attempt = state.get("retry_count", 0) + 1
     started = time.perf_counter()
 
@@ -547,6 +576,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
             )
             return {"notice": GENERATION_ERROR_MESSAGE}
         answer, quick_replies = parsed.text, parsed.quick_replies
+        listings = _resolve_listing_images(state.get("db"), parsed.listings)
 
     # Strip before checking for emptiness: an answer made up of only Markdown characters
     # renders as blank on screen, so it must fall into the error branch instead of
@@ -574,7 +604,56 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         with_lessons=bool(state.get("reflection_lessons")),
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
     )
-    return {"draft_answer": answer, "citations": _citations_for(docs), "quick_replies": quick_replies}
+    return {
+        "draft_answer": answer,
+        "citations": _citations_for(docs),
+        "quick_replies": quick_replies,
+        "listings": listings,
+    }
+
+
+def _resolve_listing_images(db: Session | None, listings: list["prompts.PropertyListing"]) -> list[dict]:
+    """Attach a real subdivision photo to each model-proposed listing.
+
+    The model only ever supplies text fields (project_name, unit_type, area_range,
+    price_range) — never an image URL, so it cannot hallucinate one. This resolves the
+    project the same way `answer_images_service.resolve_project_id` already does for
+    memory/images, then reuses its first gallery photo, exactly like `collect_images`
+    does for the existing image strip. A listing whose project or gallery can't be
+    resolved is still kept, just with `image_url=None` — the frontend renders a
+    placeholder rather than losing the listing entirely over a missing photo.
+    """
+    resolved: list[dict] = []
+    for listing in listings:
+        image_url: str | None = None
+        project_id: str | None = None
+        if db is not None:
+            try:
+                project_id = answer_images_service.resolve_project_id(db, listing.project_name)
+                project = db.get(Project, project_id) if project_id else None
+                if project is not None:
+                    gallery = ((project.details or {}).get("images") or {}).get("gallery") or []
+                    if gallery and isinstance(gallery[0], str):
+                        # Same normalisation as answer_images_service.collect_images — a
+                        # stored gallery entry is often a bare MinIO object key with a
+                        # stray leading slash, not a browser-loadable URL on its own.
+                        image_url = answer_images_service.public_gallery_url(gallery[0])
+            except Exception:
+                logger.exception(
+                    "Could not resolve a listing's project image; keeping the listing without one.",
+                    extra={"event": "pipeline.listing_image.failed", "project_name": listing.project_name},
+                )
+        resolved.append(
+            {
+                "project_name": listing.project_name,
+                "unit_type": listing.unit_type,
+                "area_range": listing.area_range,
+                "price_range": listing.price_range,
+                "image_url": image_url,
+                "project_id": project_id,
+            }
+        )
+    return resolved
 
 
 def _citations_for(docs: list[dict]) -> list[dict]:
@@ -648,8 +727,17 @@ def _verify(state: PipelineState) -> dict[str, Any]:
 
 
 def _risk_check(state: PipelineState) -> dict[str, Any]:
-    """Touches price/commitment -> raise the HITL flag so the Sale must read and confirm."""
-    requires_hitl = risk_service.detect_commitment_risk(state.get("draft_answer", ""))
+    """Touches price/commitment -> raise the HITL flag so the Sale must read and confirm.
+
+    Scans `listings` alongside `draft_answer`: a recommendation's price/area now lives in
+    those structured cards rather than in the prose text (see prompts.PropertyListing), and
+    a risk check that only read `draft_answer` would miss it entirely — the exact class of
+    answer this flag exists to catch.
+    """
+    listings_text = " ".join(
+        f"{listing.get('price_range', '')} {listing.get('area_range', '')}" for listing in state.get("listings") or []
+    )
+    requires_hitl = risk_service.detect_commitment_risk(f"{state.get('draft_answer', '')} {listings_text}")
     tracing.step("risk_check", requires_hitl=requires_hitl)
     return {"requires_hitl": requires_hitl}
 
@@ -930,6 +1018,7 @@ def _run_traced(
         draft_answer=state.get("draft_answer", ""),
         citations=state.get("citations") or [],
         quick_replies=state.get("quick_replies") or [],
+        listings=state.get("listings") or [],
         verifier_score=state.get("verifier_score", 0.0),
         requires_hitl=state.get("requires_hitl", False),
         used_cache=state.get("used_cache", False),

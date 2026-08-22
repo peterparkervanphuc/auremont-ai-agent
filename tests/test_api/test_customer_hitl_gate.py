@@ -1,9 +1,15 @@
-"""The customer surface must never display a price/commitment answer.
+"""The customer surface must never display a *hard commitment* answer (discount, financing,
+deposit, contract, legal, payment terms) verbatim.
 
 There is no HITL card in the customer UI and `POST /hitl/{id}/confirm` is SALE/ADMIN-only,
 because nobody signs off on a commitment made to themselves. That design is only safe while
-a flagged answer is *withheld* on this surface rather than shown — these tests pin that
-invariant on both customer paths.
+a flagged answer is *withheld* on this surface rather than shown.
+
+A logged-in customer is the one exception: since 2026-08-22 a *price-only* answer (a bare
+figure, no discount/financing/legal keyword — see `risk_service.detect_hard_commitment_risk`)
+reaches them directly instead of being bounced to a Sale, because a logged-in customer asking
+the AI for advice expects an actual answer. An anonymous visitor still gets gated on any
+price mention — see `TestAnonymousVisitor` below.
 """
 
 import pytest
@@ -65,12 +71,12 @@ def anonymous_client(db_session):
     app.dependency_overrides.clear()
 
 
-def _stub_pipeline(monkeypatch, *, requires_hitl: bool):
+def _stub_pipeline(monkeypatch, *, requires_hitl: bool, draft_answer: str = "Giá căn 2PN là 3,6 tỷ đồng."):
     monkeypatch.setattr(
         agent_pipeline,
         "run_pipeline",
         lambda query, project_id=None, db=None, clearance=None, history=None: PipelineResult(
-            draft_answer="Giá căn 2PN là 3,6 tỷ đồng.",
+            draft_answer=draft_answer,
             citations=[],
             verifier_score=0.9,
             requires_hitl=requires_hitl,
@@ -96,11 +102,50 @@ def _latest_agent_message(db, session_id: int) -> Message:
 
 
 class TestLoggedInCustomer:
-    def test_a_risky_answer_is_withheld_and_handed_to_a_sale(
+    def test_a_hard_commitment_answer_is_withheld_and_handed_to_a_sale(
         self, as_customer, customer, db_session, monkeypatch
     ):
-        """The regression this file exists for: the gate used to apply only to anonymous
-        visitors, so a logged-in customer received the priced answer verbatim."""
+        """A real commitment (here: a discount percentage) still bounces to a Sale — a
+        logged-in customer cannot sign off on a promise made to themselves."""
+        _stub_pipeline(
+            monkeypatch, requires_hitl=True, draft_answer="Căn 2PN được chiết khấu 5% nếu đặt cọc trong tháng này."
+        )
+        session = _session_for(db_session, customer)
+
+        response = as_customer(customer).post(
+            f"/api/v1/customer/sessions/{session.id}/messages", json={"content": "Chính sách chiết khấu thế nào?"}
+        )
+
+        assert response.status_code == 201, response.text
+        assert "5%" not in response.json()["content"]
+        assert response.json()["status"] == SessionStatus.WAITING_SALE
+
+        stored = _latest_agent_message(db_session, session.id)
+        assert stored.requires_hitl is False
+        assert "5%" not in stored.content
+
+    def test_the_session_enters_the_live_queue_so_a_sale_can_take_over(
+        self, as_customer, customer, db_session, monkeypatch
+    ):
+        _stub_pipeline(
+            monkeypatch, requires_hitl=True, draft_answer="Căn 2PN được chiết khấu 5% nếu đặt cọc trong tháng này."
+        )
+        session = _session_for(db_session, customer)
+
+        as_customer(customer).post(
+            f"/api/v1/customer/sessions/{session.id}/messages", json={"content": "Chính sách chiết khấu thế nào?"}
+        )
+
+        db_session.refresh(session)
+        assert session.status == SessionStatus.WAITING_SALE
+        assert session.handoff_requested_at is not None
+
+    def test_a_price_only_answer_reaches_the_logged_in_customer_directly(
+        self, as_customer, customer, db_session, monkeypatch
+    ):
+        """Since 2026-08-22: a bare price figure (no discount/financing/legal keyword) is no
+        longer withheld for a logged-in customer — they asked the AI for advice and expect an
+        actual answer, not an automatic handoff. See risk_service.detect_hard_commitment_risk."""
         _stub_pipeline(monkeypatch, requires_hitl=True)
         session = _session_for(db_session, customer)
 
@@ -109,26 +154,11 @@ class TestLoggedInCustomer:
         )
 
         assert response.status_code == 201, response.text
-        assert "3,6 tỷ" not in response.json()["content"]
-        assert response.json()["status"] == SessionStatus.WAITING_SALE
+        assert response.json()["content"] == "Giá căn 2PN là 3,6 tỷ đồng."
+        assert response.json()["status"] == SessionStatus.BOT_HANDLING
 
         stored = _latest_agent_message(db_session, session.id)
         assert stored.requires_hitl is False
-        assert "3,6 tỷ" not in stored.content
-
-    def test_the_session_enters_the_live_queue_so_a_sale_can_take_over(
-        self, as_customer, customer, db_session, monkeypatch
-    ):
-        _stub_pipeline(monkeypatch, requires_hitl=True)
-        session = _session_for(db_session, customer)
-
-        as_customer(customer).post(
-            f"/api/v1/customer/sessions/{session.id}/messages", json={"content": "Giá căn 2PN?"}
-        )
-
-        db_session.refresh(session)
-        assert session.status == SessionStatus.WAITING_SALE
-        assert session.handoff_requested_at is not None
 
     def test_a_safe_answer_still_reaches_the_customer_unchanged(
         self, as_customer, customer, db_session, monkeypatch

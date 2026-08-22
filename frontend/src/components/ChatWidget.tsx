@@ -124,6 +124,7 @@ export function ChatWidget() {
       hitl_confirmed: false,
       emotion: null,
       quick_replies: null,
+      listings: null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimisticUser]);
@@ -160,6 +161,7 @@ export function ChatWidget() {
           hitl_confirmed: false,
           emotion: null,
           quick_replies: null,
+          listings: null,
           created_at: new Date().toISOString(),
         },
       ]);

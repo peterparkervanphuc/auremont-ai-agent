@@ -1710,6 +1710,117 @@
 
 .answer-image-card:hover { border-color: var(--accent); }
 
+/* ── Property listing carousel (CustomerChatPage.tsx / PropertyListingCarousel.tsx) —
+   one recommended unit at a time, same card language as .project-card (catalogue browse
+   pages) so a card inside the chat reads as the same kind of object, just narrower. ── */
+.listing-carousel {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+}
+
+.listing-card {
+  width: 300px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  overflow: hidden;
+}
+
+.listing-card-image {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+  background: var(--bg-3);
+}
+
+.listing-card-image--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+
+.listing-card-body {
+  padding: 12px 14px 14px;
+}
+
+.listing-card-title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-1);
+  margin-bottom: 4px;
+}
+
+.listing-card-meta {
+  font-size: 0.82rem;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+
+.listing-card-price {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.listing-carousel-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.listing-carousel-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-2);
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast),
+    color var(--t-fast);
+}
+
+.listing-carousel-arrow:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.listing-carousel-arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.listing-carousel-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.listing-carousel-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border-h);
+}
+
+.listing-carousel-dot--active {
+  background: var(--accent);
+  width: 14px;
+  border-radius: 3px;
+}
+
 /* Portalled to <body>, so it is positioned against the viewport and sits above the
    topbar and sidebar. `cursor: zoom-out` on the backdrop advertises click-to-close. */
 .image-lightbox {

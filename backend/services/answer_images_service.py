@@ -22,10 +22,30 @@ import re
 
 from sqlalchemy.orm import Session
 
+from backend.core.config import settings
+from backend.core.minio_client import public_object_url
 from backend.models.project import Project
 from backend.utils.text import strip_diacritics
 
 logger = logging.getLogger(__name__)
+
+
+def public_gallery_url(value: str) -> str:
+    """Normalise one `project.details["images"]["gallery"]` entry into a URL a browser can
+    actually load.
+
+    Two shapes exist in the data today, both from the same `scripts/_gallery.py` loader:
+    a full external URL when `PROJECT_IMAGES_BASE_URL` was set at load time, and a bare
+    MinIO object key with a stray leading slash (`/the-sapphire/mat-bang-...jpg`) when it
+    wasn't — the common case in this dev catalogue, since the env var was never set before
+    `scripts/load_apartment_projects.py`/`load_villa_shop_projects.py` ran. The object
+    itself still exists — `scripts/upload_project_images.py` populated the same bucket
+    under the same key names — so the fix is building the URL, not re-uploading anything.
+    """
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    return public_object_url(settings.minio_bucket_project_images, value.lstrip("/"))
+
 
 # Below this, a "match" on a project name is almost certainly a coincidence: two- or
 # three-letter names would otherwise hit on ordinary words in the question.
@@ -125,7 +145,9 @@ def collect_images(db: Session, query: str, answer: str) -> list[dict]:
             return []
 
         selected = _filter_by_topic(gallery, _normalize(query))
-        return [{"url": url, "project_id": project.id, "project_name": project.name} for url in selected]
+        return [
+            {"url": public_gallery_url(url), "project_id": project.id, "project_name": project.name} for url in selected
+        ]
     except Exception:
         logger.exception(
             "Could not resolve answer images; answering without them.",

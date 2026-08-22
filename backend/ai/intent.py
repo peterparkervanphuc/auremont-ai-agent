@@ -6,6 +6,8 @@ from a stale PDF. A deterministic rule is auditable and adds no latency; a class
 would add both a failure mode and a round trip to every question.
 """
 
+import re
+
 from backend.utils.text import strip_diacritics
 
 # Signals that a question needs the real-time inventory table rather than static docs.
@@ -30,6 +32,19 @@ _REALTIME_INTENT_KEYWORDS = (
     "suất nào",
 )
 
+# A budget threshold ("dưới 5 tỷ", "tối đa 3 tỷ", "từ 3 tỷ đến 5 tỷ", "3-5 tỷ") is an
+# inventory question too: `inventory_service._extract_price_range` already knows how to
+# filter live units by exactly this phrasing, but only ever runs once `needs_inventory`
+# routes the question to the tool. Missing this here means a budget-based recommendation
+# ("tư vấn căn hộ dưới 5 tỷ") falls through to document retrieval instead — nothing in an
+# ingested price-list PDF is phrased as "under 5 billion", so the model reports missing
+# data even though the live inventory lookup could have answered it directly. Matched
+# against the diacritic-stripped query, same as everything else in this module.
+_PRICE_THRESHOLD_PATTERN = re.compile(r"\b(?:duoi|tren|khong qua|toi da)\s*\d+(?:[.,]\d+)?\s*(?:ty|trieu|tr)\b")
+_PRICE_RANGE_PATTERN = re.compile(
+    r"\b(?:tu\s*)?\d+(?:[.,]\d+)?\s*(?:ty|trieu|tr)?\s*(?:-|den|toi)\s*\d+(?:[.,]\d+)?\s*(?:ty|trieu|tr)\b"
+)
+
 _DOCUMENT_INTENT_KEYWORDS = (
     "chinh sach",
     "chính sách",
@@ -51,6 +66,10 @@ _DOCUMENT_INTENT_KEYWORDS = (
 )
 
 
+def _mentions_price_threshold(normalized: str) -> bool:
+    return bool(_PRICE_THRESHOLD_PATTERN.search(normalized) or _PRICE_RANGE_PATTERN.search(normalized))
+
+
 def needs_inventory(query: str) -> bool:
     """Diacritic-insensitive matching: a Sale typing fast on a phone rarely uses accents.
 
@@ -59,30 +78,45 @@ def needs_inventory(query: str) -> bool:
     counts from a PDF.
     """
     normalized = strip_diacritics(query)
-    return any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS)
+    if any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS):
+        return True
+    return _mentions_price_threshold(normalized)
 
 
 def needs_document_retrieval(query: str) -> bool:
-    """Keep policy/legal RAG independent from the live-inventory decision."""
+    """Keep policy/legal RAG independent from the live-inventory decision.
+
+    A budget-threshold question ALSO runs retrieval, unlike a plain availability question
+    ("còn căn nào không") — see `names_specific_document_topic` for why: the live inventory
+    API in this build phase is placeholder mock data (no subdivision, no real VND prices),
+    so a budget-based recommendation is answered from the ingested price-list/catalogue
+    documents, with whatever the live tool returns folded in alongside rather than relied
+    on alone.
+    """
     normalized = strip_diacritics(query)
-    return any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS) or not needs_inventory(
-        query
-    )
+    if any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS):
+        return True
+    if _mentions_price_threshold(normalized):
+        return True
+    return not needs_inventory(query)
 
 
 def names_specific_document_topic(query: str) -> bool:
-    """True only for the keyword-matched half of `needs_document_retrieval` above — a
-    query that names something (policy, discount, legal, price list...) that should live
-    in an ingested document, as opposed to `needs_document_retrieval`'s generic catch-all
-    (True for almost anything that isn't an inventory question, including a bare "tư vấn
-    giúp em" with nothing to look up yet).
+    """True for the keyword-matched half of `needs_document_retrieval` above, plus a
+    budget threshold — both name something (policy, discount, legal, price list, a price
+    range...) that should live in an ingested document, as opposed to
+    `needs_document_retrieval`'s generic catch-all (True for almost anything that isn't a
+    plain availability question, including a bare "tư vấn giúp em" with nothing to look up
+    yet).
 
     Used to decide whether zero retrieval hits means "genuinely missing data, say so
     plainly" versus "nothing specific was asked for, let the model have a normal
     conversation instead" — see agent_pipeline._retrieve.
     """
     normalized = strip_diacritics(query)
-    return any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
+    if any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS):
+        return True
+    return _mentions_price_threshold(normalized)
 
 
 # Signals that an anonymous visitor is past general curiosity and into a sales-closing
