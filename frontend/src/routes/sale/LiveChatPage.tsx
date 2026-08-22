@@ -5,6 +5,7 @@ import type { MessageResponse } from "../../types";
 import { AnswerImageStrip } from "./AnswerImageStrip";
 import { parseServerDate } from "../../utils/datetime";
 import { AuremontAvatar } from "../../components/AuremontAvatar";
+import { MessageContent } from "../../components/MessageContent";
 import { CitationList } from "../../components/CitationList";
 import {
   AlertTriangleIcon,
@@ -183,7 +184,7 @@ export function LiveChatPage() {
                     <span className="chat-sale-label">{isSaleMessage ? "Bạn" : "Auremont AI (trước khi chuyển giao)"}</span>
                   )}
                   <div className={`chat-bubble ${isCustomer ? "chat-bubble--bot" : "chat-bubble--user"}`}>
-                    <p className="chat-bubble-text">{m.content}</p>
+                    <MessageContent content={m.content} className="chat-bubble-text" />
 
                     {isCustomer && m.citations && m.citations.length > 0 && (
                       <CitationList citations={m.citations} className="chat-citations" label="Nguồn" />

@@ -1,9 +1,8 @@
-"""The customer surface must never display a price/commitment answer.
+"""Customer self-service and Sale handoff boundaries.
 
-There is no HITL card in the customer UI and `POST /hitl/{id}/confirm` is SALE/ADMIN-only,
-because nobody signs off on a commitment made to themselves. That design is only safe while
-a flagged answer is *withheld* on this surface rather than shown — these tests pin that
-invariant on both customer paths.
+Both logged-in and anonymous customers receive verified PUBLIC-tier price answers directly.
+The conservative risk flag remains active on the Sale co-pilot, but it must not replace a
+customer answer with a generic handoff.
 """
 
 import pytest
@@ -69,7 +68,7 @@ def _stub_pipeline(monkeypatch, *, requires_hitl: bool):
     monkeypatch.setattr(
         agent_pipeline,
         "run_pipeline",
-        lambda query, project_id=None, db=None, clearance=None, history=None: PipelineResult(
+        lambda query, project_id=None, db=None, clearance=None, history=None, **_kwargs: PipelineResult(
             draft_answer="Giá căn 2PN là 3,6 tỷ đồng.",
             citations=[],
             verifier_score=0.9,
@@ -96,11 +95,10 @@ def _latest_agent_message(db, session_id: int) -> Message:
 
 
 class TestLoggedInCustomer:
-    def test_a_risky_answer_is_withheld_and_handed_to_a_sale(
+    def test_a_grounded_price_answer_reaches_the_customer_without_handoff(
         self, as_customer, customer, db_session, monkeypatch
     ):
-        """The regression this file exists for: the gate used to apply only to anonymous
-        visitors, so a logged-in customer received the priced answer verbatim."""
+        """A price detector flag must not swallow a self-service customer answer."""
         _stub_pipeline(monkeypatch, requires_hitl=True)
         session = _session_for(db_session, customer)
 
@@ -109,14 +107,14 @@ class TestLoggedInCustomer:
         )
 
         assert response.status_code == 201, response.text
-        assert "3,6 tỷ" not in response.json()["content"]
-        assert response.json()["status"] == SessionStatus.WAITING_SALE
+        assert "3,6 tỷ" in response.json()["content"]
+        assert response.json()["status"] == SessionStatus.BOT_HANDLING
 
         stored = _latest_agent_message(db_session, session.id)
         assert stored.requires_hitl is False
-        assert "3,6 tỷ" not in stored.content
+        assert "3,6 tỷ" in stored.content
 
-    def test_the_session_enters_the_live_queue_so_a_sale_can_take_over(
+    def test_a_price_answer_does_not_enter_the_live_queue(
         self, as_customer, customer, db_session, monkeypatch
     ):
         _stub_pipeline(monkeypatch, requires_hitl=True)
@@ -127,8 +125,23 @@ class TestLoggedInCustomer:
         )
 
         db_session.refresh(session)
-        assert session.status == SessionStatus.WAITING_SALE
-        assert session.handoff_requested_at is not None
+        assert session.status == SessionStatus.BOT_HANDLING
+        assert session.handoff_requested_at is None
+
+    def test_detailed_price_question_reaches_the_pipeline(
+        self, as_customer, customer, db_session, monkeypatch
+    ):
+        _stub_pipeline(monkeypatch, requires_hitl=False)
+        session = _session_for(db_session, customer)
+
+        response = as_customer(customer).post(
+            f"/api/v1/customer/sessions/{session.id}/messages",
+            json={"content": "Cho mình xin bảng giá chi tiết"},
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["status"] == SessionStatus.BOT_HANDLING
+        assert "3,6 tỷ" in response.json()["content"]
 
     def test_a_safe_answer_still_reaches_the_customer_unchanged(
         self, as_customer, customer, db_session, monkeypatch
@@ -147,7 +160,7 @@ class TestLoggedInCustomer:
 
 
 class TestAnonymousVisitor:
-    def test_a_risky_answer_is_withheld_behind_the_registration_gate(
+    def test_a_risky_answer_is_available_to_anonymous_self_service(
         self, anonymous_client, db_session, monkeypatch
     ):
         _stub_pipeline(monkeypatch, requires_hitl=True)
@@ -163,8 +176,35 @@ class TestAnonymousVisitor:
         )
 
         assert response.status_code == 201, response.text
-        assert response.json()["gate"] == "closing_intent"
-        assert "3,6 tỷ" not in response.json()["content"]
+        assert response.json()["gate"] is None
+        assert response.json()["status"] == SessionStatus.BOT_HANDLING
+        assert "3,6 tỷ" in response.json()["content"]
 
         stored = _latest_agent_message(db_session, session_id)
         assert stored.requires_hitl is False
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "Cho mình bảng giá chi tiết",
+            "Cho mình xem mặt bằng chi tiết",
+            "Tôi muốn đặt lịch xem căn",
+            "Cho mình gặp Sale",
+        ],
+    )
+    def test_anonymous_closing_questions_reach_self_service_pipeline(
+        self, anonymous_client, monkeypatch, question
+    ):
+        _stub_pipeline(monkeypatch, requires_hitl=False)
+        created = anonymous_client.post("/api/v1/customer/sessions/anonymous")
+        token = created.json()["visitor_token"]
+        session_id = created.json()["session_id"]
+
+        response = anonymous_client.post(
+            f"/api/v1/customer/sessions/{session_id}/messages",
+            json={"content": question},
+            headers={"X-Visitor-Token": token},
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["gate"] is None

@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 
 from backend.core.enums import SessionStatus
 from backend.models.chat_session import ChatSession
+from backend.models.message import Message
+from backend.models.user import User
 from backend.schemas.chat_session import ChatSessionCreate
 from backend.schemas.customer import CustomerChatSessionCreate
 from backend.utils.time import utcnow
@@ -75,6 +77,12 @@ def create_anonymous_session(db: Session, visitor_token: str, project_id: str | 
 
 
 def create_customer_session(db: Session, customer_id: int, schema: CustomerChatSessionCreate) -> ChatSession:
+    """Create a row directly.
+
+    Kept for fixtures/import jobs that intentionally construct a particular state. Public
+    API code must use `get_or_create_customer_session`, which enforces one continuing
+    session per customer.
+    """
     session = ChatSession(customer_id=customer_id, title=schema.title, project_id=schema.project_id)
     db.add(session)
     db.commit()
@@ -82,31 +90,71 @@ def create_customer_session(db: Session, customer_id: int, schema: CustomerChatS
     return session
 
 
+def get_latest_customer_session(db: Session, customer_id: int) -> ChatSession | None:
+    return (
+        db.query(ChatSession)
+        .filter(ChatSession.customer_id == customer_id)
+        .order_by(ChatSession.created_at.desc(), ChatSession.id.desc())
+        .first()
+    )
+
+
+def get_or_create_customer_session(
+    db: Session, customer_id: int, schema: CustomerChatSessionCreate
+) -> ChatSession:
+    """The customer's one durable conversation, safe against concurrent first sends.
+
+    Locking the owner row serialises two browser tabs that both reach the first-message
+    path at once. Without it, both can observe "no session" and create separate rows,
+    splitting short-term history despite an idempotent-looking API.
+    """
+    db.query(User).filter(User.id == customer_id).with_for_update().one()
+    existing = get_latest_customer_session(db, customer_id)
+    if existing is not None:
+        return existing
+    return create_customer_session(db, customer_id, schema)
+
+
 def get_session_by_visitor_token(db: Session, visitor_token: str) -> ChatSession | None:
     return db.query(ChatSession).filter(ChatSession.visitor_token == visitor_token).first()
 
 
 def list_sessions_for_customer(db: Session, customer_id: int) -> list[ChatSession]:
-    return (
-        db.query(ChatSession)
-        .filter(ChatSession.customer_id == customer_id)
-        .order_by(ChatSession.created_at.desc())
-        .all()
-    )
+    session = get_latest_customer_session(db, customer_id)
+    return [session] if session is not None else []
 
 
-def claim_session(db: Session, session: ChatSession, customer_id: int) -> ChatSession:
-    """Transfer an anonymous session to a newly registered/logged-in customer account.
+def claim_or_merge_anonymous_session(
+    db: Session, anonymous: ChatSession, customer_id: int
+) -> ChatSession:
+    """Attach an anonymous conversation to the account's one durable session.
 
-    Ownership moves fully to `customer_id`: clearing `visitor_token` means every later
-    ownership check only has to compare `customer_id`, instead of also considering a
-    now-stale token.
+    A newly registered account has no existing row, so ownership simply transfers. An
+    existing customer may log in after chatting anonymously in another browser; in that
+    case the anonymous messages are moved into their canonical session before the
+    temporary row is removed. No transcript is discarded and every later turn sees one
+    continuous short-term history.
     """
-    session.customer_id = customer_id
-    session.visitor_token = None
+    db.query(User).filter(User.id == customer_id).with_for_update().one()
+    canonical = get_latest_customer_session(db, customer_id)
+    if canonical is None:
+        anonymous.customer_id = customer_id
+        anonymous.visitor_token = None
+        db.commit()
+        db.refresh(anonymous)
+        return anonymous
+
+    db.query(Message).filter(Message.session_id == anonymous.id).update(
+        {Message.session_id: canonical.id}, synchronize_session=False
+    )
+    if not canonical.title and anonymous.title:
+        canonical.title = anonymous.title
+    if not canonical.project_id and anonymous.project_id:
+        canonical.project_id = anonymous.project_id
+    db.delete(anonymous)
     db.commit()
-    db.refresh(session)
-    return session
+    db.refresh(canonical)
+    return canonical
 
 
 def enter_waiting_queue(db: Session, session: ChatSession) -> ChatSession:

@@ -14,12 +14,12 @@ import type {
 import { RegisterGateModal } from "../components/RegisterGateModal";
 import { AnswerImageStrip } from "./sale/AnswerImageStrip";
 import { AuremontAvatar } from "../components/AuremontAvatar";
+import { MessageContent } from "../components/MessageContent";
 import { parseServerDate } from "../utils/datetime";
 import {
   ArrowRightIcon,
   ClockIcon,
   LoaderIcon,
-  PlusIcon,
   SendIcon,
   UserIcon,
   UsersIcon,
@@ -76,6 +76,9 @@ export function CustomerChatPage() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Two rapid first sends (or suggestion taps) must share one in-flight create request;
+  // otherwise both can observe sessionId=null before React commits the first update.
+  const sessionCreationRef = useRef<Promise<number> | null>(null);
 
   // Resume an existing conversation on load: a logged-in customer's most recent session,
   // or the anonymous session cached in this browser (see useVisitorToken).
@@ -163,18 +166,28 @@ export function CustomerChatPage() {
 
   const ensureSession = useCallback(async (): Promise<number> => {
     if (sessionId) return sessionId;
+    if (sessionCreationRef.current) return sessionCreationRef.current;
 
-    if (isCustomer) {
-      const session = await customerApi.post<CustomerChatSessionResponse>("/customer/sessions", {});
-      setSessionId(session.id);
-      setSessionStatus(session.status);
-      return session.id;
+    const creation = (async () => {
+      if (isCustomer) {
+        // Idempotent server-side: this returns the account's one durable session.
+        const session = await customerApi.post<CustomerChatSessionResponse>("/customer/sessions", {});
+        setSessionId(session.id);
+        setSessionStatus(session.status);
+        return session.id;
+      }
+
+      const anon = await customerApi.post<AnonymousSessionResponse>("/customer/sessions/anonymous");
+      setVisitorSession(anon.session_id, anon.visitor_token);
+      setSessionId(anon.session_id);
+      return anon.session_id;
+    })();
+    sessionCreationRef.current = creation;
+    try {
+      return await creation;
+    } finally {
+      sessionCreationRef.current = null;
     }
-
-    const anon = await customerApi.post<AnonymousSessionResponse>("/customer/sessions/anonymous");
-    setVisitorSession(anon.session_id, anon.visitor_token);
-    setSessionId(anon.session_id);
-    return anon.session_id;
   }, [sessionId, isCustomer]);
 
   const sendMessage = useCallback(
@@ -259,31 +272,6 @@ export function CustomerChatPage() {
     }
   }, [sessionId, returningToAi]);
 
-  // Doesn't delete anything server-side — just drops the local session pointer so the next
-  // message lazily creates a brand-new one (same lazy-create path `ensureSession` already
-  // uses for a first-ever message). A logged-in customer's old sessions stay queryable via
-  // `GET /customer/sessions`, just no longer the one this page resumes; an anonymous
-  // visitor's old session has no such list, so clearing its localStorage cache here is the
-  // only way to stop resuming it.
-  const startNewChat = useCallback(() => {
-    if (loading || messages.length === 0) return;
-    const confirmed = window.confirm(
-      sessionStatus !== "bot_handling"
-        ? "Bắt đầu cuộc trò chuyện mới? Bạn sẽ rời khỏi phiên chat hiện tại."
-        : "Bắt đầu cuộc trò chuyện mới? Đoạn chat hiện tại sẽ không còn hiển thị ở đây nữa.",
-    );
-    if (!confirmed) return;
-
-    if (!isCustomer) clearVisitorSession();
-    setSessionId(null);
-    setSessionStatus("bot_handling");
-    setMessages([]);
-    setGate(null);
-    setError(null);
-    setJustReturnedToAi(false);
-    setInput("");
-  }, [loading, messages.length, sessionStatus, isCustomer]);
-
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     sendMessage(input);
@@ -299,16 +287,27 @@ export function CustomerChatPage() {
   // Registration claims the anonymous session onto the new account, so the same
   // session_id keeps working — just re-fetch history now that we're authenticated,
   // and drop the anonymous-visitor cache since it no longer applies.
-  const handleAuthenticated = useCallback(async () => {
+  const handleAuthenticated = useCallback(async (preferredSessionId?: number) => {
     setGate(null);
     clearVisitorSession();
-    if (sessionId) {
-      try {
-        const history = await customerApi.get<MessageResponse[]>(`/customer/sessions/${sessionId}/messages`);
-        setMessages(history);
-      } catch {
-        // Non-fatal: the messages already rendered locally stay on screen.
+    try {
+      let id = preferredSessionId ?? sessionId;
+      if (!id) {
+        const sessions = await customerApi.get<CustomerChatSessionResponse[]>("/customer/sessions");
+        id = sessions[0]?.id ?? null;
       }
+      if (!id) return;
+
+      const [detail, history] = await Promise.all([
+        customerApi.get<CustomerChatSessionResponse>(`/customer/sessions/${id}`),
+        customerApi.get<MessageResponse[]>(`/customer/sessions/${id}/messages`),
+      ]);
+      setSessionId(id);
+      setSessionStatus(detail.status);
+      setMessages(history);
+    } catch {
+      // Non-fatal: the messages already rendered locally stay on screen and the normal
+      // authenticated resume effect gets another chance to load the canonical session.
     }
   }, [sessionId]);
 
@@ -343,18 +342,6 @@ export function CustomerChatPage() {
         </div>
 
         <div className="chat-topbar-actions">
-          {messages.length > 0 && (
-            <button
-              className="btn btn-outline chat-newconvo-btn"
-              type="button"
-              onClick={startNewChat}
-              disabled={loading}
-              title="Cuộc trò chuyện mới"
-            >
-              <PlusIcon size={15} />
-              Cuộc trò chuyện mới
-            </button>
-          )}
           {isCustomer && !isLive && (
             <button className="btn btn-outline chat-request-human-btn" type="button" onClick={requestHuman} disabled={requestingHuman}>
               {requestingHuman ? <LoaderIcon size={15} className="icon-spin" /> : <UsersIcon size={15} />}
@@ -452,7 +439,7 @@ export function CustomerChatPage() {
                 <div className="chat-bubble-wrap">
                   {isSaleAgent && <span className="chat-sale-label">Chuyên viên tư vấn</span>}
                   <div className={`chat-bubble ${isUser ? "chat-bubble--user" : "chat-bubble--bot"}`}>
-                    <p className="chat-bubble-text">{m.content}</p>
+                    <MessageContent content={m.content} className="chat-bubble-text" />
 
                     {/* No source citations here, by design — that's a Sale-facing feature
                         (checking which internal doc backs an answer), not something a customer

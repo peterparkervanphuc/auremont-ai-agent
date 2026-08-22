@@ -106,11 +106,17 @@ def test_accepts_plain_string_visibility(qdrant):
     assert _visibility_values(qdrant.query_calls[0]) == ["public"]
 
 
-def test_project_id_adds_filter(qdrant):
+def test_project_id_scopes_to_project_or_global_documents(qdrant):
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL, project_id="ocean-park-3")
 
-    keys = [condition.key for condition in _conditions(qdrant.query_calls[0])]
-    assert "project_id" in keys
+    query_filter = qdrant.query_calls[0]["query_filter"]
+    assert any(
+        isinstance(condition, models.FieldCondition)
+        and condition.key == "project_id"
+        and condition.match.value == "ocean-park-3"
+        for condition in query_filter.should
+    )
+    assert any(isinstance(condition, models.IsNullCondition) for condition in query_filter.should)
 
 
 def test_project_id_omitted_when_not_given(qdrant):
@@ -642,6 +648,28 @@ def test_live_public_clearance_cannot_read_internal_document(live_qdrant):
 
 def test_live_project_filter_excludes_other_projects(live_qdrant):
     assert rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL, project_id="khong-ton-tai") == []
+
+
+def test_live_project_scope_also_includes_global_documents(live_qdrant):
+    from backend.services import vector_store_service
+    from backend.services.chunking_service import DocumentChunk
+
+    vector_store_service.index_document_chunks(
+        document_id=3,
+        title="huong-dan-chung.pdf",
+        project_id=None,
+        visibility="public",
+        chunks=[DocumentChunk(index=0, text="Hướng dẫn giao dịch chung.", page=1)],
+        vectors=[[1.0, 0.0, 0.0]],
+        sparse_vectors=embed_documents_sparse(["Hướng dẫn giao dịch chung."]),
+        review_status="approved",
+    )
+
+    result = rag_service.retrieve(
+        "Hướng dẫn giao dịch", DocumentVisibility.INTERNAL, project_id="khong-ton-tai"
+    )
+
+    assert [hit["document_id"] for hit in result] == [3]
 
 
 def test_live_carries_page_for_citation(live_qdrant):

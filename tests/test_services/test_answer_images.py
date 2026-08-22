@@ -27,6 +27,14 @@ GALLERY_PHONG_NAMES = [
     "https://cdn/p/the-london/phoi-canh-tong-the-the-london.jpg",
 ]
 
+PAVILION_GALLERY = [
+    "https://cdn/p/the-pavilion/mat-bang-toa-p1.jpg",
+    "https://cdn/p/the-pavilion/mat-bang-toa-p2.jpg",
+    "https://cdn/p/the-pavilion/mat-bang-toa-p3.jpg",
+    "https://cdn/p/the-pavilion/mat-bang-toa-p4.jpg",
+    "https://cdn/p/the-pavilion/tong-mat-bang-the-pavilion.jpg",
+]
+
 
 class _FakeProject:
     id = "the-palma"
@@ -41,6 +49,18 @@ class _FakeLondonProject:
     id = "the-london"
     name = "The London"
     details = {"images": {"gallery": GALLERY_PHONG_NAMES}}
+
+
+class _FakePavilionProject:
+    id = "the-pavilion"
+    name = "The Pavilion"
+    details = {"images": {"gallery": PAVILION_GALLERY}}
+
+
+class _FakeSapphireProject:
+    id = "the-sapphire"
+    name = "The Sapphire - Vinhomes Ocean Park"
+    details = {"images": {"gallery": []}}
 
 
 class _FakeQuery:
@@ -58,9 +78,30 @@ class _FakeDb:
     def query(self, _model):
         return _FakeQuery(self._projects)
 
+    def get(self, _model, project_id):
+        return next((project for project in self._projects if project.id == project_id), None)
+
 
 def _urls(images: list[dict]) -> list[str]:
     return [image["url"] for image in images]
+
+
+def test_resolve_project_ids_keeps_both_sides_of_a_comparison():
+    projects = answer_images_service.resolve_project_ids(
+        _FakeDb(_FakePavilionProject(), _FakeProject()),
+        "So sánh The Pavilion và The Palma",
+    )
+
+    assert projects == ["the-pavilion", "the-palma"]
+
+
+def test_resolve_project_ids_accepts_names_without_the_prefix():
+    projects = answer_images_service.resolve_project_ids(
+        _FakeDb(_FakeSapphireProject(), _FakePavilionProject()),
+        "Khách đang so sánh Sapphire 2 và Pavilion",
+    )
+
+    assert projects == ["the-sapphire", "the-pavilion"]
 
 
 # --- Automatic route --------------------------------------------------------------------
@@ -127,6 +168,79 @@ def test_project_named_only_in_the_answer_still_attaches():
 
     assert images
     assert all("tien-ich" in url for url in _urls(images))
+
+
+def test_exact_tower_question_attaches_the_named_tower_instead_of_first_three():
+    db = _FakeDb(_FakePavilionProject())
+
+    images = answer_images_service.collect_images(
+        db,
+        "Cho tôi biết thông tin tòa P4. Tòa này thuộc phân khu nào?",
+        "Tòa P4 thuộc The Pavilion.",
+    )
+
+    assert _urls(images) == ["https://cdn/p/the-pavilion/mat-bang-toa-p4.jpg"]
+
+
+def test_session_project_scope_wins_over_a_longer_parent_project_name():
+    class _ParentProject:
+        id = "vinhomes-ocean-park"
+        name = "Vinhomes Ocean Park"
+        details = {"images": {"gallery": ["https://cdn/parent/mat-bang-toa-p4.jpg"]}}
+
+    db = _FakeDb(_ParentProject(), _FakePavilionProject())
+
+    images = answer_images_service.collect_images(
+        db,
+        "Cho tôi thông tin tòa P4",
+        "P4 thuộc The Pavilion tại Vinhomes Ocean Park",
+        project_id="the-pavilion",
+    )
+
+    assert _urls(images) == ["https://cdn/p/the-pavilion/mat-bang-toa-p4.jpg"]
+
+
+def test_dotted_tower_code_matches_hyphenated_catalogue_filename():
+    class _SapphireProject:
+        id = "the-sapphire"
+        name = "The Sapphire"
+        details = {
+            "project": {"overview": {"towers": ["S1.02", "S1.03"]}},
+            "images": {
+                "gallery": [
+                    "https://cdn/sapphire/mat-bang-toa-S1-02.jpg",
+                    "https://cdn/sapphire/mat-bang-toa-S1-03.jpg",
+                ]
+            },
+        }
+
+    images = answer_images_service.collect_images(
+        _FakeDb(_SapphireProject()),
+        "Cho tôi thông tin tòa S1.02",
+        "Tòa S1.02 thuộc The Sapphire",
+        project_id="the-sapphire",
+    )
+
+    assert _urls(images) == ["https://cdn/sapphire/mat-bang-toa-S1-02.jpg"]
+
+
+def test_named_tower_without_an_uploaded_plan_does_not_show_another_tower():
+    class _PartialProject:
+        id = "the-beverly"
+        name = "The Beverly"
+        details = {
+            "project": {"overview": {"towers": ["BE1", "BE2"]}},
+            "images": {"gallery": ["https://cdn/beverly/mat-bang-toa-be1.jpg"]},
+        }
+
+    images = answer_images_service.collect_images(
+        _FakeDb(_PartialProject()),
+        "Cho tôi thông tin tòa BE2",
+        "Tòa BE2 thuộc The Beverly",
+        project_id="the-beverly",
+    )
+
+    assert images == []
 
 
 def test_unknown_project_attaches_nothing():

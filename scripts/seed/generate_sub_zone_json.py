@@ -369,6 +369,27 @@ def build_the_pavilion() -> dict[str, Any]:
             _pricing_row("Chung cư", "2 ngủ", 53, 74, 2400000000, 3300000000, "Căn hộ 2 phòng ngủ"),
             _pricing_row("Chung cư", "3 ngủ", 78, 99.5, 4100000000, 5100000000, "Căn hộ 3 phòng ngủ"),
         ],
+        "tower_details": {
+            "P4": {
+                "subdivision": "The Pavilion",
+                "parent_sub_zone": "The Ocean View",
+                "scale": "30 tầng nổi và 2 tầng hầm",
+                "floor_use": [
+                    "Tầng 1–2: shophouse",
+                    "Tầng 3–13 và 15–30: căn hộ",
+                    "Tầng 14: phòng lánh nạn",
+                ],
+                "road_adjacency": "Kề đường nội khu rộng 17 m; không trực tiếp bám mặt đường Lý Thánh Tông",
+                "boundaries": [
+                    "Phía Đông Bắc: trường học",
+                    "Phía Đông Nam: khu thấp tầng BF3 và The Royal Sail",
+                    "Phía Tây Nam: tiện ích nội khu và tòa P3",
+                    "Phía Tây Bắc: tòa P1",
+                ],
+                "source_name": "Vinhomes Market — Tòa P4 Vinhomes Ocean Park",
+                "source_url": "https://market.vinhomes.vn/blog/toa-p4-vinhomes-ocean-park",
+            }
+        },
         "sales_policies": [
             {"no": 1, "type": "Chiết khấu", "content": "Chiết khấu lên tới 9%"},
             {"no": 2, "type": "Quà tặng", "content": "Tặng miễn phí gói Premium Smart Home"},

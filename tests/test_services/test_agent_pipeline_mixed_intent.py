@@ -59,6 +59,33 @@ def test_mixed_inventory_and_policy_question_uses_both_sources(monkeypatch):
     assert "OP3-BE1-1205" in prompt
 
 
+def test_budget_recommendation_reads_documents_and_live_inventory(monkeypatch):
+    """Regression for customer chat: a budget filter must not take inventory-only routing.
+
+    The uploaded project documents carry published price ranges, while the inventory API
+    carries current availability; the answer needs both.
+    """
+    calls: list[str] = []
+
+    def fake_retrieve(*_args, **_kwargs):
+        calls.append("qdrant")
+        return [_policy_hit()]
+
+    monkeypatch.setattr(agent_pipeline, "retrieve", fake_retrieve)
+
+    result = agent_pipeline._retrieve(
+        {
+            "query": "tư vấn cho tôi căn dưới 3 tỷ",
+            "project_id": None,
+        }
+    )
+
+    assert calls == ["qdrant"]
+    assert result["needs_document_retrieval"] is True
+    assert result["needs_inventory"] is True
+    assert result["retrieved_docs"] == [_policy_hit()]
+
+
 def test_mixed_question_keeps_policy_context_when_inventory_fails(monkeypatch):
     state = {
         "query": "Co can 2PN va chinh sach ban hang the nao?",

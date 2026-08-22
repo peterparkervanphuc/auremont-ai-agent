@@ -223,3 +223,30 @@ def test_forget_all_clears_everything(fake_redis):
     reflection_memory.forget_all()
 
     assert reflection_memory.load_lessons() == []
+
+
+def test_sale_session_scopes_are_isolated_and_cleared_independently(fake_redis):
+    customer_a = reflection_memory.sale_session_scope(101)
+    customer_b = reflection_memory.sale_session_scope(102)
+
+    reflection_memory.record_lesson(
+        query="Chinh sach thanh toan the nao?",
+        failure_mode="incomplete-answer",
+        feedback="Chua neu dieu kien ap dung.",
+        scope=customer_a,
+    )
+
+    assert len(reflection_memory.load_lessons(customer_a)) == 1
+    assert reflection_memory.load_lessons(customer_b) == []
+    assert reflection_memory.load_lessons() == []
+
+    reflection_memory.record_lesson(
+        query="Tien ich noi khu gom gi?",
+        failure_mode="incomplete-answer",
+        feedback="Chua neu du tien ich.",
+        scope=customer_b,
+    )
+    reflection_memory.forget_all(customer_a)
+
+    assert reflection_memory.load_lessons(customer_a) == []
+    assert len(reflection_memory.load_lessons(customer_b)) == 1

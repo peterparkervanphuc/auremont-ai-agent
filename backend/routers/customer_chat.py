@@ -5,7 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
-from backend.ai.intent import needs_human_handoff, needs_registration_gate, wants_human_agent
+from backend.ai.intent import needs_human_handoff, wants_human_agent
 from backend.core.audit import log_event, truncate
 from backend.core.config import settings
 from backend.core.deps import get_optional_current_user, require_role
@@ -17,11 +17,11 @@ from backend.models.chat_session import ChatSession
 from backend.models.message import Message
 from backend.models.user import User
 from backend.repositories.chat_session import (
-    claim_session,
+    claim_or_merge_anonymous_session,
     create_anonymous_session,
-    create_customer_session,
     delete_session,
     enter_waiting_queue,
+    get_or_create_customer_session,
     get_session,
     list_sessions_for_customer,
     return_to_bot,
@@ -37,6 +37,7 @@ from backend.repositories.message import (
 )
 from backend.repositories.user import create_user, get_user_by_email
 from backend.schemas.customer import (
+    AnonymousSessionClaimRequest,
     AnonymousSessionResponse,
     CustomerAskRequest,
     CustomerAskResponse,
@@ -46,42 +47,27 @@ from backend.schemas.customer import (
 )
 from backend.schemas.message import MessageResponse
 from backend.schemas.user import TokenResponse, UserResponse
-from backend.services import agent_pipeline
+from backend.services import agent_pipeline, memory_service
 
 router = APIRouter(prefix="/customer", tags=["Customer Chat"])
 
 # Canned copy shown instead of a real answer while the visitor is still anonymous — see
 # ARCHITECTURE.md's RBAC section and the product decision behind this router: an anonymous
-# visitor gets general answers for free, but registration is required before the assistant
-# will discuss anything closing-adjacent (detailed pricing, floor plans, viewings) or before
-# the conversation continues past a few turns.
+# visitor gets general answers and closing-adjacent information through self-service. A
+# registration prompt is reserved for the anonymous turn limit; a logged-in customer can
+# still explicitly request a live Sale.
 _TURN_LIMIT_MESSAGE = (
     "Cảm ơn bạn đã trò chuyện cùng Auremont! Để mình lưu lại đoạn chat này và tư vấn sâu hơn, "
     "bạn vui lòng đăng ký/đăng nhập tài khoản nhé."
 )
-_CLOSING_INTENT_MESSAGE = (
-    "Mình đã chuẩn bị sẵn thông tin chi tiết cho bạn. Để bảo mật thông tin dự án, bạn vui lòng "
-    "đăng ký/đăng nhập tài khoản để mình mở khóa tài liệu, hoặc để chuyên viên gọi điện hỗ trợ "
-    "ngay nhé!"
-)
-_HUMAN_REQUEST_GATE_MESSAGE = (
-    "Để kết nối bạn với chuyên viên tư vấn, bạn vui lòng đăng ký/đăng nhập tài khoản nhé — "
-    "mình sẽ báo ngay cho chuyên viên sau khi bạn hoàn tất."
-)
-# Shown once a logged-in customer's session flips to WAITING_SALE via the AI itself
-# detecting the need (needs_human_handoff keyword match in ask_in_customer_session) — the
-# "phần này liên quan đến..." framing states WHY it's handing off, which only makes sense
-# when the AI is the one deciding to; see _HANDOFF_DIRECT_REQUEST_MESSAGE below for the
-# other trigger (the customer asking directly), which needs no such justification.
+# Shown when frustration with the AI causes a logged-in session to enter WAITING_SALE.
 _HANDOFF_NOTICE_MESSAGE = (
-    "Dạ phần này liên quan đến chính sách bán hàng chi tiết, em xin phép kết nối anh/chị với "
+    "Dạ em xin phép kết nối anh/chị với "
     "chuyên viên tư vấn ngay bây giờ ạ. Chuyên viên sẽ đọc lại toàn bộ nội dung mình vừa trao "
     "đổi nên anh/chị không cần nhắc lại từ đầu."
 )
-# Shown when the customer themselves asks for a human — the "Gặp chuyên viên tư vấn" button
-# (request_human below). Explaining "vì phần này liên quan đến chính sách..." here would be
-# inventing a reason that isn't true: they asked directly, nothing about their last message
-# triggered this.
+# Shown when a logged-in customer uses the "Gặp chuyên viên tư vấn" button
+# (request_human below).
 _HANDOFF_DIRECT_REQUEST_MESSAGE = (
     "Dạ vâng, em xin phép kết nối anh/chị với chuyên viên tư vấn ngay bây giờ ạ. Chuyên viên "
     "sẽ đọc lại toàn bộ nội dung mình vừa trao đổi nên anh/chị không cần nhắc lại từ đầu."
@@ -139,7 +125,8 @@ async def register_customer(
     if payload.session_id is not None and payload.visitor_token is not None:
         session = get_session(db, payload.session_id)
         if session is not None and session.customer_id is None and session.visitor_token == payload.visitor_token:
-            claim_session(db, session, user.id)
+            canonical = claim_or_merge_anonymous_session(db, session, user.id)
+            _remember_customer_history(db, canonical, user.id)
 
     log_event("customer.register.success", username=user.username, user_id=user.id)
     return TokenResponse(
@@ -167,7 +154,39 @@ async def create_customer_chat_session(
     db: Session = Depends(get_db),
     user: User = Depends(require_role(UserRole.CUSTOMER)),
 ) -> CustomerChatSessionResponse:
-    return create_customer_session(db, customer_id=user.id, schema=payload)
+    # Idempotent by design: the customer surface is one continuous conversation, not a
+    # list of independent threads. Repeated first-message calls or multiple browser tabs
+    # always converge on the same row.
+    return get_or_create_customer_session(db, customer_id=user.id, schema=payload)
+
+
+@router.post(
+    "/sessions/claim-anonymous",
+    response_model=CustomerChatSessionResponse,
+)
+async def claim_anonymous_chat_session(
+    payload: AnonymousSessionClaimRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(UserRole.CUSTOMER)),
+) -> CustomerChatSessionResponse:
+    """Continue an anonymous transcript after logging into an existing account.
+
+    Registration already transfers the temporary session. Login needs this explicit
+    authenticated step because the generic `/auth/login` endpoint cannot safely accept an
+    anonymous ownership token. If the account already has a session, both transcripts are
+    merged into that canonical row.
+    """
+    anonymous = get_session(db, payload.session_id)
+    if (
+        anonymous is None
+        or anonymous.customer_id is not None
+        or anonymous.visitor_token != payload.visitor_token
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    canonical = claim_or_merge_anonymous_session(db, anonymous, user.id)
+    _remember_customer_history(db, canonical, user.id)
+    return canonical
 
 
 @router.get("/sessions", response_model=list[CustomerChatSessionResponse])
@@ -239,7 +258,19 @@ async def ask_in_customer_session(
     # question itself is passed separately.
     history = history_for_pipeline(list_messages_for_session(db, session_id))
 
+    # Long-term memory is scoped to this customer account and loaded BEFORE remembering
+    # the current turn, so the prompt contains durable preferences from earlier turns
+    # rather than duplicating the question that is already supplied separately. Anonymous
+    # visitors have no stable identity, so they deliberately use short-term history only.
+    memory_key: str | None = None
+    memory_profile = ""
+    if session.customer_id is not None:
+        memory_key = memory_service.customer_key(session.customer_id)
+        memory_profile = memory_service.format_profile(memory_service.load_profile(memory_key))
+
     create_message(db, session_id, sender=MessageSender.CUSTOMER, content=payload.content)
+    if memory_key is not None:
+        memory_service.remember(memory_key, payload.content, session.project_id, db=db)
 
     if session.status != SessionStatus.BOT_HANDLING:
         log_event(
@@ -270,51 +301,44 @@ async def ask_in_customer_session(
     quick_replies: list[str] = []
     suggested_questions: list[str] = []
 
-    if is_anonymous and needs_registration_gate(payload.content):
-        gate = "closing_intent"
-        answer_text = _CLOSING_INTENT_MESSAGE
-        verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
-    elif is_anonymous and wants_human_agent(payload.content):
-        # Same funnel as every other gate: an anonymous visitor must register before a live
-        # Sale gets involved — see the "human_request only for logged-in customers" decision.
-        gate = "human_request"
-        answer_text = _HUMAN_REQUEST_GATE_MESSAGE
-        verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
-    elif is_anonymous and _anonymous_turn_count(db, session_id) >= settings.customer_anonymous_turn_limit:
+    if is_anonymous and _anonymous_turn_count(db, session_id) >= settings.customer_anonymous_turn_limit:
         gate = "turn_limit"
         answer_text = _TURN_LIMIT_MESSAGE
         verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
     elif not is_anonymous and needs_human_handoff(payload.content):
         new_status = SessionStatus.WAITING_SALE
         enter_waiting_queue(db, session)
-        answer_text = _HANDOFF_NOTICE_MESSAGE
+        answer_text = (
+            _HANDOFF_DIRECT_REQUEST_MESSAGE if wants_human_agent(payload.content) else _HANDOFF_NOTICE_MESSAGE
+        )
         verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
     else:
         started = time.perf_counter()
         result = agent_pipeline.run_pipeline(
-            payload.content, project_id=session.project_id, db=db, clearance=DocumentVisibility.PUBLIC, history=history
+            payload.content,
+            project_id=session.project_id,
+            db=db,
+            clearance=DocumentVisibility.PUBLIC,
+            history=history,
+            memory_profile=memory_profile,
+            session_id=session_id,
         )
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         used_cache = result.used_cache
 
         if result.requires_hitl:
-            # Belt-and-suspenders: the PUBLIC-tier answer itself tripped risk_service's
-            # price/commitment detector even though the keyword gates above missed it.
-            # Withhold it rather than showing a "requires confirmation" answer nobody on
-            # this surface is there to confirm: a customer cannot sign off on a commitment
-            # made to themselves, and `POST /hitl/{id}/confirm` is SALE/ADMIN-only. This is
-            # what keeps `requires_hitl` false on every customer-visible message, which is
-            # why the customer UI carries no HITL card at all.
-            if is_anonymous:
-                gate = "closing_intent"
-                answer_text = _CLOSING_INTENT_MESSAGE
-            else:
-                # A logged-in customer has somewhere to go that an anonymous one doesn't:
-                # a real Sale, who re-delivers the figures through the HITL card on their side.
-                new_status = SessionStatus.WAITING_SALE
-                enter_waiting_queue(db, session)
-                answer_text = _HANDOFF_NOTICE_MESSAGE
-            verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
+            # Customer chat is a self-service surface. A grounded price answer may trip the
+            # same conservative risk detector used by the Sale co-pilot, but it must not be
+            # replaced by a generic handoff. Keep HITL on the Sale flow; on this route show
+            # the verified PUBLIC-tier answer and do not expose an unconfirmable HITL card.
+            answer_text = result.draft_answer
+            verifier_score = result.verifier_score
+            faithfulness = result.faithfulness
+            answer_relevancy = result.answer_relevancy
+            requires_hitl = False
+            emotion = MessageEmotion(result.emotion) if result.emotion else emotion
+            quick_replies = result.quick_replies
+            suggested_questions = result.suggested_questions
         else:
             answer_text = result.draft_answer
             verifier_score, requires_hitl = result.verifier_score, result.requires_hitl
@@ -440,6 +464,14 @@ async def return_to_ai(
 
 def _anonymous_turn_count(db: Session, session_id: int) -> int:
     return sum(1 for m in list_messages_for_session(db, session_id) if m.sender == MessageSender.CUSTOMER)
+
+
+def _remember_customer_history(db: Session, session: ChatSession, customer_id: int) -> None:
+    """Seed long-term memory from turns written before an anonymous session was claimed."""
+    key = memory_service.customer_key(customer_id)
+    for message in list_messages_for_session(db, session.id):
+        if message.sender == MessageSender.CUSTOMER:
+            memory_service.remember(key, message.content, session.project_id, db=db)
 
 
 @router.delete("/sessions/{session_id}/messages", status_code=status.HTTP_204_NO_CONTENT)

@@ -122,10 +122,17 @@ def retrieve(
             match=models.MatchValue(value=True),
         ),
     ]
+    project_scope: list[models.Condition] | None = None
     if project_id:
-        conditions.append(models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id)))
+        # Project-scoped documents OR company/global documents. Uploading a general
+        # buying guide without a project assignment must not make it disappear from every
+        # project conversation, while documents assigned to another project remain out.
+        project_scope = [
+            models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id)),
+            models.IsNullCondition(is_null=models.PayloadField(key="project_id")),
+        ]
 
-    query_filter = models.Filter(must=conditions)
+    query_filter = models.Filter(must=conditions, should=project_scope)
     candidate_limit = top_k * OVERFETCH_FACTOR
 
     client = get_qdrant_client()

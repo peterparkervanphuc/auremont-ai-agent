@@ -7,11 +7,12 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.core.deps import get_current_user
-from backend.core.enums import UserRole
+from backend.core.enums import MessageSender, UserRole
 from backend.core.mysql_client import Base, get_db
 from backend.main import app
 from backend.models.user import User
-from backend.services import agent_pipeline
+from backend.repositories.message import create_message
+from backend.services import agent_pipeline, memory_service, reflection_memory, search_criteria
 from backend.services.agent_pipeline import PipelineResult
 
 
@@ -152,3 +153,128 @@ def test_a_sale_cannot_touch_another_sales_session(as_sale, sales, stub_pipeline
 
     # And the owner's session is untouched.
     assert [s["id"] for s in as_sale(owner).get("/api/v1/sale/sessions").json()] == [session_id]
+
+
+def test_each_sale_session_is_one_customer_memory_boundary(as_sale, sales, monkeypatch):
+    """Two customers of the same Sale share neither history, profile nor reflections."""
+    client = as_sale(sales[0])
+    customer_a = _create_session(client, title="Customer A")
+    customer_b = _create_session(client, title="Customer B")
+
+    loaded_keys: list[str] = []
+    remembered_keys: list[str] = []
+    pipeline_calls: list[dict] = []
+
+    def _load(key: str):
+        loaded_keys.append(key)
+        return memory_service.UserProfile(topics=[key])
+
+    def _remember(key: str, *_args, **_kwargs):
+        remembered_keys.append(key)
+
+    def _run(query, *, history=None, memory_profile="", session_id=None, reflection_scope=None, **_kwargs):
+        pipeline_calls.append(
+            {
+                "query": query,
+                "history": history,
+                "memory_profile": memory_profile,
+                "session_id": session_id,
+                "reflection_scope": reflection_scope,
+            }
+        )
+        return PipelineResult("ok", [], 0.9, False)
+
+    monkeypatch.setattr(memory_service, "load_profile", _load)
+    monkeypatch.setattr(memory_service, "remember", _remember)
+    monkeypatch.setattr(agent_pipeline, "run_pipeline", _run)
+
+    assert client.post(
+        f"/api/v1/sale/sessions/{customer_a}/messages", json={"content": "Ngân sách dưới 5 tỷ"}
+    ).status_code == 201
+    assert client.post(
+        f"/api/v1/sale/sessions/{customer_b}/messages", json={"content": "Tìm căn 3PN"}
+    ).status_code == 201
+    assert client.post(
+        f"/api/v1/sale/sessions/{customer_a}/messages", json={"content": "Ưu tiên căn còn trống"}
+    ).status_code == 201
+
+    key_a = memory_service.sale_session_key(customer_a)
+    key_b = memory_service.sale_session_key(customer_b)
+    assert loaded_keys == [key_a, key_b, key_a]
+    assert remembered_keys == [key_a, key_b, key_a]
+    assert key_a != key_b
+
+    assert pipeline_calls[0]["history"] == []
+    assert pipeline_calls[1]["history"] == []
+    assert [turn["content"] for turn in pipeline_calls[2]["history"]] == ["Ngân sách dưới 5 tỷ", "ok"]
+    assert [call["reflection_scope"] for call in pipeline_calls] == [
+        reflection_memory.sale_session_scope(customer_a),
+        reflection_memory.sale_session_scope(customer_b),
+        reflection_memory.sale_session_scope(customer_a),
+    ]
+
+
+def test_memory_question_backfills_only_that_sessions_human_turns(as_sale, sales, db_session, monkeypatch):
+    client = as_sale(sales[0])
+    session_id = _create_session(client, title="Existing customer")
+    create_message(
+        db_session,
+        session_id,
+        sender=MessageSender.SALE,
+        content="Khách đang so sánh The Pavilion và The Sapphire, tài chính 3.5 - 4 tỷ",
+    )
+    create_message(db_session, session_id, sender=MessageSender.AGENT, content="Previous generated answer")
+
+    profile = memory_service.UserProfile()
+    backfilled: list[tuple[str, list[str]]] = []
+    pipeline_profiles: list[memory_service.UserProfile] = []
+
+    def _backfill(key, questions, *_args, **_kwargs):
+        backfilled.append((key, questions))
+        profile.projects = ["the-pavilion", "the-sapphire"]
+        profile.budgets = ["3.5 - 4 tỷ"]
+
+    def _run(_query, *, memory_profile_data=None, **_kwargs):
+        pipeline_profiles.append(memory_profile_data)
+        return PipelineResult("Memory answer", [], 1.0, False)
+
+    monkeypatch.setattr(memory_service, "remember_many", _backfill)
+    monkeypatch.setattr(memory_service, "load_profile", lambda _key: profile)
+    monkeypatch.setattr(memory_service, "remember", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(agent_pipeline, "run_pipeline", _run)
+
+    response = client.post(
+        f"/api/v1/sale/sessions/{session_id}/messages",
+        json={"content": "Khách của tôi đang quan tâm đến phân khu nào?"},
+    )
+
+    assert response.status_code == 201
+    assert backfilled == [
+        (
+            memory_service.sale_session_key(session_id),
+            ["Khách đang so sánh The Pavilion và The Sapphire, tài chính 3.5 - 4 tỷ"],
+        )
+    ]
+    assert pipeline_profiles[0].projects == ["the-pavilion", "the-sapphire"]
+
+
+def test_clear_and_delete_forget_only_that_customer_memory(as_sale, sales, monkeypatch):
+    client = as_sale(sales[0])
+    session_id = _create_session(client)
+    forgotten_profiles: list[str] = []
+    forgotten_reflections: list[str | None] = []
+    cleared_criteria: list[int] = []
+
+    monkeypatch.setattr(memory_service, "forget", forgotten_profiles.append)
+    monkeypatch.setattr(reflection_memory, "forget_all", forgotten_reflections.append)
+    monkeypatch.setattr(search_criteria, "clear", cleared_criteria.append)
+
+    assert client.delete(f"/api/v1/sale/sessions/{session_id}/messages").status_code == 204
+    assert forgotten_profiles == [memory_service.sale_session_key(session_id)]
+    assert forgotten_reflections == [reflection_memory.sale_session_scope(session_id)]
+    assert cleared_criteria == [session_id]
+
+    assert client.delete(f"/api/v1/sale/sessions/{session_id}").status_code == 204
+    assert forgotten_profiles == [memory_service.sale_session_key(session_id)] * 2
+    assert forgotten_reflections == [reflection_memory.sale_session_scope(session_id)] * 2
+    assert cleared_criteria == [session_id, session_id]
