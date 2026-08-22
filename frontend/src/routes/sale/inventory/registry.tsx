@@ -75,6 +75,10 @@ export const ZONES: ZoneMeta[] = [
     categorySlug: "chung-cu",
     cover: "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/the-sapphire/phan-khu-sapphire-vinhomes-ocean-park.jpg",
     render: () => <TheSapphireZone />,
+    subAnchors: [
+      { label: "The Sapphire 1", anchorId: "the-sapphire-1" },
+      { label: "The Sapphire 2", anchorId: "the-sapphire-2" },
+    ],
   },
   {
     slug: "the-senique-hanoi",

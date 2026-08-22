@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { TopNavbar } from "./components/TopNavbar";
 import { ChatWidget } from "./components/ChatWidget";
+import { BackToChatButton } from "./components/BackToChatButton";
 import { Footer } from "./components/Footer";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { useAuth } from "./hooks/useAuth";
@@ -167,6 +168,7 @@ function AppShell() {
 
       {!isLiveChatPage && <Footer />}
       {role !== "admin" && !isLiveChatPage && <ChatWidget />}
+      {role !== "admin" && !isLiveChatPage && <BackToChatButton />}
     </div>
   );
 }

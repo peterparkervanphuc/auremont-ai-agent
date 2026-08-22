@@ -48,3 +48,46 @@ def drop_image_denials(answer: str, images: list[dict]) -> str:
         return cleaned
 
     return f"- Đang hiển thị {len(images)} ảnh {images[0].get('project_name') or 'dự án'} bên dưới."
+
+
+# The opposite failure: the image tool (answer_images_service.collect_images, called from
+# _image_tool in the pipeline) found nothing — resolving the right project from a vague
+# follow-up ("cho tôi xem hình khu này") depends on retrieval/history folding correctly,
+# which is itself probabilistic and sometimes comes up empty — yet the model still writes
+# a confident "ảnh đang hiển thị ngay trên màn hình" line anyway. The customer sees an
+# empty message bubble under a claim that photos are right there. The prompt's own "ẢNH:
+# catalogue không có ảnh nào khớp yêu cầu này" instruction is supposed to prevent this but,
+# same as every other prompt-only rule in this module, is not reliably followed.
+_FALSE_IMAGE_CONFIRMATION_MARKERS = (
+    "dang hien thi",
+    "da hien thi",
+    "hien thi ngay tren man hinh",
+    "ngay tren man hinh",
+    "duoi tin nhan nay",
+    "da dinh kem",
+    "da gui hinh anh",
+    "da gui cac hinh anh",
+    "gui hinh anh thuc te",
+)
+
+
+def drop_false_image_confirmations(answer: str, images: list[dict]) -> str:
+    """Strip lines falsely claiming photos are on screen, when none were actually attached.
+
+    Mirrors `drop_image_denials` in the opposite direction. Only runs when `images` is
+    empty, so a normal answer that legitimately mentions a project's on-screen presence
+    for some other reason is untouched whenever photos really are attached.
+    """
+    if images:
+        return answer
+
+    kept = [
+        line
+        for line in answer.splitlines()
+        if not any(marker in strip_diacritics(line).lower() for marker in _FALSE_IMAGE_CONFIRMATION_MARKERS)
+    ]
+    cleaned = "\n".join(kept).strip()
+    if cleaned:
+        return cleaned
+
+    return "Hiện tại chưa có ảnh phù hợp với yêu cầu này ạ."

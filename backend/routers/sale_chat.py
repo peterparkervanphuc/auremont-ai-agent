@@ -201,6 +201,7 @@ async def ask_in_session(
         failure_mode=result.failure_mode,
         emotion=MessageEmotion(result.emotion) if result.emotion else None,
         suggested_questions=result.suggested_questions,
+        listings=result.listings,
     )
 
 

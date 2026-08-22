@@ -301,6 +301,7 @@ async def ask_in_customer_session(
     quick_replies: list[str] = []
     listings: list[dict] = []
     suggested_questions: list[str] = []
+    images: list[dict] = []
 
     if is_anonymous and _anonymous_turn_count(db, session_id) >= settings.customer_anonymous_turn_limit:
         gate = "turn_limit"
@@ -341,6 +342,7 @@ async def ask_in_customer_session(
             quick_replies = result.quick_replies
             listings = result.listings
             suggested_questions = result.suggested_questions
+            images = result.images
         else:
             answer_text = result.draft_answer
             verifier_score, requires_hitl = result.verifier_score, False
@@ -349,6 +351,7 @@ async def ask_in_customer_session(
             quick_replies = result.quick_replies
             listings = result.listings
             suggested_questions = result.suggested_questions
+            images = result.images
 
     log_event(
         "customer.query",
@@ -380,6 +383,7 @@ async def ask_in_customer_session(
         quick_replies=quick_replies,
         listings=listings,
         suggested_questions=suggested_questions,
+        images=images,
     )
 
     response = CustomerAskResponse.model_validate(message)

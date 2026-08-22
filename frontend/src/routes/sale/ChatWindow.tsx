@@ -9,6 +9,7 @@ import { CitationList } from "../../components/CitationList";
 import { AuremontAvatar } from "../../components/AuremontAvatar";
 import { MessageContent } from "../../components/MessageContent";
 import { AnswerImageStrip } from "./AnswerImageStrip";
+import { PropertyListingCarousel } from "../PropertyListingCarousel";
 import { ChatSuggestions } from "./ChatSuggestions";
 import { parseServerDate } from "../../utils/datetime";
 
@@ -205,6 +206,9 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
                     )}
 
                     {!isUser && m.images && m.images.length > 0 && <AnswerImageStrip images={m.images} />}
+                    {!isUser && m.listings && m.listings.length > 0 && (
+                      <PropertyListingCarousel listings={m.listings} />
+                    )}
                   </div>
                   {showSuggestedQuestions && (
                     <div className="chat-suggested-questions">

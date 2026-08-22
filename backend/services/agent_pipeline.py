@@ -35,9 +35,10 @@ from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
 
 from backend.ai import prompts
-from backend.ai.answer_cleanup import drop_image_denials
+from backend.ai.answer_cleanup import drop_false_image_confirmations, drop_image_denials
 from backend.ai.citations import build_citations
 from backend.ai.intent import (
+    is_catalog_overview_query,
     is_conversation_meta_query,
     is_customer_memory_query,
     is_search_refinement,
@@ -258,6 +259,11 @@ class PipelineState(TypedDict, total=False):
     # Structured price/type ranges from every matching Project.details.pricing row.
     catalog_offers: list[catalog_offer_service.CatalogOffer]
     catalog_offer_context: str
+    # A full project-by-category index, built straight from every Project row rather than
+    # retrieval — only set for a broad "what do you have at all" survey question, where
+    # RAG's top-k semantic search would otherwise return an arbitrary, incomplete subset
+    # (see catalog_offer_service.build_catalog_overview).
+    catalog_overview_context: str
     needs_inventory: bool
     needs_document_retrieval: bool
     inventory_units: list[InventoryUnit]
@@ -292,6 +298,10 @@ class PipelineState(TypedDict, total=False):
     next_action: str
     requires_hitl: bool
     images: list[dict]
+    # Set by `_image_tool` — see answer_images_service.floor_plan_only_towers. None means
+    # nothing extra to tell Generate; a list (possibly empty) means the resolved project has
+    # no per-unit-type floor-plan photo, only tower-wide sheets (or none at all).
+    floor_plan_towers_only: list[str] | None
     # Only the image tool reads this; it is threaded through rather than imported so the
     # pipeline keeps working when no session exists (see `run_pipeline`).
     db: Session | None
@@ -342,14 +352,35 @@ def _scope_resolve(state: PipelineState) -> dict[str, Any]:
 
     project_ids = answer_images_service.resolve_project_ids(db, state["query"])
     if not project_ids:
+        stale_ids: list[str] = []
         for turn in reversed(state.get("history") or []):
             if turn.get("sender") == MessageSender.AGENT:
                 continue
-            project_ids = answer_images_service.resolve_project_ids(db, turn.get("content", ""))
-            if project_ids:
+            stale_ids = answer_images_service.resolve_project_ids(db, turn.get("content", ""))
+            if stale_ids:
                 break
-    if not project_ids and current:
-        project_ids = [current]
+        if not stale_ids and current:
+            stale_ids = [current]
+
+        # A stale project (named earlier in history, or pinned on the session) is only
+        # trustworthy if this turn is still on the same topic. When the CURRENT query
+        # names a product category ("biệt thự") that conflicts with every stale
+        # candidate's own category, the conversation has switched topic entirely —
+        # inheriting an apartment project's scope onto a villa question either answers
+        # from the wrong project's documents, or has the model correctly-but-uselessly
+        # report "that apartment project has no villa data" instead of the villa
+        # sub-zones the asker actually wants. Drop the stale scope and let retrieval/
+        # catalogue search run unscoped across every project instead.
+        category = answer_images_service.named_category(state["query"])
+        if category is not None and stale_ids:
+            stale_ids = [
+                pid
+                for pid in stale_ids
+                if (project := db.get(Project, pid)) is not None
+                and category in answer_images_service.project_categories(project)
+            ]
+
+        project_ids = stale_ids
 
     # A single project can safely hard-scope Qdrant. A comparison retains all ids for
     # catalogue filtering but leaves RAG unscoped so both projects can contribute.
@@ -498,6 +529,9 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     # longer needs them. Only the string actually embedded for retrieval is expanded.
     needs_inventory = query_needs_inventory(query)
     needs_document_retrieval = query_needs_documents(query)
+    catalog_overview_context = (
+        catalog_offer_service.build_catalog_overview(state.get("db")) if is_catalog_overview_query(query) else ""
+    )
     catalog = catalog_context_service.resolve_tower_context(
         state.get("db"), state.get("project_id"), query
     )
@@ -597,6 +631,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
         "retrieved_docs": hits,
         "catalog_context": catalog_context,
         "catalog_context_complete": catalog.complete,
+        "catalog_overview_context": catalog_overview_context,
         "needs_inventory": needs_inventory,
         "needs_document_retrieval": needs_document_retrieval,
         "project_id": inventory_project_id,
@@ -611,7 +646,18 @@ def _criteria_resolve(state: PipelineState) -> dict[str, Any]:
         )
         return _catalog_search_result(state, criteria)
     if not state.get("needs_inventory") and not is_search_refinement(state["query"]):
-        return _catalog_search_result(state, search_criteria.SearchCriteria())
+        # Not a refinement of the session's ongoing search, so this turn's criteria are
+        # deliberately NOT merged into persisted session state (search_criteria.resolve) —
+        # that stays reserved for actual refinements. But the query can still carry its own
+        # standalone, parseable criteria worth a one-off catalogue lookup — e.g. "có biệt
+        # thự không" parses to a unit_types=BIETTHU constraint even though it opens a new
+        # topic rather than refining one. Passing a hardcoded empty SearchCriteria() here
+        # (as before) silently discarded that and left catalog_offer_context unbuilt for
+        # every first-mention product-type question, not just villas.
+        standalone_criteria = search_criteria.merge_criteria(
+            search_criteria.SearchCriteria(), search_criteria.parse_criteria(state["query"])
+        )
+        return _catalog_search_result(state, standalone_criteria)
 
     criteria, delta = search_criteria.resolve(state["session_id"], state["query"])
     conflict = search_criteria.detect_conflict(criteria)
@@ -835,6 +881,8 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         zero_result=state.get("zero_result_diagnosis"),
         catalog_context=state.get("catalog_context") or "",
         catalog_offer_context=state.get("catalog_offer_context") or "",
+        catalog_overview_context=state.get("catalog_overview_context") or "",
+        floor_plan_towers_only=state.get("floor_plan_towers_only"),
     )
     quick_replies: list[str] = []
     listings: list[dict] = []
@@ -878,7 +926,9 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     suggested_questions = parsed.suggested_questions
     # Only the customer-facing schema carries these; SaleAnswer has no such field.
     quick_replies = getattr(parsed, "quick_replies", [])
-    if is_public and isinstance(parsed, prompts.ConsultAnswer):
+    # Both schemas carry `listings` now (see prompts.SaleAnswer) — a Sale asking the same
+    # recommendation question a customer would ask gets the same photo-carrying cards back.
+    if isinstance(parsed, prompts.ConsultAnswer | prompts.SaleAnswer):
         listings = _resolve_listing_images(state.get("db"), parsed.listings)
 
     # Strip before checking for emptiness: an answer made up of only Markdown characters
@@ -891,6 +941,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         return {"notice": GENERATION_ERROR_MESSAGE}
 
     answer = drop_image_denials(answer, state.get("images") or [])
+    answer = drop_false_image_confirmations(answer, state.get("images") or [])
 
     # `corrected` is the flag that makes a Reflexion visible in the trace: attempt 2 with
     # a correction is the loop working, attempt 2 without one is a blind retry.
@@ -913,6 +964,11 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         "quick_replies": quick_replies,
         "listings": listings,
         "suggested_questions": suggested_questions,
+        # `images` (state["images"], set earlier by _image_tool, before listings existed
+        # to check against) is the generic auto-attached strip — the same project's photos
+        # a listing card already carries in its own image_urls. Showing both stacks two
+        # redundant photo blocks for the same project on screen; the listing card wins.
+        "images": [] if listings else state.get("images") or [],
     }
 
 
@@ -945,7 +1001,9 @@ def _resolve_listing_images(db: Session | None, listings: list["prompts.Property
                     # slash, not a browser-loadable URL on its own.
                     image_urls = [
                         answer_images_service.public_gallery_url(url)
-                        for url in answer_images_service.select_listing_images(gallery, listing.unit_type)
+                        for url in answer_images_service.select_listing_images(
+                            gallery, listing.unit_type, project_name=listing.project_name
+                        )
                     ]
                     amenities = answer_images_service.select_listing_amenities(project)
             except Exception:
@@ -1034,6 +1092,8 @@ def _verify(state: PipelineState) -> dict[str, Any]:
         context.append(state["catalog_context"])
     if state.get("catalog_offer_context"):
         context.append(state["catalog_offer_context"])
+    if state.get("catalog_overview_context"):
+        context.append(state["catalog_overview_context"])
     context.extend(prompts.format_unit_for_verifier(unit) for unit in state.get("inventory_units") or [])
     diagnosis = state.get("zero_result_diagnosis")
     if diagnosis is not None:
@@ -1045,7 +1105,22 @@ def _verify(state: PipelineState) -> dict[str, Any]:
     # transcript would have: what "có" is actually saying yes to.
     query = _retrieval_query(state["query"], state.get("history"))
     started = time.perf_counter()
-    result = verifier_service.score_answer(query, state.get("draft_answer", ""), context)
+    # Same reasoning as _risk_check: a recommendation's numbers now live in `listings`
+    # cards, not in `draft_answer`'s prose (see prompts.PropertyListing). A Verifier that
+    # only reads `draft_answer` sees a short, deliberately number-free lead-in sentence and
+    # scores it "incomplete" for not naming the units it recommends — even though the
+    # customer sees both the sentence and the cards together. Appending a compact summary
+    # of the cards lets the judge score what the customer actually sees as one answer,
+    # without touching `draft_answer` itself (that stays exactly what gets sent/stored).
+    listings_summary = "; ".join(
+        f"{listing.get('project_name', '')} {listing.get('unit_type', '')} "
+        f"{listing.get('area_range', '')} {listing.get('price_range', '')}".strip()
+        for listing in state.get("listings") or []
+    )
+    answer_for_verification = state.get("draft_answer", "")
+    if listings_summary:
+        answer_for_verification = f"{answer_for_verification}\n[Thẻ căn hộ kèm theo, khách đã thấy]: {listings_summary}"
+    result = verifier_service.score_answer(query, answer_for_verification, context)
 
     # The label the eval flywheel is built on. `feedback` is deliberately absent: it can
     # quote the answer text, and traces are written to a file with a much looser handling
@@ -1122,16 +1197,33 @@ def _image_tool(state: PipelineState) -> dict[str, Any]:
     db = state.get("db")
     if db is None:
         tracing.step("tool.images", ok=False, skipped="no_db_session")
-        return {"images": []}
+        return {"images": [], "floor_plan_towers_only": None}
 
     context = "\n".join(
         f"{doc.get('title') or ''} {doc.get('content') or ''}" for doc in state.get("retrieved_docs") or []
     )
+    # A pinned project_id is authoritative for an explicit "cho xem ảnh" request, or when
+    # this turn's own retrieval actually grounded on something. But `_scope_resolve` also
+    # fills `project_id` from the last project *named in conversation history* when the
+    # current turn names none — trusting that for the auto-illustrate route on a turn that
+    # retrieved nothing (a generic opener like "tư vấn cho tôi") attaches an earlier,
+    # unrelated project's photo to an answer that never mentioned it. `collect_images`
+    # still tries to resolve a project from the query text alone when project_id is None,
+    # so an on-topic question ("giá The Beverly bao nhiêu") is unaffected either way.
+    wants_explicit_images = answer_images_service.wants_images(state["query"])
+    effective_project_id = state.get("project_id") if wants_explicit_images or context.strip() else None
     images = answer_images_service.collect_images(
+        db, state["query"], context, project_id=effective_project_id
+    )
+    # None when the resolved project has real per-unit-type photos (nothing extra to say);
+    # otherwise the tower codes of whatever tower-wide floor-plan sheet exists, so a
+    # bedroom-count follow-up is not suggested where only a per-tower one has a photo —
+    # see answer_images_service.floor_plan_only_towers.
+    floor_plan_towers_only = answer_images_service.floor_plan_only_towers(
         db, state["query"], context, project_id=state.get("project_id")
     )
     tracing.step("tool.images", ok=True, image_count=len(images))
-    return {"images": images}
+    return {"images": images, "floor_plan_towers_only": floor_plan_towers_only}
 
 
 # --------------------------------------------------------------------------- routing
@@ -1400,6 +1492,7 @@ def _run_traced(
         "catalog_context_complete": False,
         "catalog_offers": [],
         "catalog_offer_context": "",
+        "catalog_overview_context": "",
         "citations": [],
         "verifier_score": 0.0,
         "requires_hitl": False,
@@ -1431,8 +1524,14 @@ def _run_traced(
         # Edge-case branch: a message instead of an answer, with no citations and always
         # score 0 so the Admin dashboard correctly counts it as a failed answer.
         #
-        # Photos still ride along. They were requested explicitly and assert nothing, so
-        # withholding them because the *text* could not be verified helps nobody.
+        # Photos still ride along — but only for a genuine decline (low confidence/empty
+        # state): they were requested explicitly and assert nothing, so withholding them
+        # because the *text* could not be verified helps nobody. RETRIEVAL_ERROR_MESSAGE/
+        # GENERATION_ERROR_MESSAGE are different in kind — a real system failure (Gemini
+        # down/rate-limited, retrieval broken), not a considered decline — and showing
+        # "temporarily unavailable" next to a photo strip reads as a broken, half-working
+        # reply instead of a clean failure the asker knows to just retry.
+        notice_is_system_failure = notice in (RETRIEVAL_ERROR_MESSAGE, GENERATION_ERROR_MESSAGE)
         tracing.set_outcome(
             outcome="notice",
             verifier_score=state.get("verifier_score", 0.0),
@@ -1444,7 +1543,7 @@ def _run_traced(
             [],
             0.0,
             False,
-            images=state.get("images") or [],
+            images=[] if notice_is_system_failure else state.get("images") or [],
             # Carried even here — especially here. A declined answer is the case Admin most
             # needs to diagnose, and "which failure mode" is the whole diagnosis.
             failure_mode=state.get("failure_mode"),

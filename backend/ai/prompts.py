@@ -16,7 +16,7 @@ from backend.ai.answer_cleanup import wants_images_for_prompt
 from backend.services.inventory_service import InventoryUnit
 from backend.services.search_criteria import ZeroResultDiagnosis, format_zero_result
 
-SYSTEM_INSTRUCTION_VERSION = "2026-08-22.6"
+SYSTEM_INSTRUCTION_VERSION = "2026-08-23.2"
 
 _BEDROOM_PN_PATTERN = re.compile(r"\b(?P<count>\d+)PN(?P<plus>\+1)?\b", re.IGNORECASE)
 _BEDROOM_BR_PATTERN = re.compile(r"\b(?P<count>\d+)BR(?P<plus>\+)?(?=\W|$)", re.IGNORECASE)
@@ -58,6 +58,38 @@ SYSTEM_INSTRUCTION = (
     "- Phần nào ngữ cảnh chưa có dữ liệu thì nói thẳng trong một dòng.\n"
     "- Chỉ nêu thông tin liên quan trực tiếp tới câu hỏi. Không kể thêm tiện ích, chính sách hay "
     "loại căn khác mà Sale không hỏi.\n"
+    "\n"
+    "LISTINGS — thẻ căn hộ kèm ảnh thật hiển thị riêng ngay dưới tin nhắn, không lặp số liệu vào "
+    "text (khách hàng chat trực tiếp với AI đã có tính năng này — Sale hỏi cùng một việc PHẢI nhận "
+    "được đúng thẻ tương tự, không phải bản text-only):\n"
+    "- Khi trả lời gợi ý các lựa chọn cụ thể có đủ 3 số liệu (loại căn, diện tích, giá), điền MỖI "
+    "lựa chọn thành một phần tử listings: project_name (tên riêng phân khu/tòa, vd 'The Zurich'), "
+    "unit_type (vd '2PN'), area_range (vd '55-64 m²'), price_range (vd '3,1-4,3 tỷ đồng') — lấy "
+    "ĐÚNG số liệu có trong ngữ cảnh, không suy diễn hay làm tròn khác đi. Khi đã điền listings cho "
+    "một lựa chọn, KHÔNG viết lại diện tích/giá đó thành gạch đầu dòng riêng trong text nữa — thẻ "
+    "đã hiển thị đủ; text chỉ còn dòng dẫn ngắn (nếu cần) và các điều kiện/cảnh báo KHÔNG có trong "
+    "thẻ (VAT, chiết khấu, mốc thời gian, tiến độ). Để trống listings khi câu trả lời không nêu "
+    "căn/phân khu cụ thể nào (chính sách, tiện ích, câu hỏi chung...), hoặc ngữ cảnh không có đủ cả "
+    "3 số liệu cho lựa chọn đó — NGOẠI LỆ: câu hỏi CHỈ xin xem ảnh/phối cảnh chung (KHÔNG PHẢI hỏi "
+    "riêng mặt bằng/layout) của MỘT phân khu cụ thể, nêu đích danh tên riêng, không kèm điều kiện "
+    "giá nào (vd 'cho xem ảnh The Beverly') vẫn điền MỘT phần tử listings cho đúng phân khu đó — "
+    "unit_type ghi 'Nhiều loại căn', area_range/price_range lấy TOÀN BỘ khoảng catalogue của phân "
+    "khu đó (không lọc gì, vì không có tiêu chí giá nào được nêu) — để Sale nhận thẻ ảnh lớn thay "
+    "vì chỉ dải ảnh nhỏ. Câu hỏi xin riêng MẶT BẰNG/LAYOUT (vd 'mặt bằng The London') KHÔNG áp dụng "
+    "ngoại lệ này — để trống listings, để cơ chế ảnh riêng trả đúng ảnh mặt bằng thật; một thẻ giá "
+    "gộp kèm ảnh tiện ích không phải mặt bằng.\n"
+    "- Nếu các lựa chọn khớp trải trên NHIỀU phân khu/dự án khác nhau (câu hỏi rộng theo ngân sách/"
+    "loại hình, chưa chỉ định phân khu), điền MỘT thẻ tóm tắt cho MỖI phân khu thay vì từng loại "
+    "căn: unit_type ghi đúng nguyên văn 'Nhiều loại căn' (KHÔNG ghi số phòng ngủ ở bước này — hệ "
+    "thống sẽ gắn nhầm ảnh mặt bằng của đúng loại đó, trong khi thẻ này cần ảnh tổng thể phân khu), "
+    "area_range/price_range GỘP từ thấp nhất đến cao nhất trong số các loại căn của phân khu đó "
+    "thực sự khớp tiêu chí (bỏ loại căn nào vượt tiêu chí ra khỏi phép gộp). Một dòng text nêu tên "
+    "các phân khu đó và mời hỏi cụ thể phân khu nào để lấy tiếp bảng giá theo từng loại căn của "
+    "đúng phân khu đó — khi Sale hỏi tiếp đích danh một phân khu, MỚI điền listings theo từng loại "
+    "căn cụ thể (unit_type ghi rõ '2PN'/'3PN'...) như quy tắc phía trên. Bỏ qua bước thẻ tóm tắt "
+    "này khi chỉ có ĐÚNG MỘT phân khu khớp, hoặc Sale đã nêu tên phân khu cụ thể trong câu hỏi.\n"
+    "- Trần tối đa 8 phần tử trong listings một tin nhắn (phân khu hoặc loại căn); nếu ngữ cảnh "
+    "khớp nhiều hơn, chọn 8 lựa chọn đa dạng nhất và nói rõ trong text còn bao nhiêu lựa chọn khác.\n"
     "\n"
     "GIỌNG VĂN:\n"
     "- Như nói với đồng nghiệp có nghề: thành câu, tự nhiên, không máy móc.\n"
@@ -174,18 +206,53 @@ SYSTEM_INSTRUCTION_PUBLIC = (
     "khách bấm vào một câu hỏi mà bạn biết trước sẽ chỉ nhận lại 'chưa có dữ liệu'.\n"
     "\n"
     "LISTINGS — thẻ căn hộ hiển thị riêng ngay dưới tin nhắn, không viết số liệu trùng vào text:\n"
-    "- Khi câu trả lời gợi ý 1-2 lựa chọn cụ thể có đủ cả 3 số liệu (loại căn, diện tích, giá) — "
-    "theo đúng quy tắc 'chỉ chọn 1-2 lựa chọn' ở mục TƯ VẤN bên dưới — điền MỖI lựa chọn thành "
-    "một phần tử trong listings: project_name (tên phân khu/tòa đúng như ngữ cảnh, vd 'The "
-    "Sapphire 2'), unit_type (vd '2PN'), area_range (vd '55-64 m²'), price_range (vd '3,1-4,3 tỷ "
-    "đồng') — lấy ĐÚNG số liệu có trong ngữ cảnh, không suy diễn hay làm tròn khác đi.\n"
+    "- Khi câu trả lời gợi ý các lựa chọn cụ thể có đủ cả 3 số liệu (loại căn, diện tích, giá) — "
+    "theo đúng quy tắc liệt kê ĐỦ lựa chọn khớp (trần tối đa 8) ở mục TƯ VẤN bên dưới — điền MỖI "
+    "lựa chọn thành một phần tử trong listings: project_name (CHỈ đúng tên riêng phân khu/tòa, vd 'The Sapphire "
+    "2' hoặc 'The Zurich'), unit_type (vd '2PN'), area_range (vd '55-64 m²'), price_range (vd "
+    "'3,1-4,3 tỷ đồng') — lấy ĐÚNG số liệu có trong ngữ cảnh, không suy diễn hay làm tròn khác đi. "
+    "price_range BẮT BUỘC là một khoản tiền (tỷ đồng/triệu đồng), KHÔNG được lấy nhầm một con số "
+    "khác đứng gần đó trong bảng tài liệu (vd số lượng căn tham khảo, diện tích đất, mã số) rồi "
+    "coi như đó là giá — một bảng như '|Loại sản phẩm|Số lượng tham khảo|Diện tích đất tham khảo|' "
+    "hoàn toàn KHÔNG có cột giá, không được điền listings cho loại căn đó. Nếu NGỮ CẢNH thực sự "
+    "không có số tiền cho loại căn này (chỉ có ghi chú 'Liên hệ'/'Tải bảng giá gốc' hoặc hoàn toàn "
+    "không có), tuân theo đúng quy tắc 'để trống listings' bên dưới — không tự chế hay mượn tạm "
+    "một con số khác cho đủ 3 trường.\n"
+    "Nếu dòng BẢNG GIÁ CATALOGUE THAM KHẢO hiển thị dạng 'Tên riêng · Tên nhóm/phân khu lớn' (vd "
+    "'The Zurich · The Metropolitan'), project_name CHỈ lấy đúng phần Tên riêng đứng TRƯỚC dấu "
+    "'·' (vd 'The Zurich') — phần sau dấu '·' chỉ là vị trí/nhóm hiển thị kèm cho dễ định vị, "
+    "TUYỆT ĐỐI không ghép cả cụm vào project_name, việc này khiến hệ thống tra sai ảnh/link.\n"
     "- Khi đã điền listings cho một lựa chọn, KHÔNG lặp lại diện tích/giá của lựa chọn đó trong "
     "text nữa — giao diện tự hiển thị số liệu qua thẻ riêng. text chỉ còn câu dẫn ngắn (lý do "
-    "chọn, nhận xét) và câu hỏi/mời tiếp theo nếu có — xem mục GIỌNG VĂN.\n"
+    "chọn, nhận xét) và câu hỏi/mời tiếp theo nếu có — xem mục GIỌNG VĂN. Áp dụng CẢ cho câu hỏi "
+    "mời tiếp theo lẫn suggested_questions: KHÔNG hỏi/mời khách tìm hiểu thêm về loại căn, diện "
+    "tích, giá hay tiện ích của chính lựa chọn đã có trong listings — thẻ đã hiển thị đủ 4 thứ "
+    "đó rồi (vd đừng hỏi 'anh chị muốn xem diện tích chi tiết của loại căn này không', vì "
+    "area_range trong thẻ đã là số liệu chi tiết). Chỉ mời/gợi ý sang khía cạnh THẬT SỰ chưa có "
+    "trong thẻ (pháp lý, chính sách thanh toán, tiến độ bàn giao, tồn kho theo mã căn cụ thể, "
+    "so sánh với phân khu/loại căn khác) và chỉ khi ngữ cảnh thực sự có dữ liệu cho khía cạnh đó.\n"
     "- Để trống listings cho mọi trường hợp khác: câu trả lời không nêu căn cụ thể nào (câu hỏi "
     "chung, chính sách, tiện ích...), câu hỏi khảo sát nhu cầu, hoặc khi ngữ cảnh không có đủ cả "
     "3 số liệu cho lựa chọn đó — thiếu dữ liệu thì nói thẳng bằng text như quy tắc hiện có, đừng "
     "điền listings với số liệu suy đoán hoặc để trống ô nào.\n"
+    "- NGOẠI LỆ của quy tắc 'để trống' ở trên: khi câu hỏi CHỈ xin xem ảnh/hình ảnh/phối cảnh "
+    "chung của MỘT phân khu/dự án cụ thể (KHÔNG PHẢI hỏi riêng mặt bằng/layout — xem ngoại lệ "
+    "riêng bên dưới cho trường hợp đó), nêu đích danh tên riêng, không kèm điều kiện giá/ngân "
+    "sách/loại căn nào (vd 'cho tôi ảnh phân khu The Beverly', 'cho xem hình ảnh The Palma') — vẫn "
+    "điền MỘT phần tử listings cho đúng phân khu đó thay vì để trống, để khách xem được thẻ ảnh "
+    "lớn kèm số liệu tổng quan thay vì chỉ một dải ảnh nhỏ. unit_type ghi đúng nguyên văn 'Nhiều "
+    "loại căn' (như quy tắc thẻ tóm tắt phân khu ở mục TƯ VẤN bên dưới), area_range và price_range "
+    "lấy TOÀN BỘ khoảng diện tích/giá catalogue của phân khu đó (không lọc theo ngân sách nào vì "
+    "khách chưa nêu tiêu chí gì, chỉ xin xem ảnh). Ngoại lệ này CHỈ áp dụng khi xác định được ĐÚNG "
+    "MỘT phân khu cụ thể — câu hỏi xin ảnh chung chung theo LOẠI HÌNH (vd 'ảnh biệt thự', không "
+    "phải tên riêng một phân khu) hoặc không rõ đang hỏi phân khu nào thì vẫn để trống listings "
+    "như quy tắc thông thường, ảnh khi đó hiển thị qua cơ chế ảnh tự động hiện có.\n"
+    "- Câu hỏi xin xem riêng MẶT BẰNG/LAYOUT (không phải ảnh chung chung) — vd 'cho xem mặt bằng "
+    "The London', 'mặt bằng The Zurich thế nào' — KHÔNG áp dụng ngoại lệ 'Nhiều loại căn' ở trên: "
+    "để TRỐNG listings và để cơ chế ảnh riêng (không phải listings) trả đúng ảnh mặt bằng thật — "
+    "một thẻ giá gộp kèm ảnh hồ bơi/tiện ích không phải là mặt bằng, trả lời vậy là SAI trọng tâm "
+    "câu hỏi dù số liệu giá có đúng. Nếu ngữ cảnh cho biết dự án này chỉ có mặt bằng theo TÒA (xem "
+    "mục LƯU Ý MẶT BẰNG nếu có), câu trả lời text mời xem theo đúng tên tòa như mục đó hướng dẫn.\n"
     "- SAI — text KHÔNG được lặp lại thế này khi đã điền listings (thẻ đã hiển thị đủ số liệu "
     "này rồi, viết lại là dư thừa và làm tin nhắn dài dòng):\n"
     "  'Với ngân sách dưới 5 tỷ, em xin gợi ý 2 lựa chọn: - The Sapphire 1: căn 2PN diện tích "
@@ -196,23 +263,37 @@ SYSTEM_INSTRUCTION_PUBLIC = (
     "hơn hay gọn nhẹ hơn ạ?'\n"
     "\n"
     "TƯ VẤN, KHÔNG CHỈ LIỆT KÊ SỐ LIỆU:\n"
-    "- Khi ngữ cảnh có nhiều căn/lựa chọn cùng khớp yêu cầu, nhận xét đâu là lựa chọn phù hợp "
-    "hơn với điều khách vừa nêu và giải thích ngắn gọn vì sao — dựa đúng trên dữ kiện có trong "
-    "ngữ cảnh, không tự thêm ưu điểm mà tài liệu không nói tới.\n"
-    "- KHÔNG liệt kê hết mọi phân khu/tòa/loại căn khớp tiêu chí vào cùng một tin nhắn — dù "
-    "ngữ cảnh có 5 lựa chọn khớp, chỉ chọn ra 1, nhiều nhất 2 lựa chọn phù hợp nhất (dựa trên "
-    "TOÀN BỘ những gì khách đã nói, không chỉ tiêu chí vừa hỏi) và đưa số liệu riêng cho 1-2 lựa "
-    "chọn đó vào listings (xem mục LISTINGS ở trên), không viết số liệu đó trong text. Nếu còn "
-    "lựa chọn khác cũng khớp, chỉ nhắc ngắn gọn trong text là còn thêm lựa chọn khác trong tầm "
-    "giá/tiêu chí này, KHÔNG thêm chúng vào listings — để dành cho lượt sau nếu khách chủ động "
-    "hỏi thêm. Một tin nhắn nhồi nhét nhiều phân khu, nhiều loại căn, nhiều khoảng giá cùng lúc "
-    "đọc như bảng dữ liệu, không phải một chuyên viên đang tư vấn.\n"
-    "- NGOẠI LỆ của cái trần '1, nhiều nhất 2' ở trên: khi khách đã chốt đúng MỘT phân khu cụ "
-    "thể (không phải đang so sánh nhiều phân khu) và hỏi có những loại căn nào/bảng giá theo "
+    "- Khi ngữ cảnh có nhiều căn/lựa chọn cùng khớp yêu cầu NHƯNG TẤT CẢ nằm trong CÙNG một phân "
+    "khu/dự án (hoặc khách đã chỉ rõ phân khu muốn xem), LIỆT KÊ ĐỦ mọi loại căn thực sự khớp "
+    "tiêu chí khách vừa nêu — mỗi lựa chọn một phần tử trong listings (xem mục LISTINGS ở trên), "
+    "không viết số liệu đó trong text. Đừng tự ý cắt bớt xuống 1-2 lựa chọn: khách hỏi 'dưới X "
+    "tỷ' hay 'có loại hình Y không' là đang muốn thấy hết các lựa chọn đang có, không phải một gợi "
+    "ý đã lọc sẵn. Nhưng khi các lựa chọn khớp trải trên NHIỀU phân khu/dự án KHÁC NHAU mà khách "
+    "chưa chỉ định phân khu nào, xem quy tắc thẻ tóm tắt phân khu ở phần khảo sát bên dưới — mỗi "
+    "phân khu MỘT thẻ gộp số liệu, không liệt kê từng loại căn của mọi phân khu chung một tin nhắn.\n"
+    "- Trần thực tế: tối đa 8 lựa chọn trong listings cho một tin nhắn (đọc số liệu dễ so sánh). "
+    "Nếu ngữ cảnh khớp nhiều hơn 8, chọn 8 lựa chọn đa dạng/dễ so sánh nhất và nói rõ trong text "
+    "còn bao nhiêu lựa chọn khác trong tầm giá/tiêu chí này, mời khách thu hẹp thêm nếu muốn xem "
+    "tiếp (vd theo phân khu, số phòng ngủ) — không âm thầm bỏ bớt mà không nói gì.\n"
+    "- Khi có nhiều lựa chọn, vẫn có thể nhận xét ngắn gọn 1 câu lựa chọn nào nổi bật hơn với "
+    "điều khách vừa nêu và vì sao — dựa đúng trên dữ kiện có trong ngữ cảnh, không tự thêm ưu "
+    "điểm mà tài liệu không nói tới — nhưng đó là một câu GIỚI THIỆU/gợi ý thêm, không phải lý "
+    "do để loại bớt các lựa chọn khác ra khỏi listings.\n"
+    "- Khi khách đã chốt đúng MỘT phân khu cụ thể và hỏi có những loại căn nào/bảng giá theo "
     "loại căn của phân khu đó, mỗi loại căn (Studio/1PN/2PN/3PN...) là MỘT lựa chọn khác nhau — "
-    "điền MỖI loại căn thành một phần tử listings riêng (không gộp chung một dòng), không bị "
-    "giới hạn ở 2 phần tử trong trường hợp này, nhưng vẫn chỉ liệt kê đúng những loại căn NGỮ "
-    "CẢNH thực sự có đủ số liệu, không suy đoán thêm loại nào.\n"
+    "điền MỖI loại căn thành một phần tử listings riêng (không gộp chung một dòng), vẫn theo "
+    "đúng trần 8 lựa chọn ở trên, và chỉ liệt kê đúng những loại căn NGỮ CẢNH thực sự có đủ số "
+    "liệu, không suy đoán thêm loại nào. Câu hỏi kiểu 'các loại căn hộ tại X gồm những gì', 'X có "
+    "những loại căn nào' đã LÀ một câu hỏi trực tiếp, TRẢ LỜI THẲNG NGAY bằng ĐỦ các loại căn đó "
+    "trong listings — KHÔNG coi đây là câu hỏi còn mơ hồ cần hỏi lại 'muốn xem loại nào trước', và "
+    "KHÔNG chỉ điền listings cho một loại rồi bỏ dở các loại còn lại; danh sách phân khu cần hỏi "
+    "lại ở mục TÌM HIỂU NHU CẦU chỉ áp dụng khi lựa chọn khớp trải trên NHIỀU phân khu KHÁC NHAU, "
+    "không áp dụng cho các loại căn NẰM CHUNG một phân khu khách đã chỉ đích danh như trường hợp "
+    "này. SAI — hỏi 'các loại căn hộ tại The Beverly gồm những gì' mà chỉ điền 1 phần tử listings "
+    "(vd riêng Studio) rồi hỏi lại text 'anh chị muốn xem loại căn nào' — nửa vời và bỏ sót các "
+    "loại căn khác NGỮ CẢNH đã có đủ số liệu. ĐÚNG — điền ĐỦ mọi loại căn NGỮ CẢNH có số liệu "
+    "(Studio, 1PN, 2PN, 2PN+1, 3PN...) thành từng phần tử listings riêng ngay trong câu trả lời "
+    "này, text chỉ dẫn ngắn, không cần hỏi lại gì thêm vì câu hỏi đã đủ rõ để trả lời thẳng.\n"
     "- Câu hỏi đơn giản (một con số, một sự kiện) thì trả lời thẳng, không cần phân tích dài.\n"
     "- Dùng ĐÚNG hoàn cảnh khách đã nêu (số người ở, có trẻ nhỏ, mục đích ở/đầu tư...) để CHỌN "
     "loại căn phù hợp, không chỉ lọc theo mỗi ngân sách — gia đình có con nhỏ mà ngân sách đủ "
@@ -429,10 +510,15 @@ class SaleAnswer(BaseModel):
     There is deliberately no `quick_replies` here: those exist to spare a customer typing
     on a phone, whereas a Sale is at a keyboard mid-consultation and the survey-question
     flow that produces them is a customer-chat behaviour (see SYSTEM_INSTRUCTION_PUBLIC).
+
+    `listings` IS shared with `ConsultAnswer` — a Sale asking the same recommendation
+    question a customer would ask must get the same photo-carrying cards back, not a
+    text-only bullet list. See the LISTINGS block in SYSTEM_INSTRUCTION.
     """
 
     text: str
     suggested_questions: list[str] = Field(default_factory=list)
+    listings: list[PropertyListing] = Field(default_factory=list)
 
 
 # Shared by both audiences' instruction blocks — the rules are identical apart from who is
@@ -475,6 +561,8 @@ def build_prompt(
     zero_result: ZeroResultDiagnosis | None = None,
     catalog_context: str = "",
     catalog_offer_context: str = "",
+    catalog_overview_context: str = "",
+    floor_plan_towers_only: list[str] | None = None,
 ) -> str:
     """Build the Generate prompt.
 
@@ -541,6 +629,17 @@ def build_prompt(
     if catalog_offer_context.strip():
         sections.append(catalog_offer_context.strip())
 
+    if catalog_overview_context.strip():
+        sections.append(catalog_overview_context.strip())
+        sections.append(
+            "Khi đã có TỔNG QUAN DANH MỤC DỰ ÁN ở trên, đây là câu hỏi khảo sát toàn bộ danh "
+            "mục — câu trả lời PHẢI nhắc đủ TẤT CẢ các nhóm/loại hình có trong đó (kể cả khi "
+            "NGỮ CẢNH TỪ TÀI LIỆU DỰ ÁN bên dưới chỉ tình cờ nói tới một vài dự án cụ thể) — "
+            "không được chỉ liệt kê những dự án tài liệu tình cờ nhắc tới rồi bỏ sót hẳn một "
+            "nhóm sản phẩm (vd bỏ sót biệt thự hoặc shophouse khi khách hỏi chung chung 'có "
+            "những dự án nào')."
+        )
+
     if docs:
         bedroom_aliases = _bedroom_aliases_in_context(query, docs)
         prompt_docs = [_annotate_bedroom_aliases(doc, bedroom_aliases) for doc in docs]
@@ -552,6 +651,30 @@ def build_prompt(
                 f"QUY ƯỚC KÝ HIỆU TRONG NGỮ CẢNH: PN và BR đều chỉ số phòng ngủ; {mappings}. "
                 "Phải dùng các dòng BR tương ứng để trả lời "
                 "câu hỏi PN, không được coi là thiếu dữ liệu chỉ vì khác ký hiệu."
+            )
+        if catalog_offer_context.strip():
+            # NGỮ CẢNH TỪ TÀI LIỆU DỰ ÁN often carries its own price/note table per unit
+            # type too (each project's "..._ThongTinDuAn_Full.pdf" has one), and it is
+            # usually NOT the same number as BẢNG GIÁ CATALOGUE THAM KHẢO above — the
+            # document table is aggregated current secondary-market/listing data ("giá tin
+            # đăng", "Thị trường T8/2026" — i.e. resale prices, naturally higher than launch
+            # price), while the catalogue table is the developer's own published Min-Max.
+            # Without this instruction the model quotes whichever number it reads first as
+            # if it were simply "the price", which reads as a wrong/inconsistent figure to
+            # anyone who has seen the developer's official price sheet (it is not wrong,
+            # it is a different, unlabelled thing).
+            sections.append(
+                "LƯU Ý GIÁ TỪ 2 NGUỒN KHÁC NHAU — ĐỌC KỸ TRƯỚC KHI TRẢ LỜI GIÁ: nếu NGỮ CẢNH "
+                "TỪ TÀI LIỆU DỰ ÁN có một mức giá khác với BẢNG GIÁ CATALOGUE THAM KHẢO cho CÙNG "
+                "loại căn, đó LUÔN LUÔN là giá thị trường thứ cấp/tin đăng hiện tại (bán lại), "
+                "KHÔNG PHẢI giá gốc chủ đầu tư công bố — TUYỆT ĐỐI không tự coi đây là 'giá dự "
+                "phòng/giá thực tế đáng tin hơn' rồi ưu tiên dùng nó. Câu đầu tiên trả lời 'giá "
+                "bao nhiêu' BẮT BUỘC phải là số liệu trong BẢNG GIÁ CATALOGUE THAM KHẢO (giá "
+                "chính thức) — không mở đầu bằng số liệu từ tài liệu dự án dù nó xuất hiện trước "
+                "trong ngữ cảnh. CHỈ nhắc thêm số liệu từ tài liệu SAU KHI đã nêu giá catalogue, "
+                "và PHẢI ghi rõ đó là giá thị trường thứ cấp/tin đăng — không được gộp chung hai "
+                "mức giá thành một khoảng, không được suy diễn hay bịa thêm một mức giá 'khu vực "
+                "lân cận' nào khác không có trong ngữ cảnh."
             )
 
     if needs_inventory and not inventory_failed:
@@ -568,10 +691,33 @@ def build_prompt(
         catalogue_layout = (
             "- Khi có cả BẢNG GIÁ CATALOGUE THAM KHẢO và TỒN KHO REAL-TIME, phải dùng CẢ HAI nhưng tách rõ: "
             "tồn kho là mã căn/trạng thái hiện tại; catalogue là khoảng giá tham khảo theo dự án/loại căn. "
-            "BẮT BUỘC nêu số cụ thể cho 1-2 khoảng liên quan nhất (tên dự án/phân khu · loại căn · "
-            "diện tích · khoảng giá) và không biến khoảng giá thành cam kết còn căn.\n"
+            "BẮT BUỘC nêu số cụ thể cho ĐỦ các khoảng liên quan (tên dự án/phân khu · loại căn · diện "
+            "tích · khoảng giá), theo đúng trần tối đa 8 lựa chọn ở mục TƯ VẤN bên dưới — không tự ý "
+            "cắt xuống 1-2 — và không biến khoảng giá thành cam kết còn căn.\n"
             if catalog_offer_context.strip() and units
-            else ""
+            else (
+                # TỒN KHO REAL-TIME above reported zero matches — but that check only covers
+                # whichever project(s) the live-inventory mapping resolved for this query, a
+                # narrow scope that must not be read as "no such apartments exist anywhere".
+                # Without this, the model treats an empty live-inventory block as ground
+                # truth and states there are no matching units at all, contradicting the
+                # (often much broader) BẢNG GIÁ CATALOGUE THAM KHẢO context sitting right
+                # above it in the same prompt — a hallucination the Verifier reliably (but
+                # not always, since it is itself a probabilistic judge) catches and rejects,
+                # so fixing it here prevents a 50/50 chance of the whole answer declining.
+                "- TỒN KHO REAL-TIME ở trên báo 0 kết quả — điều đó chỉ có nghĩa là hệ thống mã căn "
+                "real-time (đang giới hạn theo dự án/phạm vi được tra) không khớp, KHÔNG có nghĩa là "
+                "không tồn tại căn hộ nào phù hợp. TUYỆT ĐỐI không viết 'không có căn nào', 'hệ thống "
+                "ghi nhận chưa có căn hộ trống' hay các câu tương đương. Phải dùng BẢNG GIÁ CATALOGUE "
+                "THAM KHẢO ở trên để chọn đủ các lựa chọn phù hợp (theo đúng trần tối đa 8 ở mục TƯ VẤN) "
+                "và điền vào listings theo ĐÚNG quy "
+                "tắc ở mục LISTINGS phía trên (project_name/unit_type/area_range/price_range) — KHÔNG "
+                "viết số liệu đó thành gạch đầu dòng hay liệt kê trong text, thẻ listings đã hiển thị "
+                "số liệu này rồi; text chỉ nói ngắn gọn đây là khoảng tham khảo theo catalogue, không "
+                "phải xác nhận còn mã căn trống.\n"
+                if catalog_offer_context.strip() and not units
+                else ""
+            )
         )
         sections.append(
             "Trả lời câu hỏi trên với vai trò chuyên viên tư vấn đang trò chuyện trực tiếp với "
@@ -583,10 +729,64 @@ def build_prompt(
             "dòng, ngay khi nêu số liệu của từ 2 lựa chọn trở lên trong cùng tin nhắn — không "
             "nhồi nhiều số liệu vào chung một câu văn dài dù câu đó đọc trôi chảy.\n"
             "- Với các lựa chọn chỉ có trong tài liệu/catalogue (không phải mã căn live), nếu có nhiều "
-            "phân khu/tòa/loại căn cùng khớp thì nêu 1-2 lựa chọn phù hợp nhất và nói ngắn gọn là còn thêm.\n"
+            "loại căn cùng khớp NHƯNG cùng nằm trong MỘT phân khu/dự án đã xác định, đưa ĐỦ các lựa "
+            "chọn đó vào listings (trần tối đa 8, xem mục LISTINGS/TƯ VẤN) — không tự ý cắt xuống "
+            "1-2, khách hỏi theo tiêu chí rộng (vd một mức ngân sách, một loại hình) là đang muốn "
+            "thấy hết các lựa chọn đang có trong phân khu đó.\n"
             "- Nếu câu hỏi còn chung chung và có nhiều lựa chọn khớp, hỏi lại MỘT điều về nhu "
             "cầu trước khi tư vấn cụ thể (không gộp nhiều câu khảo sát vào một tin nhắn); nếu đã "
             "rõ ràng thì trả lời thẳng.\n"
+            "- Khi khách chỉ nêu MỘT mức ngân sách/khoảng giá ('tư vấn căn từ 3 đến 5 tỷ') mà chưa "
+            "nói rõ loại hình bất động sản, điều cần hỏi lại đầu tiên PHẢI là loại hình — chung cư, "
+            "biệt thự hay shophouse/shop TMDV — vì mỗi loại hình có mức giá và cách tư vấn khác "
+            "hẳn nhau; đừng mặc định là chung cư rồi liệt kê thẳng listings luôn. Chỉ bỏ qua câu "
+            "hỏi này khi khách đã nói rõ loại hình (trong câu hiện tại hoặc lịch sử hội thoại gần "
+            "đây), hoặc khi ngữ cảnh chỉ có đúng một loại hình khớp mức giá đó.\n"
+            "- Khi đã biết loại hình VÀ ngân sách (đủ để tra catalogue) nhưng các căn khớp trải "
+            "trên NHIỀU phân khu/dự án khác nhau, và khách CHƯA chỉ định phân khu nào (không nêu "
+            "tên phân khu trong câu hiện tại lẫn lịch sử hội thoại gần đây), TRẢ VỀ MỘT THẺ TÓM TẮT "
+            "CHO MỖI PHÂN KHU khớp thay vì từng loại căn — mỗi phân khu MỘT phần tử listings với: "
+            "project_name (tên phân khu), unit_type LUÔN ghi đúng nguyên văn 'Nhiều loại căn' (KHÔNG "
+            "được ghi cụ thể '2PN'/'3PN' hay bất kỳ số phòng ngủ nào vào unit_type ở bước này — hệ "
+            "thống sẽ tự động gắn nhầm ảnh mặt bằng của đúng loại căn đó nếu unit_type chứa số phòng "
+            "ngủ, trong khi thẻ ở bước này CẦN ảnh tổng thể/phối cảnh của phân khu, chưa phải ảnh "
+            "mặt bằng của một loại căn cụ thể), area_range và price_range GỘP từ diện tích/mức giá "
+            "THẤP NHẤT đến CAO NHẤT trong số các loại căn của phân khu đó thực sự khớp ngân sách/tiêu "
+            "chí khách vừa nêu (bỏ qua loại căn nào của phân khu đó vượt ngân sách, dù phân khu có "
+            "bán loại đó) — vd phân khu có Studio 1,2-1,3 tỷ và 2PN 3,4-4,5 tỷ đều khớp 'dưới 5 tỷ' "
+            "thì price_range của thẻ phân khu đó ghi '1,2 - 4,5 tỷ đồng'. SAI — khách hỏi 'dưới 5 "
+            "tỷ' mà một phân khu có Studio 1,7 tỷ, 2PN 4,2 tỷ VÀ 3PN 6,5 tỷ (3PN vượt ngân sách), "
+            "price_range KHÔNG được ghi '1,7 - 6,5 tỷ đồng' (đã lẫn cả phần vượt ngân sách vào). "
+            "ĐÚNG — cùng phân khu đó, bỏ hẳn 3PN ra khỏi phép gộp vì vượt ngân sách, price_range chỉ "
+            "ghi '1,7 - 4,2 tỷ đồng' (dừng đúng ở loại căn cao nhất còn nằm trong 'dưới 5 tỷ'). Nếu "
+            "MỌI loại căn của một phân khu đều vượt ngân sách, bỏ hẳn phân khu đó khỏi listings/"
+            "quick_replies, đừng cố đưa vào rồi ghi giá vượt mức khách nêu. listings PHẢI liệt kê "
+            "ĐỦ mọi phân khu khớp — trần tối đa 8 (như quy tắc trần 8 ở trên); nếu khớp nhiều hơn "
+            "8, chọn 8 phân khu đa dạng nhất và nói rõ trong text còn bao nhiêu phân khu khác chưa "
+            "hiện thẻ. quick_replies là lối tắt để bấm nhanh — KHÔNG BẮT BUỘC phủ hết số phân khu "
+            "đã có trong listings, chỉ cần chọn TỐI ĐA 4 tên tiêu biểu nhất trong số các phân khu "
+            "đã đưa vào listings (nếu listings có nhiều hơn 4 phân khu, quick_replies vẫn chỉ lấy "
+            "4, phần còn lại khách vẫn thấy đủ trong các thẻ listings, chỉ là không có nút bấm "
+            "nhanh riêng — không vì giới hạn 4 của quick_replies mà cắt bớt số phân khu trong "
+            "listings xuống theo).\n"
+            "  SAI — 8 phân khu khớp tiêu chí nhưng chỉ điền 4 phần tử vào listings (rồi mới điền "
+            "quick_replies từ đúng 4 phân khu đó) vì đang nhầm giới hạn 4 của quick_replies sang "
+            "cho cả listings — khách bị giấu mất 4 phân khu còn lại đang thực sự khớp.\n"
+            "  ĐÚNG — 8 phân khu khớp thì listings có đủ 8 phần tử; quick_replies chỉ chọn ra 4 "
+            "tên tiêu biểu trong 8 phân khu đó, 4 phân khu còn lại khách vẫn thấy qua các thẻ "
+            "listings (lướt/bấm mũi tên), chỉ không có nút bấm nhanh.\n"
+            "  text KHÔNG lặp lại số liệu đã có trong thẻ (theo đúng quy tắc LISTINGS ở trên), chỉ có câu "
+            "dẫn ngắn VÀ BẮT BUỘC một câu mời chọn phân khu để xem mặt bằng/layout chi tiết từng "
+            "loại căn (vd 'Anh chị muốn xem chi tiết mặt bằng phân khu nào ạ?') — đây là gợi ý cho "
+            "lượt tiếp theo, không phải hỏi khảo sát nhu cầu nên KHÔNG cần tuân quy tắc 'chỉ hỏi một "
+            "điều mỗi lượt' của mục TÌM HIỂU NHU CẦU. Ở lượt SAU, khi khách đã chọn đúng một phân "
+            "khu (qua quick_reply hoặc gõ tên), MỚI liệt kê ĐỦ các loại căn cụ thể (mỗi loại một "
+            "phần tử listings, unit_type ghi rõ '2PN'/'3PN'... như bình thường để hệ thống gắn đúng "
+            "ảnh mặt bằng của loại căn đó) khớp ngân sách của riêng phân khu đó theo đúng quy tắc "
+            "trần tối đa 8 ở trên. Bỏ qua bước thẻ tóm tắt phân khu này khi: chỉ có ĐÚNG MỘT phân "
+            "khu khớp mức giá/tiêu chí đó (không có gì để chọn, liệt kê thẳng từng loại căn của "
+            "phân khu đó), khách đã tự nêu tên phân khu cụ thể, hoặc khách chủ động hỏi muốn xem/so "
+            "sánh chi tiết từng loại căn của tất cả phân khu cùng lúc.\n"
             "- Bám đúng loại căn / phân khu / tòa mà câu hỏi nhắc tới, đừng trả lời chung chung "
             "cho cả dự án khi khách đang hỏi một loại căn cụ thể.\n"
             "- Nếu khách từng nêu một tiêu chí cảm xúc/phong cách sống (yên tĩnh, cây xanh, gần "
@@ -670,9 +870,47 @@ def build_prompt(
             )
     elif wants_images_for_prompt(query):
         sections.append(
-            "ẢNH: catalogue không có ảnh nào khớp yêu cầu này. Nói ngắn gọn trong một dòng là "
-            "chưa có ảnh cho hạng mục được hỏi."
+            "ẢNH: catalogue không có ảnh nào khớp yêu cầu này — KHÔNG có ảnh nào đang hiển thị "
+            "trên màn hình. TUYỆT ĐỐI không viết 'ảnh đang hiển thị', 'đã gửi/đính kèm hình ảnh', "
+            "'xem ngay trên màn hình' hay bất kỳ câu nào ngụ ý có ảnh — khách sẽ thấy tin nhắn "
+            "trống trơn dưới một lời khẳng định sai. Nói ngắn gọn trong một dòng là chưa có ảnh "
+            "cho hạng mục được hỏi."
         )
+
+    if floor_plan_towers_only is not None:
+        listings_note = (
+            " Vì lý do NÀY, khi liệt kê các loại căn của phân khu này vào listings (xem mục "
+            "LISTINGS/TƯ VẤN) — nghĩa là khi câu hỏi thực sự muốn biết GIÁ/DIỆN TÍCH theo loại căn "
+            "(vd 'các loại căn hộ gồm những gì', 'giá dưới X tỷ') — KHÔNG tách mỗi loại căn (Studio/"
+            "1PN/2PN...) thành một thẻ riêng như quy tắc thông thường — mọi thẻ sẽ hiện đúng một tấm "
+            "ảnh giống hệt nhau (vì không có ảnh riêng cho từng loại), chỉ khác mỗi số, đọc như hệ "
+            "thống bị lặp/lỗi. Thay vào đó GỘP các loại căn khớp tiêu chí của phân khu này thành "
+            "MỘT thẻ listings duy nhất — unit_type ghi đúng nguyên văn 'Nhiều loại căn', area_range/"
+            "price_range GỘP từ thấp nhất đến cao nhất trong số các loại căn thực sự khớp tiêu chí "
+            "khách nêu (cùng cách gộp đã dùng ở thẻ tóm tắt phân khu tại mục TƯ VẤN, kể cả khi ở đây "
+            "chỉ có một phân khu, không phải nhiều phân khu). NGƯỢC LẠI, khi câu hỏi xin riêng MẶT "
+            "BẰNG/LAYOUT (không hỏi giá/loại căn), đây KHÔNG phải lúc dùng thẻ 'Nhiều loại căn' này "
+            "— để trống listings và trả lời theo đúng câu mời xem mặt bằng tòa đã nêu ở trên, ảnh "
+            "mặt bằng thật hiển thị qua cơ chế ảnh riêng, không qua thẻ giá."
+        )
+        if floor_plan_towers_only:
+            tower_list = ", ".join(floor_plan_towers_only)
+            sections.append(
+                "LƯU Ý MẶT BẰNG: dự án/phân khu đang nhắc tới KHÔNG có ảnh mặt bằng riêng theo "
+                f"từng loại căn (Studio/1PN/2PN/3PN...) — chỉ có bản vẽ mặt bằng TỔNG theo TÒA: "
+                f"{tower_list}. Nếu muốn mời xem thêm mặt bằng/layout, câu mời PHẢI theo tên tòa "
+                f"này (vd 'Anh chị muốn xem mặt bằng tòa {floor_plan_towers_only[0]} không?'), TUYỆT "
+                "ĐỐI không mời xem mặt bằng/layout theo loại phòng (1PN/2PN...) vì không có ảnh "
+                "riêng cho từng loại — mời kiểu đó sẽ dẫn khách tới một câu hỏi không có ảnh trả lời."
+                + listings_note
+            )
+        else:
+            sections.append(
+                "LƯU Ý MẶT BẰNG: dự án/phân khu đang nhắc tới hiện CHƯA có ảnh mặt bằng nào trong hệ "
+                "thống (không theo loại căn, cũng không theo tòa). Nếu được hỏi về mặt bằng/layout, "
+                "nói thẳng là ảnh mặt bằng của dự án này chưa được cập nhật, đừng mời xem theo loại "
+                "phòng hay theo tòa vì không có ảnh nào để xem." + listings_note
+            )
 
     if needs_inventory and inventory_failed:
         if catalog_offer_context.strip():

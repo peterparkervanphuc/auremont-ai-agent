@@ -241,6 +241,36 @@ def is_search_refinement(query: str) -> bool:
     return any(keyword in normalized for keyword in _SEARCH_REFINEMENT_KEYWORDS)
 
 
+# "What do you have at all" — a full-catalogue survey, not a question about one project or
+# one filtered search. RAG's top-k semantic retrieval is the wrong tool for this: it
+# returns whichever ~8 chunks score closest by embedding similarity to the phrase itself,
+# an arbitrary and incomplete subset that happens to skip whole product categories
+# (villas, shophouses) when no project document scores high enough to make the cut — see
+# agent_pipeline._retrieve, which builds a deterministic catalog_overview_context from the
+# `projects` table instead of relying on retrieval alone whenever this matches.
+_CATALOG_OVERVIEW_PATTERN = re.compile(
+    r"\b(?:co\s+nhung|co\s+bao\s+nhieu|danh\s+sach|liet\s+ke|gom\s+nhung|toan\s+bo)\b"
+    # "khu" alone covers the everyday-chat shorthand for "phân khu" ("có những khu nào") —
+    # without it this whole detector misses that exact common phrasing and the question
+    # falls through to plain RAG retrieval, which answers with an arbitrary, incomplete
+    # handful of sub-zones instead of the full loại hình survey.
+    r".{0,20}\b(?:du\s+an|phan\s+khu|khu|loai\s+hinh|san\s+pham|danh\s+muc)\b",
+    re.IGNORECASE,
+)
+
+
+def is_catalog_overview_query(query: str) -> bool:
+    """True for a broad "what projects/product types do you have" survey question.
+
+    Requires both a quantifier/listing verb ("có những", "danh sách", "liệt kê"...) and a
+    catalogue-scope noun ("dự án", "phân khu", "loại hình"...) close together, so it does
+    not fire on a specific-project question that merely mentions "dự án" in passing (e.g.
+    "dự án The Beverly có tiện ích gì" — no quantifier there).
+    """
+    normalized = strip_diacritics(query)
+    return bool(_CATALOG_OVERVIEW_PATTERN.search(normalized))
+
+
 # Preflight policies cover requests where generation is the wrong tool: unsafe requests
 # must be refused consistently, while unsupported product actions must not be presented as
 # if they succeeded. The return value is a closed code; user-facing wording stays in the

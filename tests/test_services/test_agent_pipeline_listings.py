@@ -75,7 +75,15 @@ def test_resolve_listing_images_attaches_real_gallery_photos_and_amenities(monke
                 id="the-sapphire-2",
                 name="The Sapphire 2",
                 details={
-                    "images": {"gallery": ["http://minio/sapphire-2/a.jpg", "http://minio/sapphire-2/b.jpg"]},
+                    # Filenames must actually tag the "2PN" unit type — select_listing_images
+                    # no longer falls back to attaching just any gallery photo (see
+                    # test_answer_images.py for the dedicated coverage of that behaviour).
+                    "images": {
+                        "gallery": [
+                            "http://minio/sapphire-2/can-ho-2pn-a.jpg",
+                            "http://minio/sapphire-2/can-ho-2pn-b.jpg",
+                        ]
+                    },
                     "amenities": [{"name": "Hồ bơi"}, {"name": "Sân tennis"}],
                 },
             )
@@ -90,7 +98,7 @@ def test_resolve_listing_images_attaches_real_gallery_photos_and_amenities(monke
             "unit_type": "2PN",
             "area_range": "55-64 m²",
             "price_range": "3,1-4,3 tỷ đồng",
-            "image_urls": ["http://minio/sapphire-2/a.jpg", "http://minio/sapphire-2/b.jpg"],
+            "image_urls": ["http://minio/sapphire-2/can-ho-2pn-a.jpg", "http://minio/sapphire-2/can-ho-2pn-b.jpg"],
             "amenities": ["Hồ bơi", "Sân tennis"],
             "project_id": "the-sapphire-2",
         }
