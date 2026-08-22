@@ -58,6 +58,18 @@ _PRICE_DOCUMENT_QUERY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Unit-search wording and project-document wording can occur in the same question. The
+# live API owns price/status/unit codes, but qualitative attributes such as a view or the
+# surrounding landscape normally live in project documents. Treating "can nao ..." as
+# inventory-only silently removes the only source that can answer that second half.
+# These are domain concepts, not project names or answers, so newly ingested projects
+# benefit without a code change.
+_PROPERTY_DOCUMENT_ATTRIBUTE_PATTERN = re.compile(
+    r"\b(?:view|tam\s+nhin|huong\s+nhin|huong\s+can|canh\s+quan|tien\s+ich|noi\s+that|"
+    r"ban\s+giao|so\s+huu|phap\s+ly)\b",
+    re.IGNORECASE,
+)
+
 _DOCUMENT_INTENT_KEYWORDS = (
     "chinh sach",
     "chính sách",
@@ -102,6 +114,7 @@ def needs_document_retrieval(query: str) -> bool:
     return (
         any(strip_diacritics(keyword) in normalized for keyword in _DOCUMENT_INTENT_KEYWORDS)
         or bool(_PRICE_DOCUMENT_QUERY_PATTERN.search(normalized))
+        or bool(_PROPERTY_DOCUMENT_ATTRIBUTE_PATTERN.search(normalized))
         or not needs_inventory(query)
     )
 

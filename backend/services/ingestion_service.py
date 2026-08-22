@@ -13,11 +13,12 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from backend.core.config import settings
-from backend.core.enums import DocumentCategory, DocumentReviewStatus, DocumentStatus, LegalStatus
+from backend.core.enums import DocumentBlockReason, DocumentCategory, DocumentReviewStatus, DocumentStatus, LegalStatus
 from backend.core.gemini_client import embed_documents
 from backend.core.minio_client import ensure_bucket, get_minio_client
 from backend.core.sparse_embedding import SparseEmbeddingError, embed_documents_sparse
 from backend.models.document import Document
+from backend.models.project import Project
 from backend.repositories.conflict_flag import create_conflict
 from backend.repositories.document import (
     get_document,
@@ -28,6 +29,7 @@ from backend.repositories.document import (
 )
 from backend.services.chunking_service import chunk_sections
 from backend.services.document_classification_service import classify_document
+from backend.services.document_security_service import SecurityFinding, scan_document_sections
 from backend.services.parser_service import ParsedSection, parse_document
 from backend.services.vector_store_service import (
     delete_document_vectors,
@@ -42,6 +44,10 @@ logger = logging.getLogger(__name__)
 
 class PromptInjectionError(ValueError):
     """The document contains instructions attempting to manipulate the AI."""
+
+    def __init__(self, findings: tuple[SecurityFinding, ...]):
+        super().__init__("Potential prompt-injection content detected.")
+        self.findings = findings
 
 
 class DocumentIngestionError(RuntimeError):
@@ -79,30 +85,14 @@ class _VectorMetadata:
 _OPERATOR_TRANSLATIONS: dict[str, str | int | None] = {"≤": "<=", "≥": ">=", "≠": "!="}
 
 
-SUSPICIOUS_PATTERNS = [
-    # Includes both "ignore previous instructions" and "ignore all previous
-    # instructions". The latter has two words between ignore and instructions.
-    r"ignore\s+(?:(?:all|any|previous|prior)\s+){1,2}instructions",
-    r"system\s+prompt",
-    r"you\s+are\s+chatgpt",
-    r"<\s*system\s*>",
-    r"jailbreak",
-    r"do\s+not\s+follow\s+(the\s+)?rules",
-]
-
-
 def sanitize_and_scan(raw_text: str) -> str:
-    """Basic rule checks before a document enters the knowledge base."""
-    cleaned = raw_text.replace("\x00", "").strip()
-
-    if not cleaned:
+    """Compatibility wrapper for legacy raw-text ingestion."""
+    scan = scan_document_sections([ParsedSection(text=raw_text, page=None)])
+    if not scan.sections:
         raise DocumentIngestionError("Document contains no text.")
-
-    for pattern in SUSPICIOUS_PATTERNS:
-        if re.search(pattern, cleaned, flags=re.IGNORECASE):
-            raise PromptInjectionError("Potential prompt-injection content detected.")
-
-    return cleaned
+    if scan.should_block():
+        raise PromptInjectionError(scan.findings)
+    return scan.text
 
 
 def ingest_uploaded_document(
@@ -122,15 +112,19 @@ def ingest_uploaded_document(
     try:
         update_document_status(db, document.id, DocumentStatus.PROCESSING)
 
-        parsed_sections = parse_document(filename, file_bytes)
-        sections = [
-            ParsedSection(text=cleaned, page=section.page)
-            for section in parsed_sections
-            if (cleaned := section.text.replace("\x00", "").strip())
-        ]
-        raw_text = sanitize_and_scan("\n\n".join(section.text for section in sections))
+        security_scan = scan_document_sections(parse_document(filename, file_bytes))
+        sections = list(security_scan.sections)
+        if not sections:
+            raise DocumentIngestionError("Document contains no text.")
+        if security_scan.should_block():
+            raise PromptInjectionError(security_scan.findings)
+        raw_text = security_scan.text
 
-        classification = classify_document(filename, raw_text)
+        classification = classify_document(
+            filename,
+            raw_text,
+            parent_project_names=_parent_project_names(db, document.project_id),
+        )
         document = update_document_classification_suggestion(
             db,
             document_id=document.id,
@@ -139,6 +133,8 @@ def ingest_uploaded_document(
             # marks its own rejections, and a conflict still clears `is_current`.
             auto_approve=True,
         )
+        document.block_reason = None
+        document.security_findings = [finding.as_dict() for finding in security_scan.findings]
 
         object_key = _store_original_file(
             document_id=document.id,
@@ -194,6 +190,8 @@ def ingest_uploaded_document(
                     f"{document.classification_reason or ''} Exact duplicate of document(s): {duplicate_ids}."
                 ).strip()
 
+            document.block_reason = DocumentBlockReason.DUPLICATE_CONTENT if has_duplicate else None
+
             document.status = DocumentStatus.BLOCKED if has_duplicate else DocumentStatus.COMPLETED
             document_id = document.id
             final_vector_metadata = _VectorMetadata(
@@ -237,11 +235,13 @@ def ingest_uploaded_document(
 
         return document
 
-    except PromptInjectionError:
+    except PromptInjectionError as exc:
         db.rollback()
         document.is_current = False
+        document.status = DocumentStatus.BLOCKED
+        document.block_reason = DocumentBlockReason.PROMPT_INJECTION
+        document.security_findings = [finding.as_dict() for finding in exc.findings]
         db.commit()
-        update_document_status(db, document.id, DocumentStatus.BLOCKED)
         raise
 
     except Exception as exc:
@@ -273,6 +273,31 @@ def ingest_uploaded_document(
             raise
 
         raise DocumentIngestionError(f"Could not ingest document {document.id}.") from exc
+
+
+def _parent_project_names(db: Session, project_id: str | None) -> tuple[str, ...]:
+    """Names that describe the parent scope and must not become subdivision metadata."""
+    if not project_id:
+        return ()
+    project = db.get(Project, project_id)
+    if project is None:
+        return ()
+
+    info = (project.details or {}).get("project") or {}
+    parent_id = info.get("parent_project_id")
+    parent = db.get(Project, parent_id) if parent_id else project
+    if parent is None:
+        return ()
+
+    parent_info = (parent.details or {}).get("project") or {}
+    values = [
+        parent.name,
+        parent_info.get("name"),
+        parent_info.get("full_name"),
+        parent_info.get("alternate_name"),
+        *(parent_info.get("aliases") or []),
+    ]
+    return tuple(dict.fromkeys(str(value).strip() for value in values if value and str(value).strip()))
 
 
 def _embed_and_index(document: Document, chunks: list, *, is_current: bool | None = None) -> None:

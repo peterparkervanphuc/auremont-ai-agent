@@ -26,7 +26,7 @@ between the two belongs to `agent_pipeline`, not to this module.
 import logging
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 from qdrant_client import models
 
@@ -71,6 +71,8 @@ def retrieve(
     top_k: int = 5,
     *,
     focus_query: str | None = None,
+    project_ids: Iterable[str] | None = None,
+    excluded_project_ids: Iterable[str] | None = None,
 ) -> list[dict]:
     """Return retrieved chunks: [{"document_id": int, "title": str, "content": str, "score": float}, ...].
 
@@ -122,17 +124,41 @@ def retrieve(
             match=models.MatchValue(value=True),
         ),
     ]
+    scoped_project_ids = list(
+        dict.fromkeys(value for value in (project_ids or ([project_id] if project_id else [])) if value)
+    )
     project_scope: list[models.Condition] | None = None
-    if project_id:
+    if scoped_project_ids:
         # Project-scoped documents OR company/global documents. Uploading a general
         # buying guide without a project assignment must not make it disappear from every
         # project conversation, while documents assigned to another project remain out.
+        project_match = (
+            models.MatchValue(value=scoped_project_ids[0])
+            if len(scoped_project_ids) == 1
+            else models.MatchAny(any=scoped_project_ids)
+        )
         project_scope = [
-            models.FieldCondition(key="project_id", match=models.MatchValue(value=project_id)),
+            models.FieldCondition(key="project_id", match=project_match),
             models.IsNullCondition(is_null=models.PayloadField(key="project_id")),
         ]
 
-    query_filter = models.Filter(must=conditions, should=project_scope)
+    excluded_ids = list(dict.fromkeys(project_id for project_id in excluded_project_ids or [] if project_id))
+    project_exclusions: list[models.Condition] | None = None
+    if excluded_ids:
+        # Null/global documents do not match this condition and remain available.  Only
+        # chunks assigned to a subdivision the customer explicitly rejected are removed.
+        project_exclusions = [
+            models.FieldCondition(
+                key="project_id",
+                match=models.MatchAny(any=excluded_ids),
+            )
+        ]
+
+    query_filter = models.Filter(
+        must=conditions,
+        should=project_scope,
+        must_not=project_exclusions,
+    )
     candidate_limit = top_k * OVERFETCH_FACTOR
 
     client = get_qdrant_client()

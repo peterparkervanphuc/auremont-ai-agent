@@ -230,6 +230,40 @@ def test_specific_unit_code_is_filtered_exactly():
     assert [unit.unit_code for unit in _apply_query_filters(units, "Căn A-1205 còn không?")] == ["A-1205"]
 
 
+def test_extended_inventory_fields_are_parsed_and_sanitized():
+    unit = _parse_unit(
+        {
+            "unit_code": "R1.03-1205",
+            "project_id": "the-zenpark",
+            "status": "available",
+            "tower": "R1.03",
+            "floor": 12,
+            "direction": "Đông Nam",
+            "view_type": ["Hồ", "Cảnh quan nội khu"],
+        }
+    )
+
+    assert unit is not None
+    assert unit.tower == "R1.03"
+    assert unit.floor == "12"
+    assert unit.direction == "Đông Nam"
+    assert unit.view_type == ("Hồ", "Cảnh quan nội khu")
+
+
+def test_string_view_field_supports_common_api_multiselect_separators():
+    unit = _parse_unit(
+        {
+            "unit_code": "R1.03-1205",
+            "project_id": "the-zenpark",
+            "status": "available",
+            "view_type": "Hồ | Cảnh quan nội khu",
+        }
+    )
+
+    assert unit is not None
+    assert unit.view_type == ("Hồ", "Cảnh quan nội khu")
+
+
 @pytest.mark.parametrize(
     "subdivision",
     [

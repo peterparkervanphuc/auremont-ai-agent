@@ -13,7 +13,7 @@ import type {
   MessageResponse,
   SessionStatus,
 } from "../types";
-import { AlertTriangleIcon, ArrowRightIcon, LoaderIcon, SendIcon, UsersIcon, XIcon } from "./Icons";
+import { AlertTriangleIcon, ArrowRightIcon, LoaderIcon, SendIcon, TrashIcon, UsersIcon, XIcon } from "./Icons";
 import { AuremontAvatar } from "./AuremontAvatar";
 import { RegisterGateModal } from "./RegisterGateModal";
 import { MessageContent } from "./MessageContent";
@@ -35,6 +35,7 @@ export function ChatWidget() {
   const [messages, setMessages] = useState<MessageResponse[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
   const [gate, setGate] = useState<CustomerGate | null>(null);
   // Customer/anonymous only — once a Sale is involved, the widget stops trying to keep up
   // live (that experience lives in the full CustomerChatPage, which polls) and just points
@@ -268,6 +269,27 @@ export function ChatWidget() {
     }
   };
 
+  const clearCustomerHistory = async () => {
+    if (isSale || !sessionId || clearingHistory || messages.length === 0) return;
+    const confirmed = window.confirm(
+      "Xóa toàn bộ lịch sử trò chuyện? Thông tin Auremont đã ghi nhớ từ cuộc trò chuyện này cũng sẽ bị xóa.",
+    );
+    if (!confirmed) return;
+
+    setClearingHistory(true);
+    try {
+      await customerApi.delete<void>(`/customer/sessions/${sessionId}/messages`);
+      setMessages([]);
+      setInput("");
+      setGate(null);
+      setSessionStatus("bot_handling");
+    } catch {
+      window.alert("Tạm thời chưa xóa được lịch sử trò chuyện — vui lòng thử lại.");
+    } finally {
+      setClearingHistory(false);
+    }
+  };
+
   const fullChatHref = isSale && sessionId ? `/chat/sessions/${sessionId}` : "/chat";
   const suggestions = isSale ? SUGGESTIONS : PUBLIC_SUGGESTIONS;
   const visitor = getVisitorSession();
@@ -282,9 +304,23 @@ export function ChatWidget() {
               <p className="chat-widget-title">Trợ lý AI</p>
               <p className="chat-widget-sub">Hỏi nhanh về giá, pháp lý hoặc tồn kho</p>
             </div>
-            <button className="chat-widget-close" type="button" onClick={() => setOpen(false)} aria-label="Đóng">
-              <XIcon size={16} />
-            </button>
+            <div className="chat-widget-head-actions">
+              {!isSale && sessionId && messages.length > 0 && (
+                <button
+                  className="chat-widget-clear"
+                  type="button"
+                  onClick={clearCustomerHistory}
+                  disabled={clearingHistory || loading}
+                  aria-label="Xóa lịch sử trò chuyện"
+                  title="Xóa lịch sử trò chuyện"
+                >
+                  {clearingHistory ? <LoaderIcon size={15} className="icon-spin" /> : <TrashIcon size={15} />}
+                </button>
+              )}
+              <button className="chat-widget-close" type="button" onClick={() => setOpen(false)} aria-label="Đóng">
+                <XIcon size={16} />
+              </button>
+            </div>
           </div>
 
           {pendingMessage !== null ? (

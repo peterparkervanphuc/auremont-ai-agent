@@ -152,6 +152,19 @@ export interface TokenResponse {
   user: UserResponse;
 }
 
+export type DocumentBlockReason =
+  | "prompt_injection"
+  | "duplicate_content"
+  | "legacy_unknown";
+
+export interface DocumentSecurityFinding {
+  rule_id: string;
+  severity: "warning" | "high_risk";
+  description: string;
+  page: number | null;
+  excerpt: string;
+}
+
 export interface DocumentResponse {
   id: number;
   title: string;
@@ -179,6 +192,8 @@ export interface DocumentResponse {
   review_status: DocumentReviewStatus;
   classification_confidence: number | null;
   classification_reason: string | null;
+  block_reason: DocumentBlockReason | null;
+  security_findings: DocumentSecurityFinding[];
   classified_at: string | null;
   reviewed_by: number | null;
   reviewed_at: string | null;

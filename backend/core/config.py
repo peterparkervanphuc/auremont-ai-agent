@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -183,6 +183,13 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
     upload_max_bytes: int = 20 * 1024 * 1024
+    # Prompt-injection screening for uploaded documents. The balanced default only
+    # quarantines contextual, high-confidence instructions; standalone security terms are
+    # retained as Admin-visible warnings. Set to "warning" for fail-closed deployments or
+    # "disabled" only when another document-security layer is enforced upstream.
+    document_security_block_threshold: Literal["warning", "high_risk", "disabled"] = "high_risk"
+    document_security_max_findings: int = Field(default=20, ge=1, le=200)
+    document_security_excerpt_context_chars: int = Field(default=80, ge=20, le=500)
 
     # Customer chat (public/anonymous flow)
     # How many questions an anonymous visitor gets before the register/login gate blocks

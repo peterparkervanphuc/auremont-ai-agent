@@ -994,6 +994,39 @@
   color: var(--text-3);
 }
 
+.document-security-details {
+  margin-top: 7px;
+  max-width: 620px;
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
+
+.document-security-details summary {
+  width: fit-content;
+  color: var(--warning, #a16207);
+  cursor: pointer;
+}
+
+.document-security-details ul {
+  margin: 7px 0 0;
+  padding-left: 18px;
+}
+
+.document-security-details li + li {
+  margin-top: 7px;
+}
+
+.document-security-details span,
+.document-security-details q {
+  display: block;
+}
+
+.document-security-details q {
+  margin-top: 2px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
 .data-row-actions {
   display: flex;
   align-items: center;

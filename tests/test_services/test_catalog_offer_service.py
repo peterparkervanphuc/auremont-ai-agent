@@ -4,7 +4,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.services import answer_images_service, catalog_offer_service, inventory_service, search_criteria
+from backend.services import (
+    agent_pipeline,
+    answer_images_service,
+    catalog_offer_service,
+    inventory_service,
+    search_criteria,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -114,6 +120,30 @@ def test_budget_search_uses_the_named_projects_price_tiers(catalogue_db):
     assert "không phải xác nhận căn đang còn" in catalog_offer_service.format_offers(offers)
 
 
+def test_parent_scope_finds_child_apartments_for_typographic_area_request(catalogue_db):
+    query = (
+        "Toi can can 2PN khoang 60–70m2, uu tien huong Dong Nam va view dep. "
+        "Trong cac phan khu Ocean Park 1 co lua chon nao?"
+    )
+    criteria = _criteria(query)
+    offers = catalog_offer_service.search_offers(
+        catalogue_db,
+        query,
+        project_ids=["vinhomes-ocean-park"],
+        criteria=criteria,
+        limit=200,
+    )
+
+    assert criteria.get(search_criteria.FIELD_AREA).value == (60.0, 70.0)
+    assert {offer.project_id for offer in offers} >= {"the-zenpark", "the-sapphire", "the-paris"}
+    assert all("2" in offer.unit_type for offer in offers)
+    assert [offer.project_id for offer in offers[:3]] == ["the-sapphire", "the-paris", "the-zenpark"]
+    context = catalog_offer_service.format_offers(offers, criteria)
+    assert "ĐỘ PHỦ KHỚP MỘT PHẦN" in context
+    assert "không được kết luận không có lựa chọn" in context
+    assert "view dep" in context
+
+
 def test_unknown_villa_price_is_kept_and_labelled_instead_of_dropped(catalogue_db):
     offers = catalog_offer_service.search_offers(
         catalogue_db,
@@ -142,3 +172,73 @@ def test_every_catalogue_subdivision_short_name_resolves(catalogue_db):
         assert row.id in answer_images_service.resolve_project_ids(
             catalogue_db, f"cho tôi thông tin {short_name}"
         )
+
+
+def test_negative_project_reference_is_not_returned_as_positive_scope(catalogue_db):
+    references = answer_images_service.resolve_project_references(
+        catalogue_db, "ngoài Zenpark thì tôi có thể cân nhắc căn nào khác"
+    )
+
+    assert references.included_ids == ()
+    assert references.excluded_ids == ("the-zenpark",)
+    assert answer_images_service.resolve_project_id(catalogue_db, "trừ The Zenpark") is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Ngoài ra, Zenpark cũng có lựa chọn nào?",
+        "Có căn nào khác ở Zenpark không?",
+    ],
+)
+def test_non_negative_connectors_keep_project_in_positive_scope(catalogue_db, query):
+    references = answer_images_service.resolve_project_references(catalogue_db, query)
+
+    assert references.included_ids == ("the-zenpark",)
+    assert references.excluded_ids == ()
+
+
+def test_parent_scope_includes_children_but_excludes_rejected_subdivision(catalogue_db):
+    offers = catalog_offer_service.search_offers(
+        catalogue_db,
+        "ngoài Zenpark thì có căn nào dưới 4 tỷ",
+        project_ids=["vinhomes-ocean-park"],
+        excluded_project_ids=["the-zenpark"],
+        criteria=_criteria("dưới 4 tỷ"),
+        limit=200,
+    )
+
+    project_ids = {offer.project_id for offer in offers}
+    assert "the-zenpark" not in project_ids
+    assert "vinhomes-ocean-park" in project_ids
+    assert len(project_ids) > 2
+
+
+def test_follow_up_outside_subdivision_keeps_parent_history_scope(catalogue_db):
+    scope = agent_pipeline._scope_resolve(
+        {
+            "query": "ngoài Zenpark thì tôi có thể cân nhắc căn nào khác",
+            "db": catalogue_db,
+            "project_id": None,
+            "history": [
+                {
+                    "sender": "customer",
+                    "content": "Ngân sách 4 tỷ, trong Ocean Park 1 có những căn nào?",
+                }
+            ],
+        }
+    )
+
+    assert scope["resolved_project_ids"] == ["vinhomes-ocean-park"]
+    assert scope["excluded_project_ids"] == ["the-zenpark"]
+    result = agent_pipeline._catalog_search_result(
+        {
+            "query": "ngoài Zenpark thì tôi có thể cân nhắc căn nào khác",
+            "db": catalogue_db,
+            "needs_inventory": True,
+            **scope,
+        },
+        _criteria("dưới 4 tỷ"),
+    )
+    assert result["catalog_offers"]
+    assert all(offer.project_id != "the-zenpark" for offer in result["catalog_offers"])

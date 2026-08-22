@@ -9,6 +9,12 @@ class DocumentStatus(StrEnum):
     BLOCKED = "blocked"
 
 
+class DocumentBlockReason(StrEnum):
+    PROMPT_INJECTION = "prompt_injection"
+    DUPLICATE_CONTENT = "duplicate_content"
+    LEGACY_UNKNOWN = "legacy_unknown"
+
+
 class DocumentVisibility(StrEnum):
     """RBAC tier: INTERNAL is Sale/Admin only; PUBLIC is safe for Sale to share with customers."""
 

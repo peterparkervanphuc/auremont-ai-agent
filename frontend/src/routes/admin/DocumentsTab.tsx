@@ -32,11 +32,22 @@ const STATUS_LABEL: Record<
     badge: "badge-success",
   },
   failed: { text: "Thất bại", badge: "badge-danger" },
-  blocked: {
-    text: "Đã chặn — nội dung bất thường",
-    badge: "badge-danger",
-  },
+  blocked: { text: "Đã chặn — cần kiểm tra", badge: "badge-danger" },
 };
+
+function statusLabel(document: DocumentResponse): { text: string; badge: string } {
+  if (document.status !== "blocked") {
+    return STATUS_LABEL[document.status] ?? { text: document.status, badge: "badge-muted" };
+  }
+
+  if (document.block_reason === "duplicate_content") {
+    return { text: "Trùng tài liệu", badge: "badge-warning" };
+  }
+  if (document.block_reason === "prompt_injection") {
+    return { text: "Đã chặn — nghi ngờ chỉ thị AI", badge: "badge-danger" };
+  }
+  return STATUS_LABEL.blocked;
+}
 
 // Shown in the per-row category picker. Ordered by how often an Admin actually corrects to
 // them, with "other" last — it is where the classifier puts anything it could not identify,
@@ -408,11 +419,7 @@ export function DocumentsTab() {
         ) : (
           <div className="data-list">
             {filteredDocuments.map((document) => {
-              const displayStatus =
-                STATUS_LABEL[document.status] ?? {
-                  text: document.status,
-                  badge: "badge-muted",
-                };
+              const displayStatus = statusLabel(document);
 
               return (
                 <div key={document.id} className="data-row">
@@ -431,6 +438,24 @@ export function DocumentsTab() {
                     <div className="data-row-meta">
                       {parseServerDate(document.created_at).toLocaleString("vi-VN")}
                     </div>
+                    {document.security_findings.length > 0 && (
+                      <details className="document-security-details">
+                        <summary>
+                          {document.security_findings.length} cảnh báo kiểm tra nội dung
+                        </summary>
+                        <ul>
+                          {document.security_findings.map((finding, index) => (
+                            <li key={`${finding.rule_id}-${finding.page ?? "document"}-${index}`}>
+                              <span>
+                                {finding.description}
+                                {finding.page ? ` · Trang ${finding.page}` : ""}
+                              </span>
+                              <q>{finding.excerpt}</q>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                   </div>
 
                   <span className={`badge ${displayStatus.badge}`}>

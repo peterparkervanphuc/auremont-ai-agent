@@ -47,7 +47,7 @@ from backend.schemas.customer import (
 )
 from backend.schemas.message import MessageResponse
 from backend.schemas.user import TokenResponse, UserResponse
-from backend.services import agent_pipeline, memory_service
+from backend.services import agent_pipeline, memory_service, search_criteria
 
 router = APIRouter(prefix="/customer", tags=["Customer Chat"])
 
@@ -474,15 +474,45 @@ def _remember_customer_history(db: Session, session: ChatSession, customer_id: i
             memory_service.remember(key, message.content, session.project_id, db=db)
 
 
+def _forget_customer_context(session_id: int, customer_id: int | None) -> None:
+    """Drop every non-MySQL context layer that can affect the next customer answer."""
+    search_criteria.clear(session_id)
+    if customer_id is not None:
+        memory_service.forget(memory_service.customer_key(customer_id))
+
+
 @router.delete("/sessions/{session_id}/messages", status_code=status.HTTP_204_NO_CONTENT)
 async def clear_customer_session_messages(
-    session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.CUSTOMER))
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_current_user),
+    x_visitor_token: str | None = Header(default=None, alias="X-Visitor-Token"),
 ) -> None:
+    """Forget one customer's conversation while keeping its stable session id.
+
+    Both ownership forms are supported: a CUSTOMER account or the anonymous browser token.
+    Clearing visible rows alone is insufficient because the next answer could otherwise
+    reuse Redis preferences or accumulated search criteria from the deleted conversation.
+    A live handoff is also ended so a Sale cannot write into a transcript the customer has
+    explicitly erased.
+    """
     session = get_session(db, session_id)
-    session = _resolve_customer_asker(db, session, user, None)
+    session = _resolve_customer_asker(db, session, user, x_visitor_token)
+    customer_id = session.customer_id
+    if session.status != SessionStatus.BOT_HANDLING:
+        session = return_to_bot(db, session)
     delete_hitl_logs_for_session(db, session_id)
     delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)
+    session.title = None
+    db.commit()
+    _forget_customer_context(session_id, customer_id)
+    log_event(
+        "customer.history.cleared",
+        session_id=session_id,
+        customer_id=customer_id,
+        is_anonymous=customer_id is None,
+    )
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -494,4 +524,5 @@ async def remove_customer_session(
     delete_hitl_logs_for_session(db, session_id)
     delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)
+    _forget_customer_context(session_id, session.customer_id)
     delete_session(db, session_id)

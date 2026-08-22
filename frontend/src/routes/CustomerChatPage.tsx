@@ -21,6 +21,7 @@ import {
   ClockIcon,
   LoaderIcon,
   SendIcon,
+  TrashIcon,
   UserIcon,
   UsersIcon,
 } from "../components/Icons";
@@ -69,6 +70,7 @@ export function CustomerChatPage() {
   const [gate, setGate] = useState<CustomerGate | null>(null);
   const [requestingHuman, setRequestingHuman] = useState(false);
   const [returningToAi, setReturningToAi] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
   // True right after the customer taps "Quay lại chat với AI" — offers an immediate undo
   // (re-request a Sale) in case that was a misclick, instead of relying on them noticing
   // the header button reappeared. Cleared as soon as they act on it either way.
@@ -272,6 +274,29 @@ export function CustomerChatPage() {
     }
   }, [sessionId, returningToAi]);
 
+  const clearHistory = useCallback(async () => {
+    if (!sessionId || clearingHistory || messages.length === 0) return;
+    const confirmed = window.confirm(
+      "Xóa toàn bộ lịch sử trò chuyện? Thông tin Auremont đã ghi nhớ từ cuộc trò chuyện này cũng sẽ bị xóa. Nếu đang chat với chuyên viên, phiên hỗ trợ trực tiếp sẽ kết thúc.",
+    );
+    if (!confirmed) return;
+
+    setClearingHistory(true);
+    setError(null);
+    try {
+      await customerApi.delete<void>(`/customer/sessions/${sessionId}/messages`);
+      setMessages([]);
+      setInput("");
+      setGate(null);
+      setSessionStatus("bot_handling");
+      setJustReturnedToAi(false);
+    } catch {
+      setError("Tạm thời chưa xóa được lịch sử trò chuyện — vui lòng thử lại.");
+    } finally {
+      setClearingHistory(false);
+    }
+  }, [sessionId, clearingHistory, messages.length]);
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     sendMessage(input);
@@ -346,6 +371,17 @@ export function CustomerChatPage() {
             <button className="btn btn-outline chat-request-human-btn" type="button" onClick={requestHuman} disabled={requestingHuman}>
               {requestingHuman ? <LoaderIcon size={15} className="icon-spin" /> : <UsersIcon size={15} />}
               Gặp chuyên viên tư vấn
+            </button>
+          )}
+          {sessionId && messages.length > 0 && (
+            <button
+              className="chat-clear-btn"
+              type="button"
+              onClick={clearHistory}
+              disabled={clearingHistory || loading}
+            >
+              {clearingHistory ? <LoaderIcon size={15} className="icon-spin" /> : <TrashIcon size={15} />}
+              <span>Xóa lịch sử</span>
             </button>
           )}
         </div>

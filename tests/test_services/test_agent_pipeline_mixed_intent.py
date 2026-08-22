@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from backend.ai import prompts
 from backend.services import agent_pipeline
 from backend.services.inventory_service import InventoryApiError, InventoryUnit
@@ -84,6 +86,24 @@ def test_budget_recommendation_reads_documents_and_live_inventory(monkeypatch):
     assert result["needs_document_retrieval"] is True
     assert result["needs_inventory"] is True
     assert result["retrieved_docs"] == [_policy_hit()]
+
+
+def test_parent_project_retrieval_scope_expands_from_catalogue_metadata():
+    rows = [
+        SimpleNamespace(id="parent", details={"project": {}}),
+        SimpleNamespace(id="child-a", details={"project": {"parent_project_id": "parent"}}),
+        SimpleNamespace(id="unrelated", details={"project": {"parent_project_id": "somewhere-else"}}),
+    ]
+
+    class _Query:
+        def all(self):
+            return rows
+
+    class _Db:
+        def query(self, _model):
+            return _Query()
+
+    assert agent_pipeline._rag_project_scope_ids(_Db(), "parent") == ["parent", "child-a"]
 
 
 def test_mixed_question_keeps_policy_context_when_inventory_fails(monkeypatch):

@@ -82,15 +82,18 @@ class Source(StrEnum):
     INFERRED = "inferred"
 
 
-# Fields that can actually filter an InventoryUnit (unit_code, project_id, subdivision,
-# unit_type, area_m2, price, status). Anything outside this set is advisory only — see
-# SearchCriteria.required_features.
+# Fields that can actually filter an InventoryUnit. Anything outside this set is
+# advisory only — see SearchCriteria.required_features.
 FIELD_UNIT_TYPES = "unit_types"
 FIELD_UNIT_CODES = "unit_codes"
 FIELD_SUBDIVISIONS = "subdivisions"
 FIELD_PRICE = "price"
 FIELD_AREA = "area"
 FIELD_STATUSES = "statuses"
+FIELD_DIRECTIONS = "directions"
+FIELD_VIEWS = "views"
+FIELD_TOWERS = "towers"
+FIELD_FLOORS = "floors"
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,14 @@ class Constraint:
             return f"phân khu {', '.join(self.value)}"
         if self.field == FIELD_STATUSES:
             return f"tình trạng {', '.join(self.value)}"
+        if self.field == FIELD_DIRECTIONS:
+            return f"hướng {', '.join(self.value)}"
+        if self.field == FIELD_VIEWS:
+            return f"view {', '.join(self.value)}"
+        if self.field == FIELD_TOWERS:
+            return f"tòa {', '.join(self.value)}"
+        if self.field == FIELD_FLOORS:
+            return f"tầng {', '.join(self.value)}"
         return f"{self.field}: {self.value}"
 
 
@@ -252,6 +263,13 @@ _DROP_PATTERN = re.compile(
 )
 _EXCLUDE_PATTERN = re.compile(
     r"\b(không lấy|không chọn|loại trừ|tránh|khong lay|khong chon|loai tru|tranh)\b",
+    re.IGNORECASE,
+)
+_LOCATION_EXCLUDE_PREFIX = re.compile(
+    r"(?:\bngoài\b(?!\s+ra\b)|\bngoai\b(?!\s+ra\b)|\btrừ\b|\btru\b|\bkhông phải\b|\bkhong phai\b|"
+    r"\bkhông lấy\b|\bkhong lay\b|\bkhông chọn\b|\bkhong chon\b|"
+    r"\bloại trừ\b|\bloai tru\b|\btránh\b|\btranh\b|\bkhác với\b|\bkhac voi\b)"
+    r"(?:\s+\w+){0,5}\s*$",
     re.IGNORECASE,
 )
 
@@ -397,6 +415,10 @@ _FEATURE_WORDS = (
     "người khuyết tật",
 )
 
+# Subjective view preferences stay advisory because no exact inventory value can prove
+# that a view is "đẹp"; concrete view types are parsed into structured constraints.
+_VIEW_FEATURE_PATTERN = re.compile(r"\bview(?:\s+[^\W\d_]+)?\b", re.IGNORECASE)
+
 
 def parse_criteria(query: str, known_subdivisions: list[str] | None = None) -> CriteriaDelta:
     """Turn one question into a delta against whatever criteria already exist.
@@ -470,9 +492,42 @@ def parse_criteria(query: str, known_subdivisions: list[str] | None = None) -> C
     elif _MOVE_IN_NOW_PATTERN.search(query):
         constraints.append(Constraint(FIELD_STATUSES, ["available"], Strength.HARD, Source.INFERRED))
 
+    direction = _inv._extract_direction(query)
+    if direction is not None:
+        constraints.append(
+            Constraint(
+                FIELD_DIRECTIONS,
+                [direction],
+                Strength.HARD if mandatory else Strength.SOFT,
+                Source.EXPLICIT,
+            )
+        )
+
+    views = _inv._extract_view_types(query)
+    if views:
+        constraints.append(
+            Constraint(
+                FIELD_VIEWS,
+                views,
+                Strength.HARD if mandatory else Strength.SOFT,
+                Source.EXPLICIT,
+            )
+        )
+
+    tower = _inv._extract_tower(query)
+    if tower is not None:
+        constraints.append(Constraint(FIELD_TOWERS, [tower], Strength.HARD, Source.EXPLICIT))
+
+    floor = _inv._extract_floor(query)
+    if floor is not None:
+        constraints.append(Constraint(FIELD_FLOORS, [floor], Strength.HARD, Source.EXPLICIT))
+
     subdivision = _match_subdivision(query, known_subdivisions or [])
     if subdivision is not None:
-        strength = Strength.HARD if mandatory else Strength.SOFT
+        if _is_excluded_subdivision(query, subdivision):
+            strength = Strength.EXCLUDED
+        else:
+            strength = Strength.HARD if mandatory else Strength.SOFT
         constraints.append(Constraint(FIELD_SUBDIVISIONS, [subdivision], strength, Source.EXPLICIT))
 
     features = _extract_features(query)
@@ -549,15 +604,46 @@ def _parse_vague_price(query: str) -> tuple[float, float] | None:
 
 
 def _match_subdivision(query: str, known: list[str]) -> str | None:
-    """Longest known subdivision name appearing in the question, diacritic-insensitively."""
+    """Longest known subdivision name/short alias appearing in the question."""
     normalized_query = _inv._normalize_text(query)
-    matches = [name for name in known if name and _inv._normalize_text(name) in normalized_query]
+    matches = [
+        name
+        for name in known
+        if name
+        and any(alias in normalized_query for alias in _subdivision_aliases(name))
+    ]
     return max(matches, key=len) if matches else None
+
+
+def _subdivision_aliases(name: str) -> tuple[str, ...]:
+    normalized = _inv._normalize_text(name)
+    short = normalized.removeprefix("the ")
+    return tuple(dict.fromkeys(alias for alias in (normalized, short) if alias))
+
+
+def _is_excluded_subdivision(query: str, name: str) -> bool:
+    """Whether the local phrase rejects this subdivision rather than selecting it."""
+    normalized_query = _inv._normalize_text(query)
+    occurrences = [
+        normalized_query.find(alias)
+        for alias in _subdivision_aliases(name)
+        if alias in normalized_query
+    ]
+    if not occurrences:
+        return False
+    position = min(occurrences)
+    prefix = normalized_query[max(0, position - 60) : position]
+    return _LOCATION_EXCLUDE_PREFIX.search(prefix) is not None
 
 
 def _extract_features(query: str) -> list[str]:
     normalized = _inv._normalize_text(query)
-    return [word for word in _FEATURE_WORDS if _inv._normalize_text(word) in normalized]
+    features = [word for word in _FEATURE_WORDS if _inv._normalize_text(word) in normalized]
+    # Structured direction/view values now live in constraints. A subjective phrase such
+    # as "view đẹp" has no exact value to compare and remains an advisory feature.
+    if not _inv._extract_view_types(query):
+        features.extend(match.group(0) for match in _VIEW_FEATURE_PATTERN.finditer(query))
+    return list(dict.fromkeys(features))
 
 
 def _extract_household(query: str) -> int | None:

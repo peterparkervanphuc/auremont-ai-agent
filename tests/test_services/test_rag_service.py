@@ -126,6 +126,37 @@ def test_project_id_omitted_when_not_given(qdrant):
     assert keys == ["visibility", "is_current"]
 
 
+def test_parent_scope_can_include_child_project_documents(qdrant):
+    rag_service.retrieve(
+        "can 2PN trong cac phan khu",
+        DocumentVisibility.INTERNAL,
+        project_id="parent-project",
+        project_ids=["parent-project", "child-a", "child-b"],
+    )
+
+    query_filter = qdrant.query_calls[0]["query_filter"]
+    condition = next(
+        item
+        for item in query_filter.should
+        if isinstance(item, models.FieldCondition) and item.key == "project_id"
+    )
+    assert list(condition.match.any) == ["parent-project", "child-a", "child-b"]
+
+
+def test_excluded_project_is_removed_without_hiding_global_documents(qdrant):
+    rag_service.retrieve(
+        "ngoài Zenpark còn căn nào",
+        DocumentVisibility.INTERNAL,
+        excluded_project_ids=["the-zenpark"],
+    )
+
+    query_filter = qdrant.query_calls[0]["query_filter"]
+    assert len(query_filter.must_not) == 1
+    condition = query_filter.must_not[0]
+    assert condition.key == "project_id"
+    assert list(condition.match.any) == ["the-zenpark"]
+
+
 def test_retrieval_does_not_wait_for_admin_approval(qdrant):
     """An uploaded document answers immediately — there is no approval step."""
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)

@@ -14,13 +14,19 @@ Tồn kho căn được tra **real-time qua HTTP**, không ingest vào Qdrant �
 
 **Bước 1 — Tạo resource trên mockapi.io**
 
-Tạo project mới, thêm resource tên `units` với 5 field dưới đây (mockapi tự thêm `id`, `lookup_inventory` sẽ bỏ qua field lạ này):
+Tạo project mới, thêm resource tên `units` với các field dưới đây (mockapi tự thêm `id`, `lookup_inventory` sẽ bỏ qua field lạ này). Ba field bắt buộc để một bản ghi hợp lệ là `unit_code`, `project_id`, `status`; các field còn lại càng đầy đủ thì kết quả tư vấn càng chính xác:
 
 | Field | Kiểu | Ví dụ | Ghi chú |
 | :--- | :--- | :--- | :--- |
 | `unit_code` | string | `OP3-A-0203` | Mã căn |
 | `project_id` | string | `ocean-park-3` | Khớp `project_id` truyền vào khi tra cứu |
+| `subdivision` | string | `The Zenpark` | Phân khu của căn |
+| `tower` | string | `R1.03` | Tòa/tháp |
+| `floor` | string | `12` | Tầng; dùng string để giữ được giá trị như `12A` |
 | `unit_type` | string | `2PN` | `1PN`…`10PN`, `Penthouse`, `Studio`, `Shophouse`, `Duplex` |
+| `area_m2` | number | `68.2` | Diện tích m² |
+| `direction` | string | `Đông Nam` | Hướng căn/hướng ban công theo quy ước của nguồn |
+| `view_type` | string hoặc array | `["Hồ", "Cảnh quan nội khu"]` | Một hoặc nhiều loại view; chuỗi có thể phân tách bằng `,`, `|`, `/` |
 | `price` | number | `3600000000` | VND. Nhận cả chuỗi `"3600000000"` |
 | `status` | string | `available` | `available` / `reserved` / `sold` |
 
@@ -28,8 +34,11 @@ Endpoint trả về một JSON array:
 
 ```json
 [
-  { "unit_code": "OP3-A-0203", "project_id": "ocean-park-3",
-    "unit_type": "2PN", "price": 3600000000, "status": "available" }
+  { "unit_code": "R1.03-1205", "project_id": "ocean-park-1",
+    "subdivision": "The Zenpark", "tower": "R1.03", "floor": "12",
+    "unit_type": "2PN", "area_m2": 68.2, "direction": "Đông Nam",
+    "view_type": ["Hồ", "Cảnh quan nội khu"],
+    "price": 3600000000, "status": "available" }
 ]
 ```
 

@@ -2920,6 +2920,7 @@ code {
   transition: all var(--t-fast);
 }
 .chat-clear-btn:hover { color: var(--rose); border-color: rgba(190,18,60,0.3); background: rgba(190,18,60,0.06); }
+.chat-clear-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 
 /* Messages scroll area */
 .chat-messages {
@@ -5047,13 +5048,33 @@ code {
 }
 
 .chat-widget-close {
-  margin-left: auto;
   color: var(--text-3);
   flex-shrink: 0;
 }
 
 .chat-widget-close:hover {
   color: var(--text-1);
+}
+
+.chat-widget-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.chat-widget-clear {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.chat-widget-clear:hover {
+  color: var(--rose);
+}
+
+.chat-widget-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .chat-widget-suggestions {

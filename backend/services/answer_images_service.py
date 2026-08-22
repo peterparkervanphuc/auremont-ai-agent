@@ -24,6 +24,7 @@ whole gallery.
 
 import logging
 import re
+from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
@@ -40,6 +41,14 @@ _MIN_NAME_LENGTH = 4
 # supporting material: a strip of three sits under an answer without displacing it, while
 # a dozen turns a text answer into a gallery the reader has to scroll past.
 _AUTO_ATTACH_MAX_IMAGES = 3
+
+
+@dataclass(frozen=True)
+class ProjectReferences:
+    """Catalogue projects named positively and negatively in one utterance."""
+
+    included_ids: tuple[str, ...] = ()
+    excluded_ids: tuple[str, ...] = ()
 
 # Filename tokens for "a photo of the project overall" — used on the automatic route when
 # the question names no visual topic of its own ("dự án này thế nào?"). These are the
@@ -90,8 +99,14 @@ _TOPIC_TOKENS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("biet thu",), ("biet-thu", "bietthu")),
     (("shophouse", "shop", "thuong mai"), ("shop", "thuong-mai")),
     (("can ho", "chung cu"), ("can-ho", "chung-cu")),
-    (("be boi", "ho boi", "ho", "bien"), ("be-boi", "ho-", "bien")),
+    # A bare de-accented `ho-` also occurs in every `can-ho-*` filename (ho with
+    # different Vietnamese accents normalizes identically). Use compound water subjects
+    # so a lake-view question cannot accidentally attach apartment layouts.
+    (("be boi", "ho boi"), ("be-boi", "ho-boi")),
+    (("ho",), ("ho-dieu-hoa", "ho-canh-quan", "ho-ngoc-trai", "bien-ho")),
+    (("bien",), ("bien-ho", "bien-")),
     (("cong vien", "canh quan"), ("cong-vien", "canh-quan")),
+    (("view", "tam nhin", "huong nhin", "huong can"), ("view-", "tam-nhin", "huong-nhin")),
     (("noi that",), ("noi-that", "noithat")),
     (("phan khu",), ("phan-khu", "phankhu")),
     (("toa", "tower"), ("toa-", "toa")),
@@ -142,7 +157,14 @@ def collect_images(
         # A scoped chat session is authoritative. Project names nest ("The Pavilion -
         # Vinhomes Ocean Park"), so resolving from prose alone can otherwise select the
         # longer parent project and attach its maps instead of the named P4 plan.
+        references = resolve_project_references(db, query)
+        excluded_ids = set(references.excluded_ids)
         project = db.get(Project, project_id) if project_id else _best_match(db, haystack)
+        # A negative mention is useful for search scope, never for choosing the image
+        # gallery.  Without this guard, "ngoài Zenpark" attached Zenpark photos under a
+        # response that was explicitly supposed to recommend other subdivisions.
+        if project is not None and project.id in excluded_ids:
+            return []
         if project is None:
             return []
 
@@ -179,12 +201,8 @@ def resolve_project_id(db: Session, text: str) -> str | None:
     Never raises — a caller that cannot identify the project simply remembers less.
     """
     try:
-        normalized = _normalize(text or "")
-        if not normalized.strip():
-            return None
-
-        project = _best_match(db, normalized)
-        return project.id if project is not None else None
+        references = resolve_project_references(db, text)
+        return references.included_ids[0] if references.included_ids else None
     except Exception:
         logger.exception(
             "Could not resolve a project from text.",
@@ -201,54 +219,101 @@ def resolve_project_ids(db: Session, text: str) -> list[str]:
     a longer matched catalogue name.
     """
     try:
-        haystack = _normalize(text or "")
-        if not haystack:
-            return []
-
-        matches: list[tuple[int, int, str]] = []
-        for project in db.query(Project).all():
-            candidates = _project_aliases(project)
-
-            occurrences = [
-                (match.start(), len(candidate))
-                for candidate in candidates
-                if len(candidate) >= _MIN_NAME_LENGTH
-                for match in [re.search(rf"(?<!\w){re.escape(candidate)}(?!\w)", haystack)]
-                if match is not None
-            ]
-
-            # Tower codes such as P4 are shorter than the normal project-name safety
-            # threshold. Accept one only when it is explicitly a known tower of exactly
-            # one catalogue project; ambiguous tower codes are discarded below.
-            details = project.details or {}
-            tower_names = _known_project_towers(details)
-            for tower in tower_names:
-                match = re.search(rf"(?<!\w){re.escape(tower)}(?!\w)", haystack)
-                if match is not None:
-                    occurrences.append((match.start(), len(tower)))
-            if occurrences:
-                position, length = min(occurrences, key=lambda item: (item[0], -item[1]))
-                matches.append((position, -length, project.id))
-
-        # A bare tower identifier is useful only when unique. Names/sub-zones with the
-        # same start position remain multiple on purpose (e.g. The Ocean View scopes a
-        # comparison/search across all of its child projects).
-        grouped: dict[tuple[int, int], list[str]] = {}
-        for position, negative_length, project_id in matches:
-            grouped.setdefault((position, negative_length), []).append(project_id)
-        matches = [
-            item
-            for item in matches
-            if -item[1] >= _MIN_NAME_LENGTH or len(grouped[(item[0], item[1])]) == 1
-        ]
-        matches.sort()
-        return list(dict.fromkeys(project_id for _, _, project_id in matches))
+        return list(resolve_project_references(db, text).included_ids)
     except Exception:
         logger.exception(
             "Could not resolve projects from text.",
             extra={"event": "answer_images.resolve_projects.failed"},
         )
         return []
+
+
+def resolve_project_references(db: Session, text: str) -> ProjectReferences:
+    """Split catalogue mentions into included and excluded projects.
+
+    Name resolution alone cannot distinguish "Zenpark" from "ngoài Zenpark".  The
+    latter must keep the surrounding search broad and remove Zenpark from it; treating
+    every mention as positive hard-scoped RAG and catalogue lookup to the one project the
+    customer had just rejected.
+    """
+    try:
+        haystack = _normalize(text or "")
+        if not haystack:
+            return ProjectReferences()
+
+        included: list[str] = []
+        excluded: list[str] = []
+        for position, _negative_length, project_id in _project_matches(db, haystack):
+            target = excluded if _is_negative_reference(haystack, position) else included
+            if project_id not in target:
+                target.append(project_id)
+
+        # A project cannot be both scopes in one turn.  The local negative phrase wins:
+        # "Ocean Park, nhưng ngoài Zenpark" includes the parent and excludes the child.
+        excluded_set = set(excluded)
+        return ProjectReferences(
+            included_ids=tuple(project_id for project_id in included if project_id not in excluded_set),
+            excluded_ids=tuple(excluded),
+        )
+    except Exception:
+        logger.exception(
+            "Could not resolve positive/negative project references from text.",
+            extra={"event": "answer_images.resolve_project_references.failed"},
+        )
+        return ProjectReferences()
+
+
+def _project_matches(db: Session, haystack: str) -> list[tuple[int, int, str]]:
+    matches: list[tuple[int, int, str]] = []
+    for project in db.query(Project).all():
+        candidates = _project_aliases(project)
+        occurrences = [
+            (match.start(), len(candidate))
+            for candidate in candidates
+            if len(candidate) >= _MIN_NAME_LENGTH
+            for match in [re.search(rf"(?<!\w){re.escape(candidate)}(?!\w)", haystack)]
+            if match is not None
+        ]
+
+        # Tower codes such as P4 are shorter than the normal project-name safety
+        # threshold. Accept one only when it is explicitly a known tower of exactly one
+        # catalogue project; ambiguous tower codes are discarded below.
+        details = project.details or {}
+        for tower in _known_project_towers(details):
+            match = re.search(rf"(?<!\w){re.escape(tower)}(?!\w)", haystack)
+            if match is not None:
+                occurrences.append((match.start(), len(tower)))
+        if occurrences:
+            position, length = min(occurrences, key=lambda item: (item[0], -item[1]))
+            matches.append((position, -length, project.id))
+
+    # A bare tower identifier is useful only when unique. Names/sub-zones with the same
+    # start position remain multiple on purpose (e.g. The Ocean View scopes a search
+    # across all of its child projects).
+    grouped: dict[tuple[int, int], list[str]] = {}
+    for position, negative_length, project_id in matches:
+        grouped.setdefault((position, negative_length), []).append(project_id)
+    matches = [
+        item
+        for item in matches
+        if -item[1] >= _MIN_NAME_LENGTH or len(grouped[(item[0], item[1])]) == 1
+    ]
+    matches.sort()
+    return matches
+
+
+_NEGATIVE_PROJECT_PREFIX = re.compile(
+    r"(?:\bngoai\b(?!\s+ra\b)|\btru\b|\bkhong phai\b|\bkhong lay\b|\bkhong chon\b|"
+    r"\bloai tru\b|\btranh\b|\bkhac voi\b)(?:\s+\w+){0,5}\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_negative_reference(haystack: str, position: int) -> bool:
+    # Sixty characters cover natural bridges such as "các phân khu khác ngoài" without
+    # letting a negation from an unrelated clause flip a later positive project mention.
+    prefix = haystack[max(0, position - 60) : position]
+    return _NEGATIVE_PROJECT_PREFIX.search(prefix) is not None
 
 
 def _filter_by_topic(
@@ -268,6 +333,12 @@ def _filter_by_topic(
         # one has no uploaded plan is materially misleading, so do not use the usual
         # requested-photo gallery fallback here.
         return exact
+
+    view_match = _filter_view_images(gallery, normalized_query)
+    if view_match is not None:
+        # Like an exact tower plan, a requested view is a precise visual claim. Falling
+        # back to layouts or amenity photos would imply they depict that view.
+        return view_match
 
     tokens = _wanted_tokens(normalized_query)
     if not tokens:
@@ -301,6 +372,10 @@ def _auto_attach_images(
         exact = [url for url in gallery if any(token in _normalize_filename(url) for token in exact_tower_tokens)]
         return exact[:_AUTO_ATTACH_MAX_IMAGES]
 
+    view_match = _filter_view_images(gallery, normalized_query)
+    if view_match is not None:
+        return view_match[:_AUTO_ATTACH_MAX_IMAGES]
+
     # Keyed off the SUBJECT, not `_wanted_tokens`: that also returns bedroom qualifiers
     # ("2pn"), and "giá căn 2 phòng ngủ" would then count as naming a visual topic it never
     # named — yielding no photo at all instead of the overview shots, since no filename
@@ -312,6 +387,35 @@ def _auto_attach_images(
 
     matched = [url for url in gallery if any(token in _normalize_filename(url) for token in tokens)]
     return matched[:_AUTO_ATTACH_MAX_IMAGES]
+
+
+def _filter_view_images(gallery: list[str], normalized_query: str) -> list[str] | None:
+    """Require filename evidence before claiming that a photo depicts a unit's view.
+
+    ``None`` means this is not a view question. A generic view question accepts a file
+    explicitly labelled as a view. If the asker qualifies it (lake, sea, landscape...),
+    the filename must carry both the view label and a requested subject. Image order and
+    project identity alone cannot prove which direction a photograph faces.
+    """
+    view_filename_tokens = ("view-", "tam-nhin", "huong-nhin")
+    if not _contains_phrase(normalized_query, ("view", "tam nhin", "huong nhin", "huong can")):
+        return None
+
+    explicit_view_images = [
+        url
+        for url in gallery
+        if any(token in _normalize_filename(url) for token in view_filename_tokens)
+    ]
+    subject_tokens = [
+        token for token in _subject_tokens(normalized_query) if token not in view_filename_tokens
+    ]
+    if not subject_tokens:
+        return explicit_view_images
+    return [
+        url
+        for url in explicit_view_images
+        if any(token in _normalize_filename(url) for token in subject_tokens)
+    ]
 
 
 def _subject_tokens(normalized_query: str) -> list[str]:
@@ -386,7 +490,11 @@ def _project_aliases(project: Project) -> set[str]:
         info.get("sub_zone"),
     }
     aliases = {_normalize(str(value)) for value in raw if value}
+    configured_aliases = info.get("aliases") or []
+    if isinstance(configured_aliases, list):
+        aliases.update(_normalize(str(value)) for value in configured_aliases if value)
     aliases.update(alias.removeprefix("the ") for alias in tuple(aliases))
+    aliases.update(alias.removeprefix("vinhomes ") for alias in tuple(aliases))
     return {alias for alias in aliases if alias}
 
 

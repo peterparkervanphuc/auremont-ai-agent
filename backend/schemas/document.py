@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from backend.core.enums import (
     DocumentCategory,
@@ -35,6 +35,14 @@ class DocumentCreate(BaseModel):
     legal_status: LegalStatus = LegalStatus.UNKNOWN
 
 
+class DocumentSecurityFinding(BaseModel):
+    rule_id: str
+    severity: str
+    description: str
+    page: int | None = None
+    excerpt: str
+
+
 class DocumentResponse(BaseModel):
     id: int
     title: str
@@ -67,6 +75,8 @@ class DocumentResponse(BaseModel):
     review_status: str
     classification_confidence: float | None = None
     classification_reason: str | None = None
+    block_reason: str | None = None
+    security_findings: list[DocumentSecurityFinding] = Field(default_factory=list)
     classified_at: datetime | None = None
     reviewed_by: int | None = None
     reviewed_at: datetime | None = None
@@ -77,7 +87,10 @@ class DocumentResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
-
+    @field_validator("security_findings", mode="before")
+    @classmethod
+    def _normalise_security_findings(cls, value):
+        return value or []
 class DocumentClassificationUpdate(BaseModel):
     category: DocumentCategory
     subcategory: str | None = None

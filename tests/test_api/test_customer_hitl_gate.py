@@ -18,6 +18,7 @@ from backend.main import app
 from backend.models.chat_session import ChatSession
 from backend.models.message import Message
 from backend.models.user import User
+from backend.repositories.message import create_message, list_messages_for_session
 from backend.services import agent_pipeline
 from backend.services.agent_pipeline import PipelineResult
 
@@ -92,6 +93,34 @@ def _latest_agent_message(db, session_id: int) -> Message:
         .order_by(Message.id.desc())
         .first()
     )
+
+
+def test_anonymous_visitor_can_clear_only_their_token_owned_history(anonymous_client, db_session):
+    session = ChatSession(
+        visitor_token="visitor-owner-token",
+        title="Tra cứu dự án",
+        status=SessionStatus.WAITING_SALE,
+    )
+    db_session.add(session)
+    db_session.commit()
+    db_session.refresh(session)
+    create_message(db_session, session.id, "customer", "Dự án có tiện ích gì?")
+
+    denied = anonymous_client.delete(
+        f"/api/v1/customer/sessions/{session.id}/messages",
+        headers={"X-Visitor-Token": "different-token"},
+    )
+    cleared = anonymous_client.delete(
+        f"/api/v1/customer/sessions/{session.id}/messages",
+        headers={"X-Visitor-Token": "visitor-owner-token"},
+    )
+
+    assert denied.status_code == 404
+    assert cleared.status_code == 204
+    assert list_messages_for_session(db_session, session.id) == []
+    db_session.refresh(session)
+    assert session.status == SessionStatus.BOT_HANDLING
+    assert session.title is None
 
 
 class TestLoggedInCustomer:
@@ -192,6 +221,7 @@ class TestAnonymousVisitor:
             "Cho mình gặp Sale",
         ],
     )
+
     def test_anonymous_closing_questions_reach_self_service_pipeline(
         self, anonymous_client, monkeypatch, question
     ):

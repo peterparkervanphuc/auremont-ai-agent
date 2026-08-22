@@ -253,6 +253,7 @@ def test_subdivision_metadata_drops_generic_scope_noise():
         Phân khu cao tầng và thấp tầng
         Phân khu | Vinhomes Ocean Park |
         """,
+        parent_project_names=["Vinhomes Ocean Park", "Ocean Park 1"],
     )
 
     assert result.subdivision_names == ["Hai Au"]

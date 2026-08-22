@@ -24,9 +24,11 @@ Ba tinh chat bat buoc:
   im lang kem mot dong log, khong doan mo URL.
 """
 
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from pathlib import Path
 from typing import BinaryIO, cast
 from urllib.parse import urljoin
 
@@ -44,25 +46,45 @@ _ARCHIVE_TIMEOUT_SECONDS = 300
 
 
 def _catalogue_is_loaded() -> bool:
-    """True khi da co it nhat mot project kem `details` (tuc da nap catalogue).
+    """True only when every catalogue record shipped in seed-data is loaded.
 
-    `/projects` loc bo row khong co `details`, nen day dung la dieu kien quyet
-    dinh trang Tra cuu co hien gi hay khong.
+    One populated project is not a complete catalogue. Treating it as complete leaves a
+    partially seeded deployment stuck forever because every later restart skips all
+    loaders. Expected IDs are discovered from data files, not duplicated in code.
     """
     db = SessionLocal()
     try:
         # Loc o tang Python chu khong bang `.isnot(None)`: cot JSON cua MySQL phan
         # biet JSON `null` voi SQL NULL, nen `IS NOT NULL` van khop voi row co
         # details = JSON null — dung query se tuong catalogue da nap va bo qua.
-        return any(row.details for row in db.query(Project).all())
+        loaded_ids = {row.id for row in db.query(Project).all() if row.details}
+        expected_ids = _expected_catalogue_ids()
+        return bool(expected_ids) and expected_ids <= loaded_ids
     finally:
         db.close()
 
 
-def _read_manifest() -> list[str]:
-    import json
-    from pathlib import Path
+def _expected_catalogue_ids() -> set[str]:
+    root = Path(__file__).resolve().parents[2] / "seed-data"
+    paths = [root / "vinhomes_ocean_park.json"]
+    paths.extend((root / "apartments").glob("*.json"))
+    paths.extend((root / "villas-shops").glob("*.json"))
 
+    ids: set[str] = set()
+    for path in paths:
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            project_id = ((payload.get("project") or {}).get("id") or "").strip()
+            if project_id:
+                ids.add(project_id)
+        except (OSError, ValueError, TypeError):
+            logger.warning("Khong doc duoc catalogue seed %s.", path, exc_info=True)
+    return ids
+
+
+def _read_manifest() -> list[str]:
     path = Path(__file__).resolve().parents[2] / "seed-data" / "project_images_manifest.json"
     if not path.exists():
         logger.warning("Khong thay manifest anh tai %s — bo qua buoc tai anh.", path)

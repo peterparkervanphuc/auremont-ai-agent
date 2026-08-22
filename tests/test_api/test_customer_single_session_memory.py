@@ -5,13 +5,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.core.deps import get_current_user, get_optional_current_user
-from backend.core.enums import MessageSender, UserRole
+from backend.core.enums import MessageSender, SessionStatus, UserRole
 from backend.core.mysql_client import Base, get_db
 from backend.main import app
 from backend.models.chat_session import ChatSession
 from backend.models.user import User
 from backend.repositories.message import create_message, list_messages_for_session
-from backend.services import agent_pipeline, memory_service
+from backend.services import agent_pipeline, memory_service, search_criteria
 from backend.services.agent_pipeline import PipelineResult
 from backend.services.memory_service import UserProfile
 
@@ -141,3 +141,31 @@ def test_login_claim_merges_anonymous_history_into_the_canonical_session(
         "Ngân sách của tôi tối đa 5 tỷ",
     ]
     assert remembered == ["Tôi quan tâm căn 2PN", "Ngân sách của tôi tối đa 5 tỷ"]
+
+
+def test_customer_clear_history_forgets_all_context_and_keeps_session(
+    customer_client, db_session, customer, monkeypatch
+):
+    session_id = customer_client.post("/api/v1/customer/sessions", json={}).json()["id"]
+    session = db_session.get(ChatSession, session_id)
+    session.title = "Tư vấn căn 2PN"
+    session.status = SessionStatus.WAITING_SALE
+    db_session.commit()
+    create_message(db_session, session_id, MessageSender.CUSTOMER, "Ngân sách tối đa 5 tỷ")
+    create_message(db_session, session_id, MessageSender.AGENT, "Em đã ghi nhận")
+
+    forgotten: list[str] = []
+    cleared_criteria: list[int] = []
+    monkeypatch.setattr(memory_service, "forget", lambda key: forgotten.append(key))
+    monkeypatch.setattr(search_criteria, "clear", lambda sid: cleared_criteria.append(sid))
+
+    response = customer_client.delete(f"/api/v1/customer/sessions/{session_id}/messages")
+
+    assert response.status_code == 204
+    assert list_messages_for_session(db_session, session_id) == []
+    db_session.refresh(session)
+    assert session.status == SessionStatus.BOT_HANDLING
+    assert session.title is None
+    assert forgotten == [memory_service.customer_key(customer.id)]
+    assert cleared_criteria == [session_id]
+    assert db_session.get(ChatSession, session_id) is not None

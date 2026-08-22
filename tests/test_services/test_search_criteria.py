@@ -328,6 +328,82 @@ def test_excluded_constraint_removes_matches_instead_of_selecting_them():
     assert [unit.unit_code for unit in apply_criteria(units, criteria)] == ["A-01"]
 
 
+def test_outside_subdivision_is_local_exclusion_and_keeps_budget_positive():
+    delta = sc.parse_criteria(
+        "Tôi có ngân sách dưới 4 tỷ, ngoài Zenpark thì còn căn nào?",
+        known_subdivisions=["The Zenpark", "The Pavilion"],
+    )
+    criteria = sc.merge_criteria(sc.SearchCriteria(), delta)
+
+    assert criteria.get(sc.FIELD_PRICE).strength == sc.Strength.HARD
+    subdivision = criteria.get(sc.FIELD_SUBDIVISIONS)
+    assert subdivision is not None
+    assert subdivision.value == ["The Zenpark"]
+    assert subdivision.strength == sc.Strength.EXCLUDED
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Ngoài ra, Zenpark có căn nào?",
+        "Có căn nào khác ở Zenpark không?",
+    ],
+)
+def test_non_negative_connectors_do_not_exclude_subdivision(query):
+    delta = sc.parse_criteria(query, known_subdivisions=["The Zenpark"])
+    subdivision = next(item for item in delta.constraints if item.field == sc.FIELD_SUBDIVISIONS)
+
+    assert subdivision.strength == sc.Strength.SOFT
+
+
+def test_typographic_area_range_and_open_ended_view_preferences_are_preserved():
+    query = "Can 2PN khoang 60–70m2, uu tien huong Dong Nam va view dep"
+    criteria = sc.merge_criteria(sc.SearchCriteria(), sc.parse_criteria(query))
+
+    assert criteria.get(sc.FIELD_AREA).value == (60.0, 70.0)
+    assert criteria.get(sc.FIELD_DIRECTIONS).value == ["Dong Nam"]
+    assert criteria.get(sc.FIELD_DIRECTIONS).strength == sc.Strength.SOFT
+    assert "view dep" in criteria.preferred_features
+
+
+def test_structured_direction_and_view_preferences_rank_confirmed_then_unknown():
+    from backend.services.inventory_service import apply_criteria, format_preference_coverage
+
+    units = [
+        InventoryUnit(
+            "A", "p", "Zone", "2PN", 65, 3_000_000_000, "available",
+            direction="Đông Nam", view_type=("hồ",),
+        ),
+        InventoryUnit("B", "p", "Zone", "2PN", 66, 3_100_000_000, "available"),
+        InventoryUnit(
+            "C", "p", "Zone", "2PN", 67, 3_200_000_000, "available",
+            direction="Tây Bắc", view_type=("thành phố",),
+        ),
+    ]
+    criteria = _criteria("căn 2PN ưu tiên hướng Đông Nam và view hồ")
+
+    ranked = apply_criteria(units, criteria)
+
+    assert [unit.unit_code for unit in ranked] == ["A", "B", "C"]
+    coverage = format_preference_coverage(ranked, criteria)
+    assert "1 căn xác nhận khớp; 1 căn thiếu dữ liệu; 1 căn xác nhận không khớp" in coverage
+
+
+def test_mandatory_direction_and_view_filter_exact_inventory_fields():
+    from backend.services.inventory_service import apply_criteria
+
+    units = [
+        InventoryUnit(
+            "A", "p", "Zone", "2PN", 65, 3_000_000_000, "available",
+            direction="Đông Nam", view_type=("hồ",),
+        ),
+        InventoryUnit("B", "p", "Zone", "2PN", 66, 3_100_000_000, "available"),
+    ]
+    criteria = _criteria("bắt buộc hướng Đông Nam và view hồ")
+
+    assert [unit.unit_code for unit in apply_criteria(units, criteria)] == ["A"]
+
+
 def test_excluded_feature_is_advisory_but_kept_for_the_prompt():
     criteria = _criteria("tránh căn gần hồ bơi")
 

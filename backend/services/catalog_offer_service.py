@@ -42,6 +42,7 @@ def search_offers(
     query: str,
     *,
     project_ids: Iterable[str] | None = None,
+    excluded_project_ids: Iterable[str] | None = None,
     criteria: search_criteria.SearchCriteria | None = None,
     limit: int = MAX_CATALOG_OFFERS,
 ) -> list[CatalogOffer]:
@@ -59,11 +60,14 @@ def search_offers(
         search_criteria.SearchCriteria(), search_criteria.parse_criteria(query)
     )
     scoped_ids = set(project_ids or [])
+    excluded_ids = set(excluded_project_ids or [])
     rows = db.query(Project).all()
     offers: list[CatalogOffer] = []
 
     for project in rows:
-        if scoped_ids and project.id not in scoped_ids:
+        if scoped_ids and not _project_is_in_scope(project, scoped_ids):
+            continue
+        if excluded_ids and _project_is_in_scope(project, excluded_ids):
             continue
         details = project.details or {}
         info = details.get("project") or {}
@@ -77,6 +81,7 @@ def search_offers(
     # Stable and useful for broad searches: known/lower prices first, then area and name.
     offers.sort(
         key=lambda item: (
+            -_preference_score(item, active),
             item.price_min is None,
             item.price_min if item.price_min is not None else float("inf"),
             item.project_name.casefold(),
@@ -86,7 +91,9 @@ def search_offers(
     return _diversify(offers, limit)
 
 
-def format_offers(offers: list[CatalogOffer]) -> str:
+def format_offers(
+    offers: list[CatalogOffer], criteria: search_criteria.SearchCriteria | None = None
+) -> str:
     """Grounding block shared by Generate and Verify."""
     if not offers:
         return ""
@@ -107,7 +114,65 @@ def format_offers(offers: list[CatalogOffer]) -> str:
         "Khi một khoảng giá chỉ giao với ngân sách khách, phải nói 'mức giá khởi điểm/phần dưới của khoảng có thể phù hợp' "
         "và đề nghị kiểm tra tồn kho; không được nói toàn bộ loại căn đều nằm trong ngân sách."
     )
+    if criteria is not None:
+        unsupported = [
+            constraint.describe()
+            for constraint in criteria.constraints
+            if constraint.field
+            in {
+                search_criteria.FIELD_DIRECTIONS,
+                search_criteria.FIELD_VIEWS,
+                search_criteria.FIELD_TOWERS,
+                search_criteria.FIELD_FLOORS,
+            }
+        ]
+        unsupported.extend(criteria.required_features)
+        unsupported.extend(criteria.preferred_features)
+        if unsupported:
+            lines.append(
+                "ĐỘ PHỦ KHỚP MỘT PHẦN: catalogue chưa có trường cấp mã căn để xác nhận "
+                + "; ".join(dict.fromkeys(unsupported))
+                + ". Các dòng phía trên vẫn là ứng viên khớp những tiêu chí catalogue có dữ liệu. "
+                "BẮT BUỘC nêu các ứng viên đó trước, rồi ghi rõ phần chưa xác nhận; không được kết luận "
+                "không có lựa chọn chỉ vì một tiêu chí ưu tiên đang thiếu dữ liệu."
+            )
     return "\n".join(lines)
+
+
+def _preference_score(offer: CatalogOffer, criteria: search_criteria.SearchCriteria) -> float:
+    """Rank supported soft constraints without discarding partial matches."""
+    score = 0.0
+    for constraint in criteria.constraints:
+        if constraint.strength != search_criteria.Strength.SOFT:
+            continue
+        if constraint.field == search_criteria.FIELD_AREA:
+            score += _range_fit_score(offer.area_min_m2, offer.area_max_m2, *constraint.value)
+        elif constraint.field == search_criteria.FIELD_PRICE:
+            score += _range_fit_score(offer.price_min, offer.price_max, *constraint.value)
+    return score
+
+
+def _range_fit_score(
+    item_min: float | None,
+    item_max: float | None,
+    wanted_min: float,
+    wanted_max: float,
+) -> float:
+    """Intersection-over-union rewards a close range over a merely broad overlap."""
+    if item_min is None and item_max is None:
+        return 0.0
+    lower = item_min if item_min is not None else item_max
+    upper = item_max if item_max is not None else item_min
+    assert lower is not None and upper is not None
+    if lower == upper:
+        return 1.0 if wanted_min <= lower <= wanted_max else 0.0
+    if wanted_max == float("inf"):
+        return 1.0 if upper >= wanted_min else 0.0
+    intersection = max(0.0, min(upper, wanted_max) - max(lower, wanted_min))
+    union = max(upper, wanted_max) - min(lower, wanted_min)
+    if union == 0:
+        return 1.0 if lower == wanted_min else 0.0
+    return intersection / union
 
 
 def _to_offer(project: Project, info: dict, tier: dict) -> CatalogOffer:
@@ -137,13 +202,36 @@ def _matches(offer: CatalogOffer, criteria: search_criteria.SearchCriteria) -> b
     if type_constraints:
         actual_candidates = inventory_service._extract_unit_types(f"{offer.unit_type} {offer.category}")
         if not actual_candidates:
-            actual_candidates = [inventory_service._normalize_unit_type(offer.unit_type)]
+            normalized_type = inventory_service._normalize_unit_type(offer.unit_type)
+            actual_candidates = [normalized_type] if normalized_type else []
         for constraint in type_constraints:
             matches = any(
                 inventory_service.unit_type_matches(actual, wanted)
                 for actual in actual_candidates
                 for wanted in constraint.value
             )
+            if constraint.strength == search_criteria.Strength.EXCLUDED and matches:
+                return False
+            if constraint.strength != search_criteria.Strength.EXCLUDED and not matches:
+                return False
+
+    subdivision_constraints = [
+        constraint
+        for constraint in criteria.filtering()
+        if constraint.field == search_criteria.FIELD_SUBDIVISIONS
+    ]
+    if subdivision_constraints:
+        actual = {
+            inventory_service._normalize_text(value).removeprefix("the ")
+            for value in (offer.project_id.replace("-", " "), offer.project_name, offer.sub_zone)
+            if value
+        }
+        for constraint in subdivision_constraints:
+            wanted = {
+                inventory_service._normalize_text(value).removeprefix("the ")
+                for value in constraint.value
+            }
+            matches = bool(actual & wanted)
             if constraint.strength == search_criteria.Strength.EXCLUDED and matches:
                 return False
             if constraint.strength != search_criteria.Strength.EXCLUDED and not matches:
@@ -159,6 +247,14 @@ def _matches(offer: CatalogOffer, criteria: search_criteria.SearchCriteria) -> b
             return False
 
     return True
+
+
+def _project_is_in_scope(project: Project, scope_ids: set[str]) -> bool:
+    """Match a project itself or a direct catalogue child of a scoped parent."""
+    if project.id in scope_ids:
+        return True
+    info = (project.details or {}).get("project") or {}
+    return info.get("parent_project_id") in scope_ids
 
 
 def _ranges_intersect(

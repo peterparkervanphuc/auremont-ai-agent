@@ -198,19 +198,21 @@ async def upload_document(
             file_bytes=file_bytes,
             content_type=file.content_type,
         )
-    except PromptInjectionError:
+    except PromptInjectionError as exc:
         # ingestion_service has already moved the document to BLOCKED.
         log_event(
             "document.ingest.blocked",
             document_id=document.id,
             status=DocumentStatus.BLOCKED,
             reason="prompt_injection",
+            finding_rule_ids=[finding.rule_id for finding in exc.findings],
+            finding_pages=sorted({finding.page for finding in exc.findings if finding.page is not None}),
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
         return IngestResponse(
             document_id=document.id,
             status=DocumentStatus.BLOCKED,
-            message="Document blocked due to suspicious content.",
+            message="Tài liệu bị chặn vì phát hiện chỉ thị có nguy cơ điều khiển AI.",
         )
     except DocumentIngestionError as exc:
         # ingestion_service has already moved the document to FAILED.

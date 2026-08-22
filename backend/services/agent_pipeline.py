@@ -50,6 +50,7 @@ from backend.core import tracing
 from backend.core.config import get_settings
 from backend.core.enums import DocumentVisibility, MessageEmotion, MessageSender
 from backend.core.gemini_client import generate_json
+from backend.models.project import Project
 from backend.services import (
     answer_images_service,
     cache_service,
@@ -67,6 +68,7 @@ from backend.services.inventory_service import (
     InventoryUnit,
     apply_criteria,
     fetch_units,
+    format_preference_coverage,
     has_exact_project_mapping,
     lookup_inventory,
 )
@@ -222,6 +224,7 @@ class PipelineState(TypedDict, total=False):
     session_id: int | None
     project_id: str | None
     resolved_project_ids: list[str]
+    excluded_project_ids: list[str]
     # Long-term memory, already rendered by memory_service.format_profile.
     memory_profile: str
     # Structured twin used only by the deterministic customer-profile recall path.
@@ -332,7 +335,9 @@ def _scope_resolve(state: PipelineState) -> dict[str, Any]:
     if db is None:
         return {"resolved_project_ids": [current] if current else []}
 
-    project_ids = answer_images_service.resolve_project_ids(db, state["query"])
+    references = answer_images_service.resolve_project_references(db, state["query"])
+    project_ids = list(references.included_ids)
+    excluded_project_ids = list(references.excluded_ids)
     if not project_ids:
         for turn in reversed(state.get("history") or []):
             if turn.get("sender") == MessageSender.AGENT:
@@ -347,7 +352,11 @@ def _scope_resolve(state: PipelineState) -> dict[str, Any]:
     # catalogue filtering but leaves RAG unscoped so both projects can contribute.
     rag_project_id = project_ids[0] if len(project_ids) == 1 else None
     tracing.step("scope.resolve", project_ids=project_ids, rag_project_id=rag_project_id)
-    return {"project_id": rag_project_id, "resolved_project_ids": project_ids}
+    return {
+        "project_id": rag_project_id,
+        "resolved_project_ids": project_ids,
+        "excluded_project_ids": excluded_project_ids,
+    }
 
 
 def _cache_check(state: PipelineState) -> dict[str, Any]:
@@ -519,6 +528,11 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
                 # identifier constraints must come from the current turn. Otherwise a
                 # previous "2PN" contaminates "còn 3PN thì sao?" and both look required.
                 focus_query=query,
+                # A parent catalogue scope includes documents assigned to its child
+                # subdivisions. The relationship comes from catalogue metadata rather
+                # than a project-name list in code.
+                project_ids=_rag_project_scope_ids(state.get("db"), state.get("project_id")),
+                excluded_project_ids=state.get("excluded_project_ids") or None,
             )
         except RetrievalError:
             logger.exception(
@@ -568,6 +582,28 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
         "needs_inventory": needs_inventory,
         "needs_document_retrieval": needs_document_retrieval,
     }
+
+
+def _rag_project_scope_ids(db: Session | None, project_id: str | None) -> list[str] | None:
+    """The named catalogue project plus every direct child stored beneath it."""
+    if not project_id:
+        return None
+    if db is None:
+        return [project_id]
+
+    try:
+        ids = [project_id]
+        for project in db.query(Project).all():
+            info = (project.details or {}).get("project") or {}
+            if info.get("parent_project_id") == project_id:
+                ids.append(project.id)
+        return list(dict.fromkeys(ids))
+    except Exception:
+        logger.exception(
+            "Could not expand parent project scope; using the exact project only.",
+            extra={"event": "pipeline.scope.expand.failed", "project_id": project_id},
+        )
+        return [project_id]
 
 
 def _criteria_resolve(state: PipelineState) -> dict[str, Any]:
@@ -624,12 +660,13 @@ def _catalog_search_result(
         state.get("db"),
         state["query"],
         project_ids=state.get("resolved_project_ids") or None,
+        excluded_project_ids=state.get("excluded_project_ids") or None,
         criteria=criteria,
     )
     tracing.step("catalog.search", offer_count=len(offers))
     return {
         "catalog_offers": offers,
-        "catalog_offer_context": catalog_offer_service.format_offers(offers),
+        "catalog_offer_context": catalog_offer_service.format_offers(offers, criteria),
     }
 
 
@@ -785,6 +822,11 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         if not status_requested:
             units = [unit for unit in units if unit.status.strip().lower() == "available"]
     is_public = state.get("clearance", DocumentVisibility.INTERNAL) == DocumentVisibility.PUBLIC
+    criteria = state.get("criteria") or search_criteria.SearchCriteria()
+    inventory_coverage = format_preference_coverage(units, criteria)
+    structured_context = "\n\n".join(
+        part for part in (state.get("catalog_context") or "", inventory_coverage) if part
+    )
 
     prompt = prompts.build_prompt(
         state["query"],
@@ -798,9 +840,9 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         is_public=is_public,
         correction=state.get("verifier_feedback") or "",
         lessons=state.get("reflection_lessons") or "",
-        criteria_summary=search_criteria.format_criteria(state.get("criteria") or search_criteria.SearchCriteria()),
+        criteria_summary=search_criteria.format_criteria(criteria),
         zero_result=state.get("zero_result_diagnosis"),
-        catalog_context=state.get("catalog_context") or "",
+        catalog_context=structured_context,
         catalog_offer_context=state.get("catalog_offer_context") or "",
     )
     quick_replies: list[str] = []
@@ -946,6 +988,12 @@ def _verify(state: PipelineState) -> dict[str, Any]:
         context.append(state["catalog_context"])
     if state.get("catalog_offer_context"):
         context.append(state["catalog_offer_context"])
+    coverage = format_preference_coverage(
+        state.get("inventory_units") or [],
+        state.get("criteria") or search_criteria.SearchCriteria(),
+    )
+    if coverage:
+        context.append(coverage)
     context.extend(prompts.format_unit_for_verifier(unit) for unit in state.get("inventory_units") or [])
     diagnosis = state.get("zero_result_diagnosis")
     if diagnosis is not None:
@@ -1292,6 +1340,7 @@ def _run_traced(
         "session_id": session_id,
         "project_id": project_id,
         "resolved_project_ids": [],
+        "excluded_project_ids": [],
         "memory_profile": memory_profile,
         "memory_profile_data": memory_profile_data or memory_service.UserProfile(),
         "reflection_lessons": reflection_lessons,

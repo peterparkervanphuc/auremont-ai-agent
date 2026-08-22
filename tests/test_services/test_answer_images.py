@@ -63,6 +63,15 @@ class _FakeSapphireProject:
     details = {"images": {"gallery": []}}
 
 
+class _ConfiguredAliasProject:
+    id = "catalogue-project-a"
+    name = "Catalogue Project A"
+    details = {
+        "project": {"aliases": ["Customer Alias One"]},
+        "images": {"gallery": []},
+    }
+
+
 class _FakeQuery:
     def __init__(self, projects):
         self._projects = projects
@@ -102,6 +111,27 @@ def test_resolve_project_ids_accepts_names_without_the_prefix():
     )
 
     assert projects == ["the-sapphire", "the-pavilion"]
+
+
+def test_project_aliases_come_from_catalogue_metadata():
+    projects = answer_images_service.resolve_project_ids(
+        _FakeDb(_ConfiguredAliasProject()),
+        "Cho tôi thông tin Customer Alias One",
+    )
+
+    assert projects == ["catalogue-project-a"]
+
+
+def test_negative_project_mention_never_selects_its_gallery():
+    db = _FakeDb(_FakeProject(), _FakePavilionProject())
+
+    images = answer_images_service.collect_images(
+        db,
+        "Ngoài The Palma thì còn phân khu nào khác?",
+        "Có thể cân nhắc The Pavilion.",
+    )
+
+    assert images == []
 
 
 # --- Automatic route --------------------------------------------------------------------
@@ -160,6 +190,53 @@ def test_question_with_no_visual_topic_gets_overview_photos():
     images = answer_images_service.collect_images(_FakeDb(), "giá căn 2 phòng ngủ The Palma bao nhiêu", "")
 
     assert _urls(images) == ["https://cdn/p/the-palma/phoi-canh-tong-the.jpg"]
+
+
+def test_lake_view_question_does_not_match_apartment_or_unlabelled_landscape_photos():
+    """Accent stripping makes the Vietnamese words for lake and apartment end in
+    ``ho``. A view question must not attach every ``can-ho-*`` layout, or a landscape
+    photo that does not prove it is the view from a unit."""
+
+    class _ViewProject:
+        id = "catalogue-project-a"
+        name = "The Palma"
+        details = {
+            "images": {
+                "gallery": [
+                    "https://cdn/p/the-palma/can-ho-2-ngu.jpg",
+                    "https://cdn/p/the-palma/canh-quan-noi-khu.jpg",
+                    "https://cdn/p/the-palma/view-thanh-pho.jpg",
+                ]
+            }
+        }
+
+    images = answer_images_service.collect_images(
+        _FakeDb(_ViewProject()),
+        "The Palma co loai view nao? Can nao view ho hoac canh quan noi khu?",
+        "",
+    )
+
+    assert images == []
+
+
+def test_generic_view_question_only_attaches_explicitly_labelled_view_photos():
+    class _ViewProject:
+        id = "catalogue-project-a"
+        name = "The Palma"
+        details = {
+            "images": {
+                "gallery": [
+                    "https://cdn/p/the-palma/can-ho-2-ngu.jpg",
+                    "https://cdn/p/the-palma/view-tu-can-ho.jpg",
+                ]
+            }
+        }
+
+    images = answer_images_service.collect_images(
+        _FakeDb(_ViewProject()), "The Palma co view the nao?", ""
+    )
+
+    assert _urls(images) == ["https://cdn/p/the-palma/view-tu-can-ho.jpg"]
 
 
 def test_project_named_only_in_the_answer_still_attaches():

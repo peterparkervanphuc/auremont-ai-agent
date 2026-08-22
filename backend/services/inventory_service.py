@@ -52,7 +52,8 @@ _UNIT_TYPE_PATTERN = re.compile(
 )
 _UNIT_CODE_PATTERN = re.compile(r"\b[A-Z]{1,6}\d{0,3}-[A-Z0-9]{2,12}\b", re.IGNORECASE)
 _AREA_RANGE_PATTERN = re.compile(
-    r"\b(?:từ\s*)?(\d+(?:[.,]\d+)?)\s*(?:-|đến|tới)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE
+    r"\b(?:từ\s*)?(\d+(?:[.,]\d+)?)\s*(?:[-\u2013\u2014]|đến|tới)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b",
+    re.IGNORECASE,
 )
 _AREA_MAX_PATTERN = re.compile(r"\b(?:dưới|<=?|không quá|tối đa)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
 _AREA_MIN_PATTERN = re.compile(r"\b(?:trên|>=?|từ)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
@@ -79,6 +80,24 @@ _STATUS_ALIASES = {
     "đã bán": "sold",
     "sold": "sold",
 }
+
+_DIRECTION_QUERY_PATTERN = re.compile(
+    r"\b(?:hướng|huong)\s+"
+    r"(đông\s+nam|dong\s+nam|đông\s+bắc|dong\s+bac|tây\s+nam|tay\s+nam|"
+    r"tây\s+bắc|tay\s+bac|đông|dong|tây|tay|nam|bắc|bac)\b",
+    re.IGNORECASE,
+)
+_TOWER_QUERY_PATTERN = re.compile(r"\b(?:toa|tower)\s+([a-z]{1,6}\d+(?:[.-]\d+)?)\b", re.IGNORECASE)
+_FLOOR_QUERY_PATTERN = re.compile(r"\b(?:tang|floor)\s+([a-z]?\d+[a-z]?)\b", re.IGNORECASE)
+_VIEW_QUERY_PATTERN = re.compile(
+    r"\bview\s+(.+?)(?=\s+(?:và|va|nhưng|nhung|trong|tại|tai|với|voi|"
+    r"ưu\s+tiên|uu\s+tien|bắt\s+buộc|bat\s+buoc)\b|[,.;?]|$)",
+    re.IGNORECASE,
+)
+_VAGUE_VIEW_TERMS = {"dep", "thoang", "rong", "tot", "xin"}
+_MANDATORY_QUERY_PATTERN = re.compile(
+    r"\b(?:phai|bat buoc|nhat dinh|chi lay|chi xem|chi muon)\b", re.IGNORECASE
+)
 
 
 class InventoryApiError(Exception):
@@ -108,6 +127,10 @@ class InventoryUnit:
     area_m2: float | None
     price: float | None
     status: str
+    tower: str | None = None
+    floor: str | None = None
+    direction: str | None = None
+    view_type: tuple[str, ...] = ()
 
 
 def lookup_inventory(project_id: str | None, query: str) -> list[InventoryUnit]:
@@ -282,6 +305,9 @@ def _parse_unit(item: object) -> InventoryUnit | None:
     # fields are already parsed to floats and carry no such risk.
     unit_type = data.get("unit_type")
     subdivision = data.get("subdivision")
+    tower = data.get("tower")
+    floor = data.get("floor")
+    direction = data.get("direction")
     return InventoryUnit(
         unit_code=sanitize_external_field(str(data["unit_code"])),
         project_id=sanitize_external_field(str(data["project_id"])),
@@ -290,6 +316,29 @@ def _parse_unit(item: object) -> InventoryUnit | None:
         area_m2=_to_float(data.get("area_m2")),
         price=_to_float(data.get("price")),
         status=sanitize_external_field(str(data["status"])),
+        tower=sanitize_external_field(str(tower)) if tower is not None else None,
+        floor=sanitize_external_field(str(floor)) if floor is not None else None,
+        direction=sanitize_external_field(str(direction)) if direction is not None else None,
+        view_type=_parse_view_field(data.get("view_type")),
+    )
+
+
+def _parse_view_field(value: object) -> tuple[str, ...]:
+    """Normalise an API view field that may be one string or a JSON list."""
+    raw_values: list[object]
+    if isinstance(value, list | tuple | set):
+        raw_values = list(value)
+    elif value is None:
+        raw_values = []
+    else:
+        # APIs commonly serialise multi-select values with commas, pipes or slashes.
+        raw_values = re.split(r"\s*[,|/]\s*", str(value))
+    return tuple(
+        dict.fromkeys(
+            cleaned
+            for item in raw_values
+            if (cleaned := sanitize_external_field(str(item)).strip())
+        )
     )
 
 
@@ -450,7 +499,67 @@ def apply_criteria(units: list[InventoryUnit], criteria) -> list[InventoryUnit]:
             units = [unit for unit in units if id(unit) not in matched_ids]
         else:
             units = _apply_one(units, constraint.field, constraint.value)
-    return _sort_units(units, getattr(criteria, "sort_by", None))
+    sort_by = getattr(criteria, "sort_by", None)
+    if not sort_by:
+        units = _rank_soft_matches(units, getattr(criteria, "constraints", ()))
+    return _sort_units(units, sort_by)
+
+
+def _rank_soft_matches(units: list[InventoryUnit], constraints) -> list[InventoryUnit]:
+    """Stable rank: confirmed preference match, unknown data, confirmed mismatch."""
+    soft = [constraint for constraint in constraints if str(constraint.strength) == "soft"]
+    if not soft:
+        return units
+
+    def score(unit: InventoryUnit) -> int:
+        return sum(_soft_match_score(unit, item.field, item.value) for item in soft)
+
+    return sorted(units, key=score, reverse=True)
+
+
+def _soft_match_score(unit: InventoryUnit, field_name: str, value) -> int:
+    field_values = {
+        "directions": [unit.direction] if unit.direction else [],
+        "views": list(unit.view_type),
+        "towers": [unit.tower] if unit.tower else [],
+        "floors": [unit.floor] if unit.floor else [],
+    }.get(field_name)
+    if field_values is None:
+        # Existing range/type preferences are fully supported by `_apply_one`.
+        return 2 if unit in _apply_one([unit], field_name, value) else 0
+    if not field_values:
+        return 1
+    wanted = {_normalize_text(item) for item in value}
+    actual = {_normalize_text(item) for item in field_values}
+    return 2 if wanted & actual else 0
+
+
+def format_preference_coverage(units: list[InventoryUnit], criteria) -> str:
+    """Ground the distinction between confirmed, unknown and mismatched preferences."""
+    tracked_fields = {"directions", "views", "towers", "floors"}
+    preferences = [
+        item
+        for item in getattr(criteria, "constraints", ())
+        if str(item.strength) == "soft" and item.field in tracked_fields
+    ]
+    if not units or not preferences:
+        return ""
+
+    lines = ["ĐỘ PHỦ TIÊU CHÍ ƯU TIÊN TRONG TỒN KHO:"]
+    for constraint in preferences:
+        scores = [_soft_match_score(unit, constraint.field, constraint.value) for unit in units]
+        confirmed = sum(score == 2 for score in scores)
+        unknown = sum(score == 1 for score in scores)
+        mismatch = sum(score == 0 for score in scores)
+        lines.append(
+            f"- {constraint.field}={', '.join(str(item) for item in constraint.value)}: "
+            f"{confirmed} căn xác nhận khớp; {unknown} căn thiếu dữ liệu; {mismatch} căn xác nhận không khớp."
+        )
+    lines.append(
+        "Xếp căn xác nhận khớp trước, sau đó mới đến căn thiếu dữ liệu. Không biến 'thiếu dữ liệu' "
+        "thành 'không phù hợp'; phải ghi rõ đó là kết quả khớp một phần cần xác minh thêm."
+    )
+    return "\n".join(lines)
 
 
 def _sort_units(units: list[InventoryUnit], sort_by: str | None) -> list[InventoryUnit]:
@@ -502,6 +611,22 @@ def _apply_one(units: list[InventoryUnit], field_name: str, value) -> list[Inven
         minimum, maximum = value
         return [unit for unit in units if unit.area_m2 is not None and minimum <= unit.area_m2 <= maximum]
 
+    if field_name == "directions":
+        wanted = {_normalize_text(item) for item in value}
+        return [unit for unit in units if unit.direction and _normalize_text(unit.direction) in wanted]
+
+    if field_name == "views":
+        wanted = {_normalize_text(item) for item in value}
+        return [unit for unit in units if wanted & {_normalize_text(item) for item in unit.view_type}]
+
+    if field_name == "towers":
+        wanted = {_normalize_text(item) for item in value}
+        return [unit for unit in units if unit.tower and _normalize_text(unit.tower) in wanted]
+
+    if field_name == "floors":
+        wanted = {_normalize_text(item) for item in value}
+        return [unit for unit in units if unit.floor and _normalize_text(unit.floor) in wanted]
+
     return units
 
 
@@ -543,6 +668,34 @@ def _apply_query_filters(units: list[InventoryUnit], query: str) -> list[Invento
     wanted_status = _extract_status(query)
     if wanted_status is not None:
         units = [unit for unit in units if unit.status.strip().lower() == wanted_status]
+
+    tower = _extract_tower(query)
+    if tower is not None:
+        units = _apply_one(units, "towers", [tower])
+    floor = _extract_floor(query)
+    if floor is not None:
+        units = _apply_one(units, "floors", [floor])
+
+    preferences: list[tuple[str, list[str]]] = []
+    direction = _extract_direction(query)
+    if direction is not None:
+        preferences.append(("directions", [direction]))
+    views = _extract_view_types(query)
+    if views:
+        preferences.append(("views", views))
+    if preferences:
+        if _MANDATORY_QUERY_PATTERN.search(_normalize_text(query)):
+            for field_name, value in preferences:
+                units = _apply_one(units, field_name, value)
+        else:
+            units = sorted(
+                units,
+                key=lambda unit: sum(
+                    _soft_match_score(unit, field_name, value)
+                    for field_name, value in preferences
+                ),
+                reverse=True,
+            )
     return units
 
 
@@ -556,6 +709,31 @@ def _extract_subdivision(query: str, units: list[InventoryUnit]) -> str | None:
 def _extract_unit_code(query: str) -> str | None:
     match = _UNIT_CODE_PATTERN.search(query)
     return match.group(0).upper() if match else None
+
+
+def _extract_direction(query: str) -> str | None:
+    match = _DIRECTION_QUERY_PATTERN.search(query)
+    return match.group(1) if match else None
+
+
+def _extract_view_types(query: str) -> list[str]:
+    values: list[str] = []
+    for match in _VIEW_QUERY_PATTERN.finditer(query):
+        for raw_value in re.split(r"\s+(?:hoặc|hoac)\s+", match.group(1), flags=re.IGNORECASE):
+            value = " ".join(raw_value.split())
+            if value and _normalize_text(value) not in _VAGUE_VIEW_TERMS:
+                values.append(value)
+    return list(dict.fromkeys(values))
+
+
+def _extract_tower(query: str) -> str | None:
+    match = _TOWER_QUERY_PATTERN.search(_normalize_text(query))
+    return match.group(1) if match else None
+
+
+def _extract_floor(query: str) -> str | None:
+    match = _FLOOR_QUERY_PATTERN.search(_normalize_text(query))
+    return match.group(1) if match else None
 
 
 def _extract_area_range(query: str) -> tuple[float, float] | None:

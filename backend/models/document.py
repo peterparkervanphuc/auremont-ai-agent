@@ -96,6 +96,10 @@ class Document(Base):
     )
     classification_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     classification_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Why a BLOCKED document was quarantined. Kept separate from classification_reason:
+    # security/duplicate lifecycle state is not a business-category explanation.
+    block_reason: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    security_findings: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     classified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     reviewed_by: Mapped[int | None] = mapped_column(

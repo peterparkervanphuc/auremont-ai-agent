@@ -32,6 +32,13 @@ def test_area_only_filter_does_not_add_unrelated_document_retrieval():
     assert not needs_document_retrieval("Căn hộ trên 80m2")
 
 
+def test_unit_question_with_qualitative_attributes_uses_inventory_and_documents():
+    query = "The Zenpark co nhung loai view nao? Can nao co view ho hoac canh quan noi khu?"
+
+    assert needs_inventory(query)
+    assert needs_document_retrieval(query)
+
+
 def test_reset_language_is_a_search_refinement():
     assert is_search_refinement("xóa toàn bộ bộ lọc")
     assert is_search_refinement("bo toan bo dieu kien")

@@ -6,6 +6,7 @@ misclassified price list that auto-approved would go straight into customer-faci
 """
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -287,6 +288,8 @@ _UNIT_TYPE_RE = re.compile(
 def classify_document(
     filename: str,
     raw_text: str,
+    *,
+    parent_project_names: Iterable[str] = (),
 ) -> DocumentClassification:
     """Propose document metadata from the filename and the opening of the content."""
 
@@ -305,7 +308,7 @@ def classify_document(
         normalized_body,
     )
     # Patterns use unaccented Vietnamese, so run them against the normalised text.
-    subdivisions = _unique(_find_subdivisions(normalized))
+    subdivisions = _unique(_find_subdivisions(normalized, parent_project_names))
     buildings = _unique(_find_matches(_BUILDING_RE, normalized, "code"))
     unit_types = _unique(_find_matches(_UNIT_TYPE_RE, normalized, "unit"))
     version_label = _version_label(normalized_filename, normalized_body)
@@ -700,16 +703,16 @@ def _date_from_parts(
         return None
 
 
-def _find_subdivisions(source: str) -> list[str]:
+def _find_subdivisions(source: str, parent_project_names: Iterable[str] = ()) -> list[str]:
     values: list[str] = []
     for match in _SUBDIVISION_RE.finditer(source):
-        value = _clean_subdivision_name(match.group("name"))
+        value = _clean_subdivision_name(match.group("name"), parent_project_names)
         if value:
             values.append(value)
     return values
 
 
-def _clean_subdivision_name(value: str) -> str | None:
+def _clean_subdivision_name(value: str, parent_project_names: Iterable[str] = ()) -> str | None:
     """Remove table/project suffixes and reject generic product-type phrases."""
     cleaned = value.strip(" \t|:-")
     cleaned = re.split(r"\s+-\s+vinhomes\b", cleaned, maxsplit=1)[0].strip(" \t|:-")
@@ -721,10 +724,16 @@ def _clean_subdivision_name(value: str) -> str | None:
         "cao tang",
         "thap tang",
         "cao tang va thap tang",
-        "vinhomes ocean park",
         "cac phan khu",
     )
     if key.startswith(generic_prefixes):
+        return None
+    normalized_parent_names = {
+        " ".join(strip_diacritics(name).split())
+        for name in parent_project_names
+        if name and name.strip()
+    }
+    if any(key.startswith(parent_name) for parent_name in normalized_parent_names):
         return None
     return _display_name(cleaned)
 

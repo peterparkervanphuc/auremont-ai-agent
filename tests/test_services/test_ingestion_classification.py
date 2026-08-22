@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.core.enums import (
+    DocumentBlockReason,
     DocumentCategory,
     DocumentReviewStatus,
     DocumentStatus,
@@ -289,6 +290,39 @@ def test_prompt_injection_is_blocked_before_classification(
     db_session.refresh(document)
     assert classifier_called is False
     assert document.status == DocumentStatus.BLOCKED
+    assert document.block_reason == DocumentBlockReason.PROMPT_INJECTION
+    assert document.security_findings
+    assert document.security_findings[0]["severity"] == "high_risk"
+    assert document.security_findings[0]["page"] == 1
+
+
+def test_standalone_security_terms_are_warnings_not_a_block(db_session, monkeypatch):
+    _mock_external_services(
+        monkeypatch,
+        """
+        Tài liệu đào tạo giải thích khái niệm system prompt và jailbreak.
+        Ví dụ câu mô tả vai trò: You are ChatGPT.
+        Đây không phải yêu cầu thay đổi cách trợ lý trả lời.
+        """,
+    )
+    document = _document(db_session, "huong-dan-an-toan-ai.pdf")
+
+    result = ingestion_service.ingest_uploaded_document(
+        db_session,
+        document=document,
+        filename=document.title,
+        file_bytes=b"fake pdf content",
+        content_type="application/pdf",
+    )
+
+    assert result.status == DocumentStatus.COMPLETED
+    assert result.block_reason is None
+    assert {finding["rule_id"] for finding in result.security_findings} == {
+        "system_prompt_reference",
+        "chatgpt_role_reference",
+        "jailbreak_reference",
+    }
+    assert {finding["severity"] for finding in result.security_findings} == {"warning"}
 
 
 def test_sanitized_text_is_what_gets_embedded(db_session, monkeypatch):
@@ -382,6 +416,7 @@ def test_exact_duplicate_is_blocked_without_an_open_conflict(db_session, monkeyp
     )
 
     assert result.status == DocumentStatus.BLOCKED
+    assert result.block_reason == DocumentBlockReason.DUPLICATE_CONTENT
     assert result.review_status == DocumentReviewStatus.REJECTED
     assert result.is_current is False
     assert indexed[0]["is_current"] is False
