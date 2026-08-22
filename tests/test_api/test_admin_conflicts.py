@@ -93,6 +93,7 @@ def test_resolving_keeps_the_chosen_document_and_blocks_the_other(client, db_ses
     response = client.post(f"/api/v1/admin/conflicts/{flag.id}/resolve", json={"keep_document_id": new.id})
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "resolved"
+    assert response.json()["severity"] == "medium"
 
     # Bản bị bác bỏ phải bị vô hiệu hoá, nếu không Agent vẫn trích dẫn nó.
     assert get_document(db_session, new.id).status != DocumentStatus.BLOCKED
@@ -151,6 +152,7 @@ def test_existing_conflict_is_enriched_by_semantic_rescan_and_exposed_by_api(cli
     assert row["confidence"] == pytest.approx(0.94)
     assert row["similarity_score"] == pytest.approx(0.82)
     assert row["conflict_type"] == "price"
+    assert row["severity"] == "high"
     assert row["analysis_version"] == "semantic-conflict-v1"
     assert row["evidence"] == enriched.evidence
 

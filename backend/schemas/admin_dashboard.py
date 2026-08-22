@@ -1,9 +1,39 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 SalePresence = Literal["online", "offline", "busy"]
+
+
+class SaleAccountCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=50, pattern=r"^[A-Za-z0-9._-]+$")
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=72)
+    is_active: bool = True
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_username(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        # bcrypt only considers up to 72 bytes. Reject longer input instead of
+        # silently creating a credential that behaves differently at login.
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("Mật khẩu không được vượt quá 72 byte.")
+        if not any(character.isalpha() for character in value) or not any(
+            character.isdigit() for character in value
+        ):
+            raise ValueError("Mật khẩu phải có ít nhất một chữ cái và một chữ số.")
+        return value
 
 
 class SaleStatusResponse(BaseModel):

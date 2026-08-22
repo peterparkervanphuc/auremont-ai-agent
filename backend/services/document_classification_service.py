@@ -232,10 +232,9 @@ class DocumentClassification(BaseModel):
 
     conflict_facts: list[ConflictFact] = Field(
         default_factory=list,
-        max_length=200,
         description=(
             "Grounded business assertions that a future document could confirm, replace or contradict. "
-            "Every item must contain a short verbatim evidence excerpt."
+            "Every item must contain a short verbatim evidence excerpt. Return at most 200 items."
         ),
     )
 
@@ -350,6 +349,12 @@ class DocumentClassification(BaseModel):
             if key not in seen:
                 seen.add(key)
                 deduplicated.append(fact)
+                # Gemini 3.6 rejects the generated response schema when this limit is
+                # expressed as JSON Schema maxItems=200. Enforce the same contract after
+                # structured decoding so the provider receives a compatible schema while
+                # downstream persistence remains bounded.
+                if len(deduplicated) == 200:
+                    break
         return deduplicated
 
 

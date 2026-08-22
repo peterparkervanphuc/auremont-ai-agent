@@ -2,6 +2,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.core.audit import log_event, truncate
@@ -13,8 +15,10 @@ from backend.models.audit_log import AuditLog
 from backend.models.chat_session import ChatSession
 from backend.models.message import Message
 from backend.models.user import User
+from backend.repositories.user import create_user
 from backend.schemas.admin_dashboard import (
     ManagedLiveSessionResponse,
+    SaleAccountCreate,
     SaleActiveUpdate,
     SalePresence,
     SaleReassignRequest,
@@ -29,6 +33,61 @@ router = APIRouter(
     tags=["Admin Sales"],
     dependencies=[Depends(require_role(UserRole.ADMIN))],
 )
+
+
+@router.post("", response_model=SaleStatusResponse, status_code=status.HTTP_201_CREATED)
+async def create_sale_account(
+    payload: SaleAccountCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
+) -> SaleStatusResponse:
+    """Create a Sale-only account without exposing role selection to the client."""
+    username = payload.username.strip()
+    email = str(payload.email).strip().lower()
+
+    username_taken = db.query(User.id).filter(func.lower(User.username) == username.lower()).first()
+    if username_taken is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tên đăng nhập đã được sử dụng.")
+
+    email_taken = db.query(User.id).filter(func.lower(User.email) == email).first()
+    if email_taken is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email đã được sử dụng.")
+
+    try:
+        sale = create_user(
+            db,
+            username=username,
+            email=email,
+            password=payload.password,
+            role=UserRole.SALE,
+            is_active=payload.is_active,
+        )
+    except IntegrityError as exc:
+        # The database uniqueness constraint remains the final guard if two
+        # admins submit the same account between the checks above.
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tên đăng nhập hoặc email đã được sử dụng.",
+        ) from exc
+
+    log_event(
+        "admin.sale.created",
+        user_id=admin.id,
+        username=admin.username,
+        sale_id=sale.id,
+        sale_username=sale.username,
+        is_active=sale.is_active,
+    )
+    return SaleStatusResponse(
+        id=sale.id,
+        username=sale.username,
+        email=sale.email,
+        is_active=sale.is_active,
+        presence="offline",
+        active_chat_sessions=0,
+        handled_sessions=0,
+    )
 
 
 def _is_customer_session(session: ChatSession) -> bool:

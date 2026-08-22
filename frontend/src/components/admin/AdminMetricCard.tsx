@@ -5,7 +5,7 @@ interface AdminMetricCardProps {
   value: string | number;
   hint: string;
   icon: ReactNode;
-  tone?: "default" | "success" | "warning" | "danger";
+  tone?: "default" | "success" | "warning" | "caution" | "danger";
   tooltip?: string;
   active?: boolean;
   onClick?: () => void;

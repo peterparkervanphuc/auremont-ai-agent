@@ -127,7 +127,27 @@ def test_classifier_discards_conflict_fact_without_verbatim_source_evidence(monk
 
 
 def test_response_schema_avoids_fields_rejected_by_gemini():
-    assert "additionalProperties" not in DocumentClassification.model_json_schema()
+    schema = DocumentClassification.model_json_schema()
+
+    assert "additionalProperties" not in schema
+    assert "maxItems" not in schema
+
+
+def test_classification_caps_conflict_facts_after_structured_decoding():
+    result = _classification(
+        conflict_facts=[
+            ConflictFact(
+                fact_key=f"payment.installment.{index}",
+                claim=f"Thanh toan dot {index}.",
+                value=str(index),
+                polarity="affirmative",
+                evidence=f"Thanh toan dot {index}",
+            )
+            for index in range(205)
+        ]
+    )
+
+    assert len(result.conflict_facts) == 200
 
 
 def test_classifier_has_no_local_keyword_override(monkeypatch):

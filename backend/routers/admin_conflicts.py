@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.core.deps import require_role
 from backend.core.enums import ConflictStatus, UserRole
 from backend.core.mysql_client import get_db
+from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
 from backend.models.project import Project
 from backend.models.user import User
@@ -19,6 +20,7 @@ from backend.schemas.conflict_flag import (
     ConflictResolveRequest,
 )
 from backend.services.cache_service import clear_cache
+from backend.services.conflict_severity_service import ConflictSeverity, classify_conflict_severity
 from backend.services.vector_store_service import VectorStoreError, update_document_vector_metadata
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/admin/conflicts", tags=["Admin Conflicts"], dependencies=[Depends(require_role(UserRole.ADMIN))]
 )
+
+
+def _severity(flag: ConflictFlag) -> ConflictSeverity:
+    return classify_conflict_severity(
+        detection_method=flag.detection_method,
+        confidence=flag.confidence,
+        conflict_type=flag.conflict_type,
+        evidence=flag.evidence,
+    )
 
 
 def _document_summary(document: Document) -> ConflictDocumentSummary:
@@ -85,6 +96,7 @@ async def get_conflicts(db: Session = Depends(get_db)) -> list[ConflictDetailRes
                 confidence=flag.confidence,
                 similarity_score=flag.similarity_score,
                 conflict_type=flag.conflict_type,
+                severity=_severity(flag),
                 evidence=flag.evidence,
                 analysis_version=flag.analysis_version,
                 status=ConflictStatus(flag.status),
@@ -208,7 +220,7 @@ async def resolve_conflict_flag(
     # keep quoting the version the Admin has just ruled against — exactly the contradiction
     # the conflict flag was raised to end.
     clear_cache()
-    return conflict
+    return ConflictFlagResponse.model_validate(conflict).model_copy(update={"severity": _severity(conflict)})
 
 
 def _restore_vector_metadata(

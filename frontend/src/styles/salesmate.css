@@ -2769,6 +2769,7 @@
 .admin-metric-icon { display: grid; width: 39px; height: 39px; flex: 0 0 39px; place-items: center; border-radius: 11px; color: var(--accent); background: rgba(0, 80, 239, .09); }
 .admin-metric--success .admin-metric-icon { color: var(--sage); background: rgba(38, 166, 91, .1); }
 .admin-metric--warning .admin-metric-icon { color: var(--amber); background: rgba(235, 163, 37, .11); }
+.admin-metric--caution .admin-metric-icon { color: #e06b16; background: rgba(224, 107, 22, .11); }
 .admin-metric--danger .admin-metric-icon { color: var(--rose); background: rgba(229, 72, 77, .1); }
 .admin-metric-label, .admin-metric-hint { display: block; color: var(--text-3); font-size: .75rem; }
 .admin-metric-value { display: block; margin: 4px 0 5px; color: var(--text-1); font-family: var(--font-display); font-size: 1.45rem; line-height: 1.1; }
@@ -2899,6 +2900,30 @@
 .api-response-head { display: flex; justify-content: space-between; margin: 12px 0 5px; color: var(--text-3); font-size: .69rem; font-weight: 700; text-transform: uppercase; }
 .api-response { min-height: 130px; max-height: 360px; margin: 0; padding: 14px; overflow: auto; border-radius: 9px; color: #d5e4ff; background: #08111f; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .72rem; line-height: 1.55; }
 .admin-modal-backdrop { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 18px; background: rgba(4, 10, 20, .72); backdrop-filter: blur(7px); }
+.sale-account-dialog { width: min(680px, 100%); max-height: calc(100vh - 36px); overflow: auto; border: 1px solid var(--border-h); border-radius: 18px; background: var(--bg-2); box-shadow: 0 32px 90px rgba(0, 0, 0, .38); animation: card-in .2s var(--ease) both; }
+.sale-account-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 19px 22px; border-bottom: 1px solid var(--border); background: linear-gradient(135deg, var(--dash-gold-soft), transparent 68%); }
+.sale-account-dialog-title { display: flex; align-items: center; gap: 12px; }
+.sale-account-dialog-title > span { display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid rgba(201, 150, 55, .3); border-radius: 12px; color: var(--dash-gold); background: var(--dash-gold-soft); }
+.sale-account-dialog-title small { color: var(--dash-gold); font-size: .64rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.sale-account-dialog-title h2 { margin-top: 3px; color: var(--text-1); font-family: var(--font-display); font-size: 1.08rem; }
+.sale-account-close { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border: 1px solid var(--border); border-radius: 10px; color: var(--text-3); background: var(--bg-1); cursor: pointer; transition: border-color var(--t-fast), color var(--t-fast), transform var(--t-fast); }
+.sale-account-close:hover { border-color: var(--border-h); color: var(--text-1); transform: rotate(4deg); }
+.sale-account-close:disabled { cursor: not-allowed; opacity: .55; }
+.sale-account-form { padding: 22px; }
+.sale-account-intro { margin-bottom: 17px; color: var(--text-3); font-size: .78rem; line-height: 1.6; }
+.sale-account-form > .alert { margin-bottom: 17px; }
+.sale-account-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+.sale-account-password { position: relative; display: block; }
+.sale-account-password input { padding-right: 45px; }
+.sale-account-password > button { position: absolute; top: 50%; right: 8px; display: grid; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 8px; color: var(--text-3); background: transparent; cursor: pointer; transform: translateY(-50%); }
+.sale-account-password > button:hover { color: var(--accent); background: rgba(0, 80, 239, .08); }
+.sale-account-active-option { display: flex; align-items: flex-start; gap: 11px; padding: 13px 14px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-3); cursor: pointer; transition: border-color var(--t-fast), background var(--t-fast), box-shadow var(--t-fast); }
+.sale-account-active-option:hover { border-color: rgba(201, 150, 55, .38); background: var(--dash-gold-soft); box-shadow: 0 8px 22px rgba(10, 46, 122, .06); }
+.sale-account-active-option input { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--accent); }
+.sale-account-active-option span, .sale-account-active-option strong, .sale-account-active-option small { display: block; }
+.sale-account-active-option strong { color: var(--text-1); font-size: .8rem; }
+.sale-account-active-option small { margin-top: 3px; color: var(--text-3); font-size: .7rem; line-height: 1.45; }
+.sale-account-dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; padding-top: 17px; border-top: 1px solid var(--border); }
 .swagger-console { display: flex; width: min(1380px, 96vw); height: min(880px, 92vh); flex-direction: column; overflow: hidden; border: 1px solid var(--border-h); border-radius: 16px; background: var(--bg-2); box-shadow: 0 32px 90px rgba(0, 0, 0, .4); }
 .swagger-console-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 17px; border-bottom: 1px solid var(--border); }
 .swagger-console-head h2 { color: var(--text-1); font-size: 1.05rem; }
@@ -2907,15 +2932,19 @@
 
 /* Knowledge-base conflict split view */
 .conflict-list { display: flex; flex-direction: column; gap: 18px; }
-.conflict-compare { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-2); box-shadow: var(--shadow-sm); }
+.conflict-compare { --conflict-severity: var(--amber); --conflict-severity-soft: rgba(235, 163, 37, .09); overflow: hidden; border: 1px solid var(--border); border-left: 4px solid var(--conflict-severity); border-radius: var(--radius); background: var(--bg-2); box-shadow: var(--shadow-sm); }
+.conflict-compare--low { --conflict-severity: #c99a00; --conflict-severity-soft: rgba(234, 179, 8, .1); }
+.conflict-compare--medium { --conflict-severity: #e06b16; --conflict-severity-soft: rgba(224, 107, 22, .1); }
+.conflict-compare--high { --conflict-severity: #dc3545; --conflict-severity-soft: rgba(220, 53, 69, .09); }
 .conflict-compare-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 20px; border-bottom: 1px solid var(--border); }
-.conflict-alert-title { display: inline-flex; align-items: center; gap: 7px; color: var(--rose); font-size: .7rem; font-weight: 800; text-transform: uppercase; }
+.conflict-alert-title { display: inline-flex; align-items: center; gap: 7px; color: var(--conflict-severity); font-size: .7rem; font-weight: 800; text-transform: uppercase; }
 .conflict-compare-head h2 { margin-top: 4px; color: var(--text-1); font-family: var(--font-display); font-size: 1.05rem; }
 .conflict-badges { display: flex; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
 .conflict-badges span { padding: 5px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-2); background: var(--bg-1); font-size: .67rem; }
-.conflict-analysis-summary { margin: 0; padding: 11px 20px; border-bottom: 1px solid var(--border); color: var(--text-2); background: rgba(235, 163, 37, .06); font-size: .76rem; line-height: 1.55; }
+.conflict-analysis-summary { margin: 0; padding: 11px 20px; border-bottom: 1px solid var(--border); color: var(--text-2); background: var(--conflict-severity-soft); font-size: .76rem; line-height: 1.55; }
 .conflict-badges .is-uncertain { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); background: color-mix(in srgb, var(--warning) 12%, var(--bg-1)); color: #a96300; }
 .conflict-badges .is-confirmed { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); background: color-mix(in srgb, var(--danger) 9%, var(--bg-1)); color: var(--danger); }
+.conflict-badges .conflict-severity-badge { border-color: color-mix(in srgb, var(--conflict-severity) 52%, var(--border)); color: var(--conflict-severity); background: var(--conflict-severity-soft); font-weight: 800; }
 .conflict-split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .conflict-document-pane + .conflict-document-pane { border-left: 1px solid var(--border); }
 .conflict-document-pane > header { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; color: var(--text-3); background: var(--bg-3); font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
@@ -2930,7 +2959,7 @@
 .conflict-copy p { color: var(--text-2); font-size: .78rem; line-height: 1.65; }
 .conflict-highlight { margin-top: auto; }
 .conflict-highlight-list { display: grid; gap: 8px; }
-.conflict-highlight mark { display: block; padding: 13px; border-left: 3px solid var(--amber); border-radius: 0 8px 8px 0; color: var(--text-1); background: rgba(235, 163, 37, .11); font-size: .78rem; line-height: 1.6; }
+.conflict-highlight mark { display: block; padding: 13px; border-left: 3px solid var(--conflict-severity); border-radius: 0 8px 8px 0; color: var(--text-1); background: var(--conflict-severity-soft); font-size: .78rem; line-height: 1.6; }
 .manual-merge-note { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 13px; margin: 0 20px 16px; padding: 13px; border: 1px dashed var(--accent); border-radius: 10px; color: var(--accent); background: rgba(0, 80, 239, .05); }
 .manual-merge-note strong { color: var(--text-1); font-size: .8rem; }
 .manual-merge-note p { margin-top: 3px; color: var(--text-3); font-size: .69rem; line-height: 1.5; }
@@ -2948,6 +2977,7 @@
 }
 @media (max-width: 900px) {
   .admin-page-head, .conflict-compare-head, .conflict-compare-actions { flex-direction: column; align-items: stretch; }
+  .sale-account-form-grid { grid-template-columns: 1fr; }
   .admin-head-actions, .conflict-badges { justify-content: flex-start; }
   .admin-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .admin-two-column, .admin-two-column--wide-left, .conflict-split { grid-template-columns: 1fr; }
@@ -3668,7 +3698,18 @@
 .sales-workspace .admin-table tbody tr:hover { background: var(--dash-gold-soft); box-shadow: inset 3px 0 var(--dash-gold); }
 .admin-conflicts-page .conflict-compare:hover .conflict-document-pane:hover { background: var(--dash-gold-soft); box-shadow: inset 0 -3px var(--dash-gold); transform: translateY(-2px); }
 .admin-conflicts-page .conflict-highlight mark { transition: border-color var(--t-fast), background var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast); }
-.admin-conflicts-page .conflict-highlight mark:hover { border-left-color: var(--dash-gold); background: rgba(201, 150, 55, .16); box-shadow: 0 8px 18px rgba(10, 46, 122, .08); transform: translateX(3px); }
+.admin-conflicts-page .conflict-highlight mark:hover { border-left-color: var(--conflict-severity); background: var(--conflict-severity-soft); box-shadow: 0 8px 18px color-mix(in srgb, var(--conflict-severity) 18%, transparent); transform: translateX(3px); }
+.admin-conflicts-page .conflict-compare:hover { border-color: color-mix(in srgb, var(--conflict-severity) 58%, var(--border)); border-left-color: var(--conflict-severity); box-shadow: 0 18px 42px color-mix(in srgb, var(--conflict-severity) 15%, transparent); }
+.admin-conflicts-page .conflict-compare:hover .conflict-document-pane:hover { background: var(--conflict-severity-soft); box-shadow: inset 0 -3px var(--conflict-severity); }
+.admin-conflicts-page .admin-metric--warning:hover .admin-metric-icon,
+.admin-conflicts-page .admin-metric--warning:focus-visible .admin-metric-icon,
+.admin-conflicts-page .admin-metric--warning.is-active .admin-metric-icon { background: #c99a00; }
+.admin-conflicts-page .admin-metric--caution:hover .admin-metric-icon,
+.admin-conflicts-page .admin-metric--caution:focus-visible .admin-metric-icon,
+.admin-conflicts-page .admin-metric--caution.is-active .admin-metric-icon { background: #e06b16; }
+.admin-conflicts-page .admin-metric--danger:hover .admin-metric-icon,
+.admin-conflicts-page .admin-metric--danger:focus-visible .admin-metric-icon,
+.admin-conflicts-page .admin-metric--danger.is-active .admin-metric-icon { background: #dc3545; }
 
 [data-theme="dark"] .admin-workspace { --dash-navy: #7891a8; }
 [data-theme="dark"] .admin-workspace .admin-metric:hover,

@@ -7,6 +7,16 @@ import { AlertIcon, CheckIcon, DocumentIcon, ExternalLinkIcon, ScaleIcon, Shield
 import type { ConflictDetail, ConflictDocumentSummary } from "../../types/admin";
 import { parseServerDate } from "../../utils/datetime";
 
+type ConflictFilter = "all" | ConflictDetail["severity"];
+
+const severityMeta: Record<ConflictDetail["severity"], { label: string; description: string }> = {
+  low: { label: "Mức thấp", description: "Cần xác minh thêm trước khi kết luận." },
+  medium: { label: "Mức trung bình", description: "Mâu thuẫn đã có tín hiệu rõ và cần xử lý sớm." },
+  high: { label: "Mức nghiêm trọng", description: "Mâu thuẫn tác động cao hoặc đã được xác nhận chắc chắn." },
+};
+
+const severityRank: Record<ConflictDetail["severity"], number> = { low: 1, medium: 2, high: 3 };
+
 function detectorLabel(method: ConflictDetail["detection_method"]) {
   if (method === "llm") return "LLM ngữ nghĩa";
   if (method === "hybrid") return "Rule + LLM";
@@ -46,7 +56,7 @@ export function ConflictsTab() {
   const [error, setError] = useState<string | null>(null);
   const [resolving, setResolving] = useState<number | null>(null);
   const [manualId, setManualId] = useState<number | null>(null);
-  const [filter, setFilter] = useState<"all" | "confirmed" | "uncertain">("all");
+  const [filter, setFilter] = useState<ConflictFilter>("all");
 
   useEffect(() => {
     api.get<ConflictDetail[]>("/admin/conflicts").then((rows) => { setConflicts(rows); setError(null); }).catch(() => { setError("Không tải được danh sách mâu thuẫn."); setConflicts([]); });
@@ -75,28 +85,26 @@ export function ConflictsTab() {
   };
 
   const allConflicts = conflicts ?? [];
-  const confirmedCount = allConflicts.filter((conflict) => conflict.evidence?.semantic?.decision === "conflict").length;
-  const uncertainCount = allConflicts.filter((conflict) => conflict.evidence?.semantic?.decision === "uncertain").length;
-  const hybridCount = allConflicts.filter((conflict) => conflict.detection_method === "hybrid").length;
-  const visibleConflicts = allConflicts.filter((conflict) => {
-    if (filter === "confirmed") return conflict.evidence?.semantic?.decision === "conflict";
-    if (filter === "uncertain") return conflict.evidence?.semantic?.decision === "uncertain";
-    return true;
-  });
+  const lowCount = allConflicts.filter((conflict) => conflict.severity === "low").length;
+  const mediumCount = allConflicts.filter((conflict) => conflict.severity === "medium").length;
+  const highCount = allConflicts.filter((conflict) => conflict.severity === "high").length;
+  const visibleConflicts = [...allConflicts]
+    .filter((conflict) => filter === "all" || conflict.severity === filter)
+    .sort((left, right) => severityRank[right.severity] - severityRank[left.severity]);
 
   return <div className="page admin-dashboard-page business-dashboard admin-workspace admin-conflicts-page">
     <AdminPageHeader eyebrow="Knowledge governance" title="Cảnh báo mâu thuẫn tài liệu" description="So sánh hai nguồn độc lập trước khi quyết định phiên bản được phép tham gia RAG." actions={<Link className="btn btn-outline" to="/documents"><DocumentIcon size={15} /> Kho tài liệu</Link>} />
     {error && <div className="alert alert-danger">{error}</div>}
 
     <div className="admin-metric-grid admin-workspace-metrics">
-      <AdminMetricCard label="Cảnh báo đang mở" value={allConflicts.length} hint="Tất cả nguồn cần xử lý" icon={<AlertIcon size={20} />} tone={allConflicts.length ? "danger" : "success"} tooltip="Nhấn để hiển thị mọi cảnh báo đang mở." active={filter === "all"} onClick={() => setFilter("all")} />
-      <AdminMetricCard label="Đã có bằng chứng" value={confirmedCount} hint="LLM kết luận conflict" icon={<ShieldCheckIcon size={20} />} tone={confirmedCount ? "danger" : "success"} tooltip="Hai nguồn có cùng phạm vi nhưng đưa ra khẳng định loại trừ nhau." active={filter === "confirmed"} onClick={() => setFilter("confirmed")} />
-      <AdminMetricCard label="Cần Admin xác minh" value={uncertainCount} hint="Kết luận chưa chắc chắn" icon={<ScaleIcon size={20} />} tone={uncertainCount ? "warning" : "success"} tooltip="Mở hai nguồn và kiểm tra trước khi chọn phiên bản thắng." active={filter === "uncertain"} onClick={() => setFilter("uncertain")} />
-      <AdminMetricCard label="Phát hiện hybrid" value={hybridCount} hint="Rule kết hợp LLM" icon={<CheckIcon size={20} />} tooltip="Số cảnh báo sử dụng cả bằng chứng xác định và phân tích ngữ nghĩa." />
+      <AdminMetricCard label="Cảnh báo đang mở" value={allConflicts.length} hint="Sắp xếp đỏ → cam → vàng" icon={<AlertIcon size={20} />} tone={highCount ? "danger" : mediumCount ? "caution" : lowCount ? "warning" : "success"} tooltip="Nhấn để hiển thị tất cả cảnh báo theo thứ tự ưu tiên." active={filter === "all"} onClick={() => setFilter("all")} />
+      <AdminMetricCard label="Mức thấp · Vàng" value={lowCount} hint="Cần xác minh thêm" icon={<ScaleIcon size={20} />} tone="warning" tooltip={severityMeta.low.description} active={filter === "low"} onClick={() => setFilter("low")} />
+      <AdminMetricCard label="Mức trung bình · Cam" value={mediumCount} hint="Cần xử lý sớm" icon={<AlertIcon size={20} />} tone="caution" tooltip={severityMeta.medium.description} active={filter === "medium"} onClick={() => setFilter("medium")} />
+      <AdminMetricCard label="Mức nghiêm trọng · Đỏ" value={highCount} hint="Ưu tiên xử lý ngay" icon={<ShieldCheckIcon size={20} />} tone="danger" tooltip={severityMeta.high.description} active={filter === "high"} onClick={() => setFilter("high")} />
     </div>
 
-    {conflicts === null ? <div className="admin-empty">Đang tải cảnh báo…</div> : allConflicts.length === 0 ? <div className="ops-empty-state"><CheckIcon size={26} /><strong>Không có mâu thuẫn cần xử lý</strong><span>Kho tri thức hiện không có cặp nguồn đang tranh chấp.</span></div> : visibleConflicts.length === 0 ? <div className="ops-empty-state compact"><CheckIcon size={24} /><strong>Không có cảnh báo khớp bộ lọc</strong><span>Chọn thẻ “Cảnh báo đang mở” để xem toàn bộ.</span></div> : <div className="conflict-list">{visibleConflicts.map((conflict) => <section className="conflict-compare admin-ui-panel" key={conflict.id}>
-      <header className="conflict-compare-head"><div><span className="conflict-alert-title"><AlertIcon size={17} /> Conflict #{conflict.id}</span><h2>{conflict.project_name ?? conflict.project_id ?? "Tài liệu áp dụng chung"}</h2></div><div className="conflict-badges"><span>Nguồn: {detectorLabel(conflict.detection_method)}</span>{conflict.evidence?.semantic?.decision === "uncertain" && <span className="is-uncertain">Cần Admin xác minh</span>}{conflict.evidence?.semantic?.decision === "conflict" && <span className="is-confirmed">Có bằng chứng mâu thuẫn</span>}{conflict.confidence != null && <span>Độ tin cậy: {Math.round(conflict.confidence * 100)}%</span>}{conflict.similarity_score != null && <span>Similarity: {Math.round(conflict.similarity_score * 100)}%</span>}{conflict.conflict_type && <span>Loại: {conflict.conflict_type}</span>}<span>Phát hiện {parseServerDate(conflict.created_at).toLocaleDateString("vi-VN")}</span><span>{conflict.project_name ?? "Toàn hệ thống"}</span></div></header>
+    {conflicts === null ? <div className="admin-empty">Đang tải cảnh báo…</div> : allConflicts.length === 0 ? <div className="ops-empty-state"><CheckIcon size={26} /><strong>Không có mâu thuẫn cần xử lý</strong><span>Kho tri thức hiện không có cặp nguồn đang tranh chấp.</span></div> : visibleConflicts.length === 0 ? <div className="ops-empty-state compact"><CheckIcon size={24} /><strong>Không có cảnh báo khớp bộ lọc</strong><span>Chọn thẻ “Cảnh báo đang mở” để xem toàn bộ.</span></div> : <div className="conflict-list">{visibleConflicts.map((conflict) => <section className={`conflict-compare conflict-compare--${conflict.severity} admin-ui-panel`} key={conflict.id} aria-labelledby={`conflict-title-${conflict.id}`}>
+      <header className="conflict-compare-head"><div><span className="conflict-alert-title"><AlertIcon size={17} /> Conflict #{conflict.id}</span><h2 id={`conflict-title-${conflict.id}`}>{conflict.project_name ?? conflict.project_id ?? "Tài liệu áp dụng chung"}</h2></div><div className="conflict-badges"><span className={`conflict-severity-badge conflict-severity-badge--${conflict.severity}`} title={severityMeta[conflict.severity].description}>{severityMeta[conflict.severity].label}</span><span>Nguồn: {detectorLabel(conflict.detection_method)}</span>{conflict.evidence?.semantic?.decision === "uncertain" && <span className="is-uncertain">Cần Admin xác minh</span>}{conflict.evidence?.semantic?.decision === "conflict" && <span className="is-confirmed">Có bằng chứng mâu thuẫn</span>}{conflict.confidence != null && <span>Độ tin cậy: {Math.round(conflict.confidence * 100)}%</span>}{conflict.similarity_score != null && <span>Similarity: {Math.round(conflict.similarity_score * 100)}%</span>}{conflict.conflict_type && <span>Loại: {conflict.conflict_type}</span>}<span>Phát hiện {parseServerDate(conflict.created_at).toLocaleDateString("vi-VN")}</span><span>{conflict.project_name ?? "Toàn hệ thống"}</span></div></header>
       {conflict.evidence?.semantic?.summary && <p className="conflict-analysis-summary">{conflict.evidence.semantic.summary}</p>}
       <div className="conflict-split"><DocumentPane label="Tài liệu A · nguồn cũ" document={conflict.document_a} conflict={conflict.description} evidence={evidenceForSide(conflict, "a")} onOpen={() => void openDocument(conflict.document_a.id)} /><DocumentPane label="Tài liệu B · nguồn mới" document={conflict.document_b} conflict={conflict.description} evidence={evidenceForSide(conflict, "b")} onOpen={() => void openDocument(conflict.document_b.id)} /></div>
       {manualId === conflict.id && <div className="manual-merge-note"><ScaleIcon size={19} /><div><strong>Quy trình gộp/chỉnh sửa thủ công</strong><p>Mở hai bản nguồn, tạo hoặc tải bản đã chỉnh sửa vào Kho tài liệu, rồi quay lại chọn tài liệu thắng. Cảnh báo vẫn mở để không vô tình đưa hai nguồn mâu thuẫn vào retrieval.</p></div><div><button className="btn btn-sm btn-outline" onClick={() => void openDocument(conflict.document_a.id)}>Mở A</button><button className="btn btn-sm btn-outline" onClick={() => void openDocument(conflict.document_b.id)}>Mở B</button><Link className="btn btn-sm btn-primary" to="/documents">Đến Kho tài liệu</Link></div></div>}

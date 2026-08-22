@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from backend.core.deps import get_current_user
 from backend.core.enums import MessageSender, SessionStatus, UserRole
 from backend.core.mysql_client import Base, get_db
+from backend.core.security import verify_password
 from backend.main import app
 from backend.models.audit_log import AuditLog
 from backend.models.chat_session import ChatSession
@@ -83,6 +84,66 @@ def test_sales_board_uses_real_live_sessions_and_activity(client, db_session, us
     assert sale["active_chat_sessions"] == 1
     assert sale["interaction_rate"] == 100.0
     assert sale["conversion_rate"] is None
+
+
+def test_admin_can_create_an_active_sale_account(client, db_session):
+    response = client.post(
+        "/api/v1/admin/sales",
+        json={
+            "username": "sale.new",
+            "email": "SALE.NEW@EXAMPLE.COM",
+            "password": "SaleSecure123",
+            "is_active": True,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["username"] == "sale.new"
+    assert body["email"] == "sale.new@example.com"
+    assert body["is_active"] is True
+    assert body["presence"] == "offline"
+    assert "password" not in body
+    assert "hashed_password" not in body
+
+    sale = db_session.query(User).filter(User.username == "sale.new").one()
+    assert sale.role == UserRole.SALE
+    assert sale.is_active is True
+    assert sale.hashed_password != "SaleSecure123"
+    assert verify_password("SaleSecure123", sale.hashed_password) is True
+
+
+@pytest.mark.parametrize(
+    ("username", "email", "expected_detail"),
+    [
+        ("SALE-ONE", "different@example.com", "Tên đăng nhập đã được sử dụng."),
+        ("different-sale", "SALE-ONE@EXAMPLE.COM", "Email đã được sử dụng."),
+    ],
+)
+def test_create_sale_rejects_case_insensitive_duplicates(client, username, email, expected_detail):
+    response = client.post(
+        "/api/v1/admin/sales",
+        json={"username": username, "email": email, "password": "SaleSecure123", "is_active": True},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == expected_detail
+
+
+def test_sale_cannot_create_another_sale(client, users):
+    _admin, sale, *_ = users
+    app.dependency_overrides[get_current_user] = lambda: sale
+
+    response = client.post(
+        "/api/v1/admin/sales",
+        json={
+            "username": "sale.forbidden",
+            "email": "sale.forbidden@example.com",
+            "password": "SaleSecure123",
+        },
+    )
+
+    assert response.status_code == 403
 
 
 def test_busy_sale_must_be_reassigned_before_deactivation(client, db_session, users):

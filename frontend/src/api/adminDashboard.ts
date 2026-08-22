@@ -3,6 +3,7 @@ import type {
   BusinessDashboard,
   ManagedLiveSession,
   ObservabilityOverview,
+  SaleAccountCreate,
   SalesBoard,
   SaleStatus,
   TraceSummary,
@@ -16,6 +17,7 @@ export const adminDashboardApi = {
     return api.get<BusinessDashboard>(`/admin/stats/business?${params}`);
   },
   sales: (days = 30) => api.get<SalesBoard>(`/admin/sales?days=${days}`),
+  createSale: (payload: SaleAccountCreate) => api.post<SaleStatus>("/admin/sales", payload),
   setSaleActive: (saleId: number, isActive: boolean) =>
     api.patch<SaleStatus>(`/admin/sales/${saleId}/active`, { is_active: isActive }),
   reassign: (sessionId: number, saleId: number) =>

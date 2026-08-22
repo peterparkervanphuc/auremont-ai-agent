@@ -1,5 +1,12 @@
 export type SalePresence = "online" | "offline" | "busy";
 
+export interface SaleAccountCreate {
+  username: string;
+  email: string;
+  password: string;
+  is_active: boolean;
+}
+
 export interface SaleStatus {
   id: number;
   username: string;
@@ -155,6 +162,7 @@ export interface ConflictDetail {
   detection_method: "rule" | "llm" | "hybrid";
   confidence: number | null;
   conflict_type: string | null;
+  severity: "low" | "medium" | "high";
   evidence: ConflictEvidence | null;
   analysis_version: string | null;
   status: "open" | "resolved";

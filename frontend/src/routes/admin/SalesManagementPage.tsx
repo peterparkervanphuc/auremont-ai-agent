@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminDashboardApi } from "../../api/adminDashboard";
-import { ActivityIcon, ChartIcon, RefreshIcon, UsersIcon } from "../../components/Icons";
+import { ActivityIcon, ChartIcon, PlusIcon, RefreshIcon, UsersIcon } from "../../components/Icons";
+import { CreateSaleAccountModal } from "../../components/admin/CreateSaleAccountModal";
 import { AdminMetricCard } from "../../components/admin/AdminMetricCard";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
-import type { SalesBoard } from "../../types/admin";
+import type { SalesBoard, SaleStatus } from "../../types/admin";
 import { parseServerDate } from "../../utils/datetime";
 
 const PRESENCE_LABEL = { online: "Online", offline: "Offline", busy: "Busy" } as const;
@@ -20,6 +21,8 @@ export function SalesManagementPage() {
   const [board, setBoard] = useState<SalesBoard | null>(null);
   const [view, setView] = useState<"table" | "grid">("table");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [assignments, setAssignments] = useState<Record<number, string>>({});
 
@@ -64,6 +67,22 @@ export function SalesManagementPage() {
     }
   };
 
+  const handleSaleCreated = useCallback((sale: SaleStatus) => {
+    setBoard((current) => current ? {
+      ...current,
+      summary: {
+        ...current.summary,
+        total_sales: current.summary.total_sales + 1,
+        active_accounts: current.summary.active_accounts + (sale.is_active ? 1 : 0),
+      },
+      sales: [...current.sales, sale].sort((left, right) => left.username.localeCompare(right.username, "vi")),
+    } : current);
+    setError(null);
+    setNotice(`Đã tạo tài khoản Sale “${sale.username}” thành công.`);
+    setCreateOpen(false);
+    void load();
+  }, [load]);
+
   return (
     <div className="page admin-dashboard-page business-dashboard admin-workspace sales-workspace">
       <AdminPageHeader
@@ -72,6 +91,16 @@ export function SalesManagementPage() {
         description="Theo dõi tải xử lý, trạng thái hoạt động và phân phối khách hàng theo thời gian thực."
         actions={
           <>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              setNotice(null);
+              setCreateOpen(true);
+            }}
+          >
+            <PlusIcon size={15} /> Tạo tài khoản Sale
+          </button>
           <div className="admin-segmented" aria-label="Chế độ xem">
             <button type="button" className={view === "table" ? "is-active" : ""} onClick={() => setView("table")}>Table</button>
             <button type="button" className={view === "grid" ? "is-active" : ""} onClick={() => setView("grid")}>Grid</button>
@@ -82,6 +111,7 @@ export function SalesManagementPage() {
       />
 
       {error && <div className="alert alert-danger">{error}</div>}
+      {notice ? <div className="alert alert-success" role="status">{notice}</div> : null}
       {!board ? <div className="admin-empty">Đang tải bảng điều phối Sale…</div> : (
         <>
           <div className="admin-metric-grid">
@@ -139,6 +169,11 @@ export function SalesManagementPage() {
           </section>
         </>
       )}
+      <CreateSaleAccountModal
+        isOpen={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={handleSaleCreated}
+      />
     </div>
   );
 }

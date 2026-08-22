@@ -19,6 +19,9 @@ class ConflictFlagResponse(BaseModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     similarity_score: float | None = Field(default=None, ge=0, le=1)
     conflict_type: str | None = None
+    # ORM-backed responses need a validation default before the router replaces it with
+    # the severity derived from the conflict's persisted evidence.
+    severity: Literal["low", "medium", "high"] = "medium"
     evidence: dict[str, Any] | None = None
     analysis_version: str | None = None
     status: ConflictStatus
