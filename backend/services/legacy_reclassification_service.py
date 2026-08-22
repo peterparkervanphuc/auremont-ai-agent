@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
+from sqlalchemy import JSON as SA_JSON
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -35,6 +36,7 @@ from backend.core.enums import (
     DocumentStatus,
     LegalStatus,
 )
+from backend.core.gemini_client import is_gemini_quota_error
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
 from backend.models.document_relation import DocumentRelation
@@ -62,10 +64,10 @@ from backend.services.ingestion_service import (
     _conflict_scope_lock,
     _embed_and_index,
     _read_original_file,
+    prepare_semantic_conflict_assessments,
     sanitize_and_scan,
     scan_conflicts_for,
 )
-from backend.core.gemini_client import is_gemini_quota_error
 from backend.services.parser_service import ParsedSection, parse_document
 from backend.services.project_metadata_service import (
     classification_project_catalog,
@@ -115,6 +117,7 @@ _CLASSIFICATION_FIELDS = (
     "legal_status",
     "classification_confidence",
     "classification_reason",
+    "conflict_facts",
 )
 
 
@@ -146,7 +149,17 @@ def list_reclassification_candidates(
         Document.file_path.is_not(None),
     )
     if legacy_only and hasattr(Document, "classification_version"):
-        query = query.filter(Document.classification_version.is_(None))
+        # A version marker alone is not enough: deployments predating conflict-fact
+        # extraction may carry an older non-null LLM version, and interrupted/imported
+        # rows can carry the current version while the JSON payload is still null.
+        query = query.filter(
+            or_(
+                Document.classification_version.is_(None),
+                Document.classification_version != DOCUMENT_CLASSIFICATION_VERSION,
+                Document.conflict_facts.is_(None),
+                Document.conflict_facts == SA_JSON.NULL,
+            )
+        )
 
     documents = query.order_by(Document.id).limit(limit).all()
     return [
@@ -329,6 +342,11 @@ def apply_document_reclassification(
                 expected_snapshot_sha256=staged_snapshot_sha256,
             )
         else:
+            semantic_assessments = prepare_semantic_conflict_assessments(
+                db,
+                document,
+                raw_text=original.raw_text,
+            )
             with _conflict_scope_lock(db, document):
                 document = get_document(db, document_id, for_update=True)
                 if document is None:  # pragma: no cover - deletion also needs the row lock
@@ -338,7 +356,13 @@ def apply_document_reclassification(
                     staged_snapshot_sha256,
                     "Document metadata changed before conflict scanning; preview it again.",
                 )
-                outcome = scan_conflicts_for(db, document, raw_text=original.raw_text, commit=False)
+                outcome = scan_conflicts_for(
+                    db,
+                    document,
+                    raw_text=original.raw_text,
+                    semantic_assessments=semantic_assessments,
+                    commit=False,
+                )
                 conflict_ids = outcome.conflict_ids
                 duplicate_ids = outcome.duplicate_document_ids
 
@@ -605,6 +629,7 @@ def _apply_classification(
         setattr(document, field_name, getattr(classification, field_name))
 
     document.project_id = target_project_id
+    document.conflict_facts = [fact.model_dump(mode="json") for fact in classification.conflict_facts]
     document.classification_confidence = classification.confidence
     document.classification_reason = classification.reason
     # MySQL DATETIME columns in this schema store whole seconds. Hashing a pre-commit
@@ -657,6 +682,7 @@ def _metadata_changes(document: Document, classification: DocumentClassification
         "legal_status": _enum_value(document.legal_status),
         "classification_confidence": document.classification_confidence,
         "classification_reason": document.classification_reason,
+        "conflict_facts": document.conflict_facts,
     }
     suggestions_by_stored_name = {
         **suggested,
@@ -699,6 +725,7 @@ def _document_snapshot_sha256(document: Document) -> str:
         "review_status": _enum_value(document.review_status),
         "classification_confidence": document.classification_confidence,
         "classification_reason": document.classification_reason,
+        "conflict_facts": document.conflict_facts,
         "classified_at": _json_value(document.classified_at),
         "is_current": bool(document.is_current),
     }

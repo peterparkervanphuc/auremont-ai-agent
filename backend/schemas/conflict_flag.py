@@ -1,6 +1,7 @@
 from datetime import date, datetime
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.core.enums import ConflictStatus
 
@@ -14,6 +15,12 @@ class ConflictFlagResponse(BaseModel):
     document_id_a: int
     document_id_b: int
     description: str | None = None
+    detection_method: Literal["rule", "llm", "hybrid"] = "rule"
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    similarity_score: float | None = Field(default=None, ge=0, le=1)
+    conflict_type: str | None = None
+    evidence: dict[str, Any] | None = None
+    analysis_version: str | None = None
     status: ConflictStatus
     created_at: datetime
     resolved_by: int | None = None
@@ -37,9 +44,6 @@ class ConflictDocumentSummary(BaseModel):
 
 
 class ConflictDetailResponse(ConflictFlagResponse):
-    # Similarity was not persisted by the existing ingestion pipeline. Null is an
-    # explicit "not measured" state; the Admin UI must never invent a percentage.
-    similarity_score: float | None = None
     project_id: str | None = None
     project_name: str | None = None
     document_a: ConflictDocumentSummary

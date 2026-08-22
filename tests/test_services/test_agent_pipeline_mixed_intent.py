@@ -162,6 +162,25 @@ def test_internal_prompt_requires_every_requested_subject_to_be_answered():
     assert "rà soát toàn bộ các đoạn và bảng" in prompt
 
 
+def test_inventory_prompt_and_verifier_receive_every_mockapi_field():
+    unit = _available_2pn()
+
+    prompt = prompts.build_prompt("Cho tôi toàn bộ dữ liệu căn này", [], [unit], True, False)
+    verifier_fact = prompts.format_unit_for_verifier(unit)
+
+    for field_value in (
+        "unit_code=OP3-BE1-1205",
+        "project_id=ocean-park-3",
+        "subdivision=The Beverly",
+        "unit_type=2PN",
+        "area_m2=68.2",
+        "price_vnd=3600000000",
+        "status=available",
+    ):
+        assert field_value in prompt
+        assert field_value in verifier_fact
+
+
 def test_prompt_explains_pn_br_alias_when_source_uses_english_label():
     doc = {
         **_policy_hit(),

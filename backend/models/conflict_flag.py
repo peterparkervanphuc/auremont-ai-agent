@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.enums import ConflictStatus
@@ -18,6 +19,22 @@ class ConflictFlag(Base):
     document_id_b: Mapped[int] = mapped_column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
 
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Detection provenance stays explicit rather than being embedded in the human
+    # description. Existing rows were created by the deterministic rule scanner.
+    detection_method: Mapped[str] = mapped_column(
+        String(20),
+        default="rule",
+        server_default="rule",
+        nullable=False,
+    )
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    conflict_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Structured, source-specific excerpts and normalized facts. JSON keeps the
+    # evidence contract extensible across document categories without adding a wide
+    # collection of mostly-null columns.
+    evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    analysis_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=ConflictStatus.OPEN, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

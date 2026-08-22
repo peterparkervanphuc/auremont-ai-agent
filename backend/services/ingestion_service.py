@@ -1,5 +1,6 @@
 import hashlib
 import inspect
+import json
 import logging
 import re
 import uuid
@@ -14,7 +15,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from backend.core.config import settings
-from backend.core.enums import DocumentCategory, DocumentReviewStatus, DocumentStatus, LegalStatus
+from backend.core.enums import ConflictStatus, DocumentCategory, DocumentReviewStatus, DocumentStatus, LegalStatus
 from backend.core.gemini_client import embed_documents, is_gemini_quota_error
 from backend.core.minio_client import ensure_bucket, get_minio_client
 from backend.core.sparse_embedding import SparseEmbeddingError, embed_documents_sparse
@@ -34,6 +35,11 @@ from backend.services.document_classification_service import (
     DocumentClassification,
     DocumentClassificationError,
     classify_document,
+)
+from backend.services.document_conflict_service import (
+    DocumentConflictAssessmentError,
+    SemanticConflictAssessment,
+    assess_semantic_conflict,
 )
 from backend.services.parser_service import ParsedSection, parse_document
 from backend.services.project_metadata_service import (
@@ -78,6 +84,23 @@ class ConflictScanOutcome:
 
     conflict_ids: tuple[int, ...] = ()
     duplicate_document_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class PreparedSemanticConflict:
+    """A source-and-metadata-bound verdict computed before the DB scope lock."""
+
+    sibling_id: int
+    current_analysis_hash: str
+    sibling_analysis_hash: str
+    assessment: SemanticConflictAssessment | None
+
+
+class SemanticConflictPreparationStaleError(DocumentIngestionError):
+    """The locked comparison set differs from the one assessed outside the lock."""
+
+
+SEMANTIC_CONFLICT_ANALYSIS_VERSION = "hybrid-semantic-v2-grounded"
 
 
 @dataclass(frozen=True)
@@ -176,7 +199,9 @@ def ingest_uploaded_document(
             }
         )
         auto_approve = (
-            not classification.requires_admin_review
+            not settings.classification_require_admin_approval_before_indexing
+            and classification.category != DocumentCategory.OTHER
+            and not classification.requires_admin_review
             and classification.confidence >= settings.classification_auto_approve_threshold
         )
         document = update_document_classification_suggestion(
@@ -206,6 +231,18 @@ def ingest_uploaded_document(
         )
         update_document_storage_path(db, document.id, object_key)
 
+        if not auto_approve:
+            # Classification review is a hard boundary for expensive/derived data.
+            # Keep only the original file and the LLM's metadata suggestion until an
+            # Admin explicitly confirms (or corrects) it.  In particular, documents
+            # classified as OTHER can never pollute Qdrant before a human assigns a
+            # supported business category.
+            document.status = DocumentStatus.COMPLETED
+            document.is_current = False
+            db.commit()
+            db.refresh(document)
+            return document
+
         chunks = chunk_sections(
             sections,
             document_category=document.category,
@@ -219,6 +256,10 @@ def ingest_uploaded_document(
         vector_write_attempted = True
         _embed_and_index(document, chunks, is_current=False)
 
+        # LLM work must never hold the MySQL advisory lock. The locked scan below
+        # revalidates source hashes and fails closed if the comparison set changed.
+        semantic_assessments = prepare_semantic_conflict_assessments(db, document, raw_text=raw_text)
+
         # Serialize the compare-and-activate section for one project/category. Without
         # this, two concurrent uploads can both scan while the other is PROCESSING,
         # both see no completed sibling, and both become retrievable.
@@ -226,7 +267,13 @@ def ingest_uploaded_document(
             # Keep the flags in this transaction. A later sibling read can still fail;
             # committing each flag inside the scan would leave an OPEN conflict pointing
             # at a document that the outer handler subsequently marks FAILED.
-            scan = scan_conflicts_for(db, document, raw_text=raw_text, commit=False)
+            scan = _scan_conflicts_with_prepared(
+                db,
+                document,
+                raw_text=raw_text,
+                semantic_assessments=semantic_assessments,
+                commit=False,
+            )
             has_duplicate = bool(scan.duplicate_document_ids)
             document.is_current = (
                 not scan.conflict_ids
@@ -487,6 +534,7 @@ def reclassify_document(
     if not document.file_path:
         raise DocumentIngestionError(f"Document {document_id} has no stored original file to re-index.")
 
+    was_pending_review = document.review_status == DocumentReviewStatus.PENDING
     previous_category = document.category
     previous_project_id = document.project_id
     updates = dict(metadata_updates or {})
@@ -530,22 +578,34 @@ def reclassify_document(
         for field_name, value in updates.items()
         if value != getattr(document, field_name)
     }
-    if not category_changed and not changed_fields:
+    if not category_changed and not changed_fields and not was_pending_review:
         raise DocumentIngestionError(
             f"Document {document_id} is already categorised as {category} and has no metadata corrections."
         )
-    requires_reindex = category_changed or project_changed
+    if was_pending_review and category == DocumentCategory.OTHER:
+        raise DocumentIngestionError(
+            "A document classified as 'other' cannot be approved for AI retrieval. "
+            "Choose a supported business category or remove the document."
+        )
+
+    # New pending documents deliberately have no Qdrant points.  Their first Admin
+    # approval therefore always builds the index, even when the Admin accepts every LLM
+    # suggestion unchanged.
+    requires_reindex = was_pending_review or category_changed or project_changed
     previous_update_values = {field_name: getattr(document, field_name) for field_name in updates}
 
-    # Step 1: stop answering from the old chunks before anything else moves.
-    update_document_vector_metadata(
-        document.id,
-        review_status=document.review_status,
-        legal_status=document.legal_status,
-        category=previous_category,
-        visibility=document.visibility,
-        is_current=False,
-    )
+    # Step 1: stop answering from old chunks before anything else moves. A newly
+    # uploaded PENDING document has no vectors by design, so avoid creating a false
+    # dependency on an existing Qdrant collection just to approve it.
+    if not was_pending_review:
+        update_document_vector_metadata(
+            document.id,
+            review_status=document.review_status,
+            legal_status=document.legal_status,
+            category=previous_category,
+            visibility=document.visibility,
+            is_current=False,
+        )
     document.is_current = False
     db.commit()
 
@@ -559,6 +619,30 @@ def reclassify_document(
             chunks = chunk_sections(sections, document_category=category)
             if not chunks:
                 raise DocumentIngestionError("No chunks were produced for the corrected classification.")
+            section_texts = [
+                section.text if isinstance(section, ParsedSection) else str(section)
+                for section in sections
+            ]
+            comparison_text = sanitize_and_scan("\n\n".join(value for value in section_texts if value.strip()))
+        elif settings.semantic_conflict_detection_enabled:
+            comparison_text = _read_original_text(document)
+        else:
+            # Preserve the lightweight metadata-only correction path when the
+            # optional semantic detector is disabled.  The deterministic scan
+            # can lazily read the source itself (and test doubles need no
+            # object-storage connection at all).
+            comparison_text = None
+
+        comparison_document = _comparison_document_with_updates(
+            document,
+            category=category,
+            updates=updates,
+        )
+        semantic_assessments = prepare_semantic_conflict_assessments(
+            db,
+            comparison_document,
+            raw_text=comparison_text,
+        )
 
         # Step 2: serialize against ingestion in the corrected target scope. The lock's
         # MySQL setup intentionally rolls back/refreshes the Session, so apply metadata
@@ -570,6 +654,10 @@ def reclassify_document(
             if refreshed.status != DocumentStatus.COMPLETED:
                 raise DocumentIngestionError(
                     f"Document {document_id} is no longer ready to be corrected (status={refreshed.status})."
+                )
+            if was_pending_review and refreshed.review_status != DocumentReviewStatus.PENDING:
+                raise DocumentIngestionError(
+                    f"Document {document_id} was reviewed while this approval was running; reload it and retry."
                 )
             if (
                 refreshed.category != previous_category
@@ -598,12 +686,30 @@ def reclassify_document(
 
             # Step 3: the comparison set changed, so the old scan's verdict says
             # nothing about this corrected scope any more.
-            scan = scan_conflicts_for(db, document, commit=False)
-            document.is_current = (
-                not scan.conflict_ids
-                and not scan.duplicate_document_ids
-                and is_document_eligible_after_classification_approval(db, document)
+            scan = _scan_conflicts_with_prepared(
+                db,
+                document,
+                raw_text=comparison_text,
+                semantic_assessments=semantic_assessments,
+                commit=False,
             )
+            has_duplicate = bool(scan.duplicate_document_ids)
+            if has_duplicate:
+                document.review_status = DocumentReviewStatus.REJECTED
+                document.reviewed_by = reviewed_by
+                document.reviewed_at = utcnow()
+                document.status = DocumentStatus.BLOCKED
+                duplicate_ids = ", ".join(str(value) for value in scan.duplicate_document_ids)
+                document.classification_reason = (
+                    f"{document.classification_reason or ''} Exact duplicate of document(s): {duplicate_ids}."
+                ).strip()
+                document.is_current = False
+            else:
+                document.is_current = (
+                    not scan.conflict_ids
+                    and category != DocumentCategory.OTHER
+                    and is_document_eligible_after_classification_approval(db, document)
+                )
             db.commit()
 
             # The commit above makes corrected metadata/conflict flags authoritative,
@@ -618,6 +724,7 @@ def reclassify_document(
                 document.is_current
                 and document.status == DocumentStatus.COMPLETED
                 and document.review_status == DocumentReviewStatus.APPROVED
+                and document.category != DocumentCategory.OTHER
                 and is_document_eligible_after_classification_approval(db, document)
             )
             if document.is_current != publication_current:
@@ -634,6 +741,34 @@ def reclassify_document(
             db.commit()
     except Exception as exc:
         db.rollback()
+        if was_pending_review and requires_reindex:
+            # The deterministic Qdrant upsert can succeed just before a later conflict
+            # scan/DB step fails. Reassert the persisted PENDING quarantine so retries
+            # never leave approval-shaped payload metadata behind.
+            try:
+                persisted = get_document(db, document_id)
+                if persisted is not None:
+                    if persisted.is_current:
+                        persisted.is_current = False
+                        db.commit()
+                        db.refresh(persisted)
+                    update_document_vector_metadata(
+                        persisted.id,
+                        review_status=persisted.review_status,
+                        legal_status=persisted.legal_status,
+                        category=persisted.category,
+                        visibility=persisted.visibility,
+                        is_current=False,
+                    )
+            except Exception:  # pragma: no cover - best-effort cross-store reconciliation
+                logger.exception(
+                    "Could not reassert pending vector quarantine for document %s.",
+                    document_id,
+                    extra={
+                        "event": "document.approval.vector_quarantine.failed",
+                        "document_id": document_id,
+                    },
+                )
         logger.exception(
             "Reclassifying document %s failed; it stays quarantined.",
             document_id,
@@ -689,6 +824,168 @@ def _read_original_file(object_key: str) -> bytes:
             response.release_conn()
 
 
+def prepare_semantic_conflict_assessments(
+    db: Session,
+    document: Document,
+    *,
+    raw_text: str | None = None,
+) -> dict[int, PreparedSemanticConflict]:
+    """Run bounded semantic comparisons before the conflict-scope DB lock."""
+
+    if not settings.semantic_conflict_detection_enabled:
+        return {}
+
+    current_text = raw_text if raw_text is not None else _read_original_text(document)
+    current_content_key = _content_key(current_text)
+    if not current_content_key:
+        raise DocumentIngestionError(f"Document {document.id} has no comparable parsed content.")
+    current_analysis_hash = _semantic_analysis_hash(document, current_content_key)
+
+    prepared: dict[int, PreparedSemanticConflict] = {}
+    remaining = settings.semantic_conflict_max_candidates
+    for sibling in list_completed_siblings(db, document.project_id, exclude_id=document.id):
+        if not _is_semantic_scope_candidate(document, sibling):
+            continue
+
+        sibling_text = _read_original_text(sibling)
+        sibling_content_key = _content_key(sibling_text)
+        if not sibling_content_key:
+            raise DocumentIngestionError(
+                f"Cannot verify conflicts because completed document {sibling.id} has no parsed source content."
+            )
+        if current_content_key == sibling_content_key or (
+            _meaningful_content_key(current_text) == _meaningful_content_key(sibling_text)
+        ):
+            continue
+        if _has_deterministic_conflict(document, sibling, current_text=current_text, sibling_text=sibling_text):
+            continue
+
+        if remaining <= 0:
+            message = (
+                f"Semantic conflict candidate limit was exceeded for document {document.id}; "
+                "the document cannot be published without assessing every relevant sibling."
+            )
+            if settings.semantic_conflict_fail_closed:
+                raise DocumentIngestionError(message)
+            logger.warning(
+                message,
+                extra={
+                    "event": "document.conflict.semantic.candidate_limit_exceeded",
+                    "document_id": document.id,
+                    "candidate_limit": settings.semantic_conflict_max_candidates,
+                },
+            )
+            break
+
+        try:
+            assessment = assess_semantic_conflict(
+                sibling,
+                sibling_text,
+                document,
+                current_text,
+                facts_a=sibling.conflict_facts,
+                facts_b=document.conflict_facts,
+            )
+        except DocumentConflictAssessmentError as exc:
+            if settings.semantic_conflict_fail_closed:
+                raise DocumentIngestionError(
+                    f"Could not complete semantic conflict analysis for document {document.id}."
+                ) from exc
+            logger.warning(
+                "Semantic conflict analysis was skipped after an LLM failure.",
+                extra={
+                    "event": "document.conflict.semantic.skipped",
+                    "document_id": document.id,
+                    "sibling_id": sibling.id,
+                },
+            )
+            assessment = None
+
+        prepared[sibling.id] = PreparedSemanticConflict(
+            sibling_id=sibling.id,
+            current_analysis_hash=current_analysis_hash,
+            sibling_analysis_hash=_semantic_analysis_hash(sibling, sibling_content_key),
+            assessment=assessment,
+        )
+        if assessment is not None:
+            logger.info(
+                "Semantic conflict assessment completed.",
+                extra={
+                    "event": "document.conflict.semantic.completed",
+                    "document_id": document.id,
+                    "sibling_id": sibling.id,
+                    "decision": assessment.decision,
+                    "confidence": assessment.confidence,
+                    "analysis_version": SEMANTIC_CONFLICT_ANALYSIS_VERSION,
+                },
+            )
+        remaining -= 1
+
+    return prepared
+
+
+_COMPARISON_DOCUMENT_FIELDS = (
+    "id",
+    "title",
+    "file_path",
+    "project_id",
+    "category",
+    "subcategory",
+    "subdivision_names",
+    "building_codes",
+    "unit_types",
+    "applicable_area",
+    "version_label",
+    "issued_date",
+    "effective_date",
+    "expiry_date",
+    "applicable_period",
+    "legal_document_number",
+    "legal_status",
+    "conflict_facts",
+)
+
+
+def _semantic_analysis_hash(document: Document, content_key: str) -> str:
+    """Fingerprint every input that can change a semantic verdict.
+
+    Conflict analysis happens before the project-wide advisory lock so the LLM never
+    holds a database lock.  The locked scan must therefore reject not just changed file
+    bytes, but also changed scope, effective dates and extracted conflict facts.
+    """
+
+    payload = {
+        "content": content_key,
+        "metadata": {
+            field: getattr(document, field, None)
+            for field in _COMPARISON_DOCUMENT_FIELDS
+            if field not in {"id", "file_path"}
+        },
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _comparison_document_with_updates(
+    document: Document,
+    *,
+    category: str,
+    updates: dict[str, object],
+) -> Document:
+    """Build a detached metadata view for pre-lock semantic assessment."""
+
+    values = {field: getattr(document, field) for field in _COMPARISON_DOCUMENT_FIELDS}
+    values["category"] = category
+    values.update(updates)
+    return Document(**values)
+
+
 def flag_conflicts_for(
     db: Session,
     document: Document,
@@ -697,14 +994,41 @@ def flag_conflicts_for(
     commit: bool = True,
 ) -> list[int]:
     """Compatibility wrapper returning only flags created/found by the scan."""
+    semantic_assessments = prepare_semantic_conflict_assessments(db, document, raw_text=raw_text)
     return list(
-        scan_conflicts_for(
+        _scan_conflicts_with_prepared(
             db,
             document,
             raw_text=raw_text,
+            semantic_assessments=semantic_assessments,
             commit=commit,
         ).conflict_ids
     )
+
+
+def _scan_conflicts_with_prepared(
+    db: Session,
+    document: Document,
+    *,
+    raw_text: str | None,
+    semantic_assessments: dict[int, PreparedSemanticConflict],
+    commit: bool,
+) -> ConflictScanOutcome:
+    """Pass new semantic input while tolerating intentionally narrow test doubles."""
+
+    signature = inspect.signature(scan_conflicts_for)
+    accepts_semantic = "semantic_assessments" in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
+    )
+    if accepts_semantic:
+        return scan_conflicts_for(
+            db,
+            document,
+            raw_text=raw_text,
+            semantic_assessments=semantic_assessments,
+            commit=commit,
+        )
+    return scan_conflicts_for(db, document, raw_text=raw_text, commit=commit)
 
 
 def scan_conflicts_for(
@@ -712,34 +1036,35 @@ def scan_conflicts_for(
     document: Document,
     *,
     raw_text: str | None = None,
+    semantic_assessments: dict[int, PreparedSemanticConflict] | None = None,
     commit: bool = True,
 ) -> ConflictScanOutcome:
-    """Compare actual business content with older documents of the same scope.
-
-    Price lists use unit/price rows. Other categories compare measurable business
-    facts (discounts, dates, monetary amounts, deadlines, etc.) and retain a
-    same-title fallback for meaningful text changes. Duplicate content is returned as
-    a separate quarantine outcome rather than a conflict.
-    """
+    """Apply deterministic rules plus precomputed, source-grounded LLM verdicts."""
     current_text = raw_text if raw_text is not None else _read_original_text(document)
     current_content_key = _content_key(current_text)
     if not current_content_key:
         raise DocumentIngestionError(f"Document {document.id} has no comparable parsed content.")
-    candidates: list[
+    current_analysis_hash = _semantic_analysis_hash(document, current_content_key)
+    rule_candidates: list[
         tuple[
             Document,
             list[tuple[str, set[int], set[int]]],
             list[tuple[str, set[str], set[str]]],
         ]
     ] = []
+    semantic_candidates: list[tuple[Document, SemanticConflictAssessment]] = []
+    semantic_enabled = settings.semantic_conflict_detection_enabled
+    prepared = semantic_assessments or {}
+    semantic_candidate_count = 0
 
     for sibling in list_completed_siblings(db, document.project_id, exclude_id=document.id):
-        if not _same_business_scope(document, sibling):
+        rule_scope = document.project_id == sibling.project_id and _same_business_scope(document, sibling)
+        semantic_scope = semantic_enabled and _is_semantic_scope_candidate(document, sibling)
+        if not rule_scope and not semantic_scope:
             continue
 
         same_title = _title_key(sibling.title) == _title_key(document.title)
         same_identity = same_title or _shares_legal_identity(document, sibling)
-        is_price_list = document.category == DocumentCategory.PRICE_LIST
         sibling_text = _read_original_text(sibling)
         sibling_content_key = _content_key(sibling_text)
 
@@ -761,41 +1086,75 @@ def scan_conflicts_for(
             return ConflictScanOutcome(duplicate_document_ids=(sibling.id,))
 
         price_differences: list[tuple[str, set[int], set[int]]] = []
-        fact_differences = [
-            *_business_fact_differences(sibling_text, current_text),
-            *_textual_clause_differences(sibling_text, current_text),
-        ]
+        fact_differences: list[tuple[str, set[str], set[str]]] = []
         has_shared_price_scope = False
-        if is_price_list:
+        if rule_scope:
+            fact_differences = [
+                *_business_fact_differences(sibling_text, current_text),
+                *_textual_clause_differences(sibling_text, current_text),
+            ]
+        if rule_scope and document.category == DocumentCategory.PRICE_LIST:
             old_price_facts = _price_facts(sibling_text)
             new_price_facts = _price_facts(current_text)
             price_differences = _price_differences_from_facts(old_price_facts, new_price_facts)
             has_shared_price_scope = bool((old_price_facts.keys() & new_price_facts.keys()) - {"__DOCUMENT_PRICES__"})
 
-        # Shared fact/polarity anchors compare differently named documents. The
-        # same-title or same-legal-number fallback catches prose-only changes. Price
-        # lists also inspect their VAT/eligibility footnotes instead of stopping after
-        # seeing identical numeric rows.
-        if not price_differences and not fact_differences:
-            if not same_identity:
-                continue
-            if _meaningful_content_key(sibling_text) == _meaningful_content_key(current_text):
-                return ConflictScanOutcome(duplicate_document_ids=(sibling.id,))
-
-        # Without a project ID, require positive evidence that the documents concern
-        # the same thing. Shared metadata/title is sufficient; otherwise a shared unit
-        # code or fact anchor discovered in the content must provide the link.
-        if not document.project_id and not (
-            same_identity
+        rule_scope_is_grounded = bool(
+            document.project_id
+            or same_identity
             or _shares_explicit_scope(document, sibling)
             or _has_content_scope_evidence(has_shared_price_scope, fact_differences)
+        )
+        if rule_scope and rule_scope_is_grounded and (price_differences or fact_differences):
+            rule_candidates.append((sibling, price_differences, fact_differences))
+            continue
+
+        # When the feature is disabled, retain the old broad same-title behaviour.
+        # In normal operation the judge decides whether a rewrite is a contradiction
+        # or merely a compatible supplement.
+        if rule_scope and rule_scope_is_grounded and same_identity and not semantic_enabled:
+            rule_candidates.append((sibling, price_differences, fact_differences))
+            continue
+
+        if not semantic_scope or not (
+            document.project_id
+            or same_identity
+            or _shares_explicit_scope(document, sibling)
+            or _shared_conflict_fact_keys(document, sibling)
         ):
             continue
 
-        candidates.append((sibling, price_differences, fact_differences))
+        semantic_candidate_count += 1
+        if semantic_candidate_count > settings.semantic_conflict_max_candidates:
+            if settings.semantic_conflict_fail_closed:
+                raise DocumentIngestionError(
+                    f"Semantic conflict candidate limit was exceeded for document {document.id}."
+                )
+            continue
+
+        prepared_pair = prepared.get(sibling.id)
+        sibling_hash = _semantic_analysis_hash(sibling, sibling_content_key)
+        if (
+            prepared_pair is None
+            or prepared_pair.current_analysis_hash != current_analysis_hash
+            or prepared_pair.sibling_analysis_hash != sibling_hash
+        ):
+            raise SemanticConflictPreparationStaleError(
+                f"Semantic comparison set changed before document {document.id} could be published."
+            )
+        assessment = prepared_pair.assessment
+        if assessment is None:
+            continue
+        if (
+            assessment.decision == "compatible"
+            and assessment.confidence >= settings.semantic_conflict_min_confidence
+        ):
+            continue
+        semantic_candidates.append((sibling, assessment))
 
     created: list[int] = []
-    for sibling, price_differences, fact_differences in candidates:
+    for sibling, price_differences, fact_differences in rule_candidates:
+        conflict_type = "price" if price_differences else "business_fact" if fact_differences else "document_change"
         conflict = create_conflict(
             db,
             document_id_a=sibling.id,
@@ -807,9 +1166,43 @@ def scan_conflicts_for(
                 f"{_format_fact_differences(fact_differences)} "
                 "Kiểm tra và chọn bản được ưu tiên."
             ),
+            detection_method="rule",
+            confidence=1.0,
+            conflict_type=conflict_type,
+            evidence=_rule_evidence_payload(price_differences, fact_differences),
+            analysis_version=SEMANTIC_CONFLICT_ANALYSIS_VERSION,
             commit=False,
         )
-        created.append(conflict.id)
+        if conflict.status == ConflictStatus.OPEN:
+            created.append(conflict.id)
+
+    for sibling, assessment in semantic_candidates:
+        confirmed = assessment.decision == "conflict" and (
+            assessment.confidence >= settings.semantic_conflict_min_confidence
+        )
+        description = (
+            f"AI phát hiện mâu thuẫn ngữ nghĩa giữa '{sibling.title}' và '{document.title}': "
+            f"{assessment.summary}"
+            if confirmed
+            else (
+                f"AI chưa thể loại trừ mâu thuẫn giữa '{sibling.title}' và '{document.title}': "
+                f"{assessment.summary} Cần Admin kiểm tra bằng chứng hai phía."
+            )
+        )
+        conflict = create_conflict(
+            db,
+            document_id_a=sibling.id,
+            document_id_b=document.id,
+            description=description,
+            detection_method="llm",
+            confidence=assessment.confidence,
+            conflict_type=assessment.conflict_type or "semantic_uncertain",
+            evidence=_semantic_evidence_payload(assessment),
+            analysis_version=SEMANTIC_CONFLICT_ANALYSIS_VERSION,
+            commit=False,
+        )
+        if conflict.status == ConflictStatus.OPEN:
+            created.append(conflict.id)
 
     if commit:
         db.commit()
@@ -837,6 +1230,11 @@ def _conflict_scope_lock(
         return
 
     scope_project_id, scope_category = scope or (document.project_id, str(document.category))
+    if settings.semantic_conflict_detection_enabled:
+        # Semantic facts can contradict across categories and global/project boundaries.
+        # One corpus-wide lock makes the precomputed comparison set stable.
+        scope_project_id = "__all_projects__"
+        scope_category = "__semantic_all_categories__"
     scope_key = f"{scope_project_id or '__global__'}:{scope_category}"
     digest = hashlib.sha256(scope_key.encode("utf-8")).hexdigest()[:40]
     lock_name = f"salesmate-ingest:{digest}"
@@ -993,6 +1391,113 @@ def _same_business_scope(left: Document, right: Document) -> bool:
     if left_unit_types and right_unit_types and not left_unit_types & right_unit_types:
         return False
     return True
+
+
+_SEMANTIC_CATEGORY_GROUPS = (
+    frozenset(
+        {
+            DocumentCategory.SALES_POLICY,
+            DocumentCategory.PRICE_LIST,
+            DocumentCategory.INVENTORY_SNAPSHOT,
+            DocumentCategory.PAYMENT_SCHEDULE,
+            DocumentCategory.PROMOTION,
+            DocumentCategory.CONTRACT_TEMPLATE,
+        }
+    ),
+    frozenset(
+        {
+            DocumentCategory.SUBDIVISION_INFO,
+            DocumentCategory.BUILDING_INFO,
+            DocumentCategory.FLOOR_PLAN,
+            DocumentCategory.INVENTORY_SNAPSHOT,
+        }
+    ),
+    frozenset(
+        {
+            DocumentCategory.LEGAL_DOCUMENT,
+            DocumentCategory.CONTRACT_TEMPLATE,
+            DocumentCategory.INTERNAL_GUIDE,
+        }
+    ),
+)
+
+
+def _is_semantic_scope_candidate(left: Document, right: Document) -> bool:
+    """Select pairs broadly enough for paraphrases, without comparing unrelated files."""
+
+    if left.project_id and right.project_id and left.project_id != right.project_id:
+        return False
+    for field in ("subdivision_names", "building_codes"):
+        left_values = _scope_values(left, field)
+        right_values = _scope_values(right, field)
+        if left_values and right_values and not left_values & right_values:
+            return False
+
+    same_identity = _title_key(left.title) == _title_key(right.title) or _shares_legal_identity(left, right)
+    if same_identity or _shares_explicit_scope(left, right) or _shared_conflict_fact_keys(left, right):
+        return True
+    global_and_project = bool(left.project_id) != bool(right.project_id)
+    if global_and_project and left.category == right.category:
+        return True
+    if not left.project_id and not right.project_id:
+        return left.category == right.category or any(
+            left.category in group and right.category in group for group in _SEMANTIC_CATEGORY_GROUPS
+        )
+    if left.category == right.category:
+        return True
+    return any(left.category in group and right.category in group for group in _SEMANTIC_CATEGORY_GROUPS)
+
+
+def _shared_conflict_fact_keys(left: Document, right: Document) -> bool:
+    def keys(document: Document) -> set[str]:
+        result: set[str] = set()
+        for fact in document.conflict_facts or []:
+            if not isinstance(fact, dict):
+                continue
+            key = _metadata_key(str(fact.get("fact_key") or ""))
+            if key:
+                result.add(key)
+        return result
+
+    left_keys = keys(left)
+    right_keys = keys(right)
+    return bool(left_keys and right_keys and left_keys & right_keys)
+
+
+def _has_deterministic_conflict(
+    current: Document,
+    sibling: Document,
+    *,
+    current_text: str,
+    sibling_text: str,
+) -> bool:
+    """Mirror decisive local signals so preparation does not spend an LLM call on them."""
+
+    if current.project_id != sibling.project_id:
+        return False
+    if not _same_business_scope(current, sibling):
+        return False
+    fact_differences = [
+        *_business_fact_differences(sibling_text, current_text),
+        *_textual_clause_differences(sibling_text, current_text),
+    ]
+    has_shared_price_scope = False
+    price_differences: list[tuple[str, set[int], set[int]]] = []
+    if current.category == DocumentCategory.PRICE_LIST:
+        old_price_facts = _price_facts(sibling_text)
+        new_price_facts = _price_facts(current_text)
+        price_differences = _price_differences_from_facts(old_price_facts, new_price_facts)
+        has_shared_price_scope = bool((old_price_facts.keys() & new_price_facts.keys()) - {"__DOCUMENT_PRICES__"})
+    if not price_differences and not fact_differences:
+        return False
+    if current.project_id:
+        return True
+    same_identity = _title_key(current.title) == _title_key(sibling.title) or _shares_legal_identity(current, sibling)
+    return bool(
+        same_identity
+        or _shares_explicit_scope(current, sibling)
+        or _has_content_scope_evidence(has_shared_price_scope, fact_differences)
+    )
 
 
 def _shares_explicit_scope(left: Document, right: Document) -> bool:
@@ -1208,6 +1713,32 @@ def _price_differences_from_facts(
         for key in sorted(old_facts.keys() | new_facts.keys())
         if old_facts.get(key, set()) != new_facts.get(key, set())
     ]
+
+
+def _rule_evidence_payload(
+    price_differences: list[tuple[str, set[int], set[int]]],
+    fact_differences: list[tuple[str, set[str], set[str]]],
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "rule": {
+            "price_differences": [
+                {"fact_key": key, "document_a": sorted(old), "document_b": sorted(new)}
+                for key, old, new in price_differences[:20]
+            ],
+            "fact_differences": [
+                {"fact_key": key, "document_a": sorted(old), "document_b": sorted(new)}
+                for key, old, new in fact_differences[:20]
+            ],
+        },
+    }
+
+
+def _semantic_evidence_payload(assessment: SemanticConflictAssessment) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "semantic": assessment.model_dump(mode="json"),
+    }
 
 
 def _format_price_differences(

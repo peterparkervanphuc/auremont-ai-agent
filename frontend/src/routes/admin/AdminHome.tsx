@@ -8,8 +8,10 @@ import {
   DocumentIcon,
   RefreshIcon,
   ShieldCheckIcon,
+  SparklesIcon,
   UsersIcon,
 } from "../../components/Icons";
+import { LegacyReclassificationModal } from "../../components/admin/LegacyReclassificationModal";
 import { useAuth } from "../../hooks/useAuth";
 import type { BusinessDashboard, BusinessSummaryBase } from "../../types/admin";
 
@@ -436,6 +438,7 @@ export function AdminHome() {
   const [saleId, setSaleId] = useState("");
   const [detail, setDetail] = useState<DashboardDetail | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [reclassificationOpen, setReclassificationOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -633,11 +636,17 @@ export function AdminHome() {
       </div>
 
       <section className="business-panel business-coverage-panel">
-        <div className="business-panel-head"><div><h3>Độ phủ tài liệu theo dự án</h3><p>Metadata xác định ô liên quan; ô xanh chỉ khi tài liệu đã duyệt, ingest xong và project_id khớp để AI truy xuất</p></div><div className="business-coverage-legend"><span><i className="coverage-ready" />Sẵn sàng</span><span><i className="coverage-pending_review" />Chờ duyệt</span><span><i className="coverage-unavailable" />Chưa sẵn sàng</span><span><i className="coverage-missing" />Chưa có</span></div></div>
+        <div className="business-panel-head"><div><h3>Độ phủ tài liệu theo dự án</h3><p>Metadata xác định ô liên quan; ô xanh chỉ khi tài liệu đã duyệt, ingest xong và project_id khớp để AI truy xuất</p></div><div className="business-coverage-actions"><div className="business-coverage-legend"><span><i className="coverage-ready" />Sẵn sàng</span><span><i className="coverage-pending_review" />Chờ duyệt</span><span><i className="coverage-unavailable" />Chưa sẵn sàng</span><span><i className="coverage-missing" />Chưa có</span></div><button className="btn btn-sm btn-outline business-reclassify-button" type="button" onClick={() => setReclassificationOpen(true)}><SparklesIcon size={15} />Phân loại lại bằng AI</button></div></div>
         {data.document_coverage.length === 0 ? <div className="business-empty">Chưa có dữ liệu dự án.</div> : <div className="business-coverage-table"><div className="business-coverage-head"><span>Dự án</span>{Object.values(CATEGORY_LABELS).map((label) => <span key={label}>{label}</span>)}</div>{data.document_coverage.map((project) => <div className="business-coverage-row" key={project.project_id}><strong>{project.name}</strong>{Object.keys(CATEGORY_LABELS).map((category) => { const state = project.categories[category] ?? "missing"; const stateLabel = COVERAGE_STATE_LABELS[state]; return <Link key={category} to={`/documents?coverage_scope=${encodeURIComponent(project.project_id)}&category=${category}`} className={`coverage-cell coverage-${state}`} title={`${CATEGORY_LABELS[category]} · ${stateLabel}`} aria-label={`${CATEGORY_LABELS[category]} của ${project.name}: ${stateLabel}`}><i /></Link>; })}</div>)}</div>}
       </section>
 
       {detail && <aside className="business-detail-drawer" aria-live="polite"><div><div><p>Chi tiết dashboard</p><h3>{detail.title}</h3><span>{detail.subtitle}</span></div><button type="button" onClick={() => setDetail(null)} aria-label="Đóng chi tiết">×</button></div><dl>{detail.rows.map((row) => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl></aside>}
+
+      <LegacyReclassificationModal
+        open={reclassificationOpen}
+        onClose={() => setReclassificationOpen(false)}
+        onApplied={() => setRefreshKey((value) => value + 1)}
+      />
 
       <p className="business-footnote">Nguồn: dữ liệu MySQL của SalesMate, gom ngày theo {data.period.timezone}. Dashboard không hiển thị doanh thu, hợp đồng hay tỷ lệ chốt vì hệ thống chưa lưu các dữ liệu này.</p>
     </div>

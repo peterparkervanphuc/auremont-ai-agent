@@ -121,11 +121,42 @@ export interface ConflictDocumentSummary {
   classification_reason: string | null;
 }
 
+export interface ConflictSemanticEvidenceItem {
+  quote_a: string;
+  quote_b: string;
+  fact_key: string;
+  same_business_fact: boolean;
+  same_scope_and_conditions: boolean;
+  effective_periods_overlap: boolean;
+  claims_mutually_exclusive: boolean;
+  explanation: string;
+}
+
+export interface ConflictEvidence {
+  schema_version?: number;
+  semantic?: {
+    decision: "conflict" | "compatible" | "uncertain";
+    confidence: number;
+    conflict_type: string | null;
+    summary: string;
+    evidence: ConflictSemanticEvidenceItem[];
+  };
+  rule?: {
+    price_differences?: Array<{ fact_key: string; document_a: number[]; document_b: number[] }>;
+    fact_differences?: Array<{ fact_key: string; document_a: string[]; document_b: string[] }>;
+  };
+}
+
 export interface ConflictDetail {
   id: number;
   document_id_a: number;
   document_id_b: number;
   description: string | null;
+  detection_method: "rule" | "llm" | "hybrid";
+  confidence: number | null;
+  conflict_type: string | null;
+  evidence: ConflictEvidence | null;
+  analysis_version: string | null;
   status: "open" | "resolved";
   created_at: string;
   resolved_at: string | null;
@@ -180,4 +211,80 @@ export interface BusinessDashboard {
     ready_count: number;
     categories: Record<string, "ready" | "pending_review" | "unavailable" | "missing">;
   }[];
+}
+
+export interface LegacyReclassificationCandidate {
+  document_id: number;
+  title: string;
+  status: string;
+  category: string;
+  project_id: string | null;
+  classification_version: string | null;
+  classification_confidence: number | null;
+}
+
+export interface ReclassificationMetadataChange {
+  stored: unknown;
+  suggested: unknown;
+}
+
+export interface ReclassificationProjectCandidate {
+  project_id: string;
+  project_name: string;
+  confidence: number;
+  reason: string;
+}
+
+export interface ReclassificationProjectResolution {
+  stored_project_id: string | null;
+  llm_project_id: string | null;
+  recommended_project_id: string | null;
+  candidates: ReclassificationProjectCandidate[];
+  requires_confirmation: boolean;
+  warning: string | null;
+}
+
+export interface ReclassificationPreviewItem {
+  document_id: number;
+  title: string;
+  status: string;
+  source_sha256: string | null;
+  suggestion: Record<string, unknown> | null;
+  changes: Record<string, ReclassificationMetadataChange>;
+  project_resolution: ReclassificationProjectResolution | null;
+  confirmation_token: string | null;
+  error: string | null;
+}
+
+export interface ReclassificationPreviewResponse {
+  items: ReclassificationPreviewItem[];
+  previewed: number;
+  failed: number;
+}
+
+export type ReclassificationProjectAction = "keep" | "assign" | "clear";
+
+export interface ReclassificationApplyItem {
+  confirmation_token: string;
+  project_action: ReclassificationProjectAction;
+  project_id?: string;
+}
+
+export interface ReclassificationApplyResult {
+  document_id: number | null;
+  title: string | null;
+  status: string;
+  category: string | null;
+  project_id: string | null;
+  is_current: boolean | null;
+  reindexed: boolean;
+  conflict_ids: number[];
+  duplicate_document_ids: number[];
+  error: string | null;
+}
+
+export interface ReclassificationApplyResponse {
+  items: ReclassificationApplyResult[];
+  applied: number;
+  failed: number;
 }

@@ -3,6 +3,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.core.config import settings
 from backend.core.context import request_id_var
 from backend.core.logging_config import AUDIT_LOGGER_NAME
 from backend.main import app
@@ -32,6 +33,20 @@ def _reset_request_id():
     token = request_id_var.set("")
     yield
     request_id_var.reset(token)
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_semantic_conflict_calls(monkeypatch):
+    """Unit tests opt in explicitly; no test may accidentally spend an LLM request."""
+
+    monkeypatch.setattr(settings, "semantic_conflict_detection_enabled", False)
+
+
+@pytest.fixture(autouse=True)
+def _disable_live_observability_writes(monkeypatch):
+    """Tests opt in explicitly; never write test metrics to a developer's MySQL."""
+
+    monkeypatch.setattr(settings, "observability_metrics_enabled", False)
 
 
 @pytest.fixture

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any, Literal
 
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -15,6 +16,9 @@ from backend.models.document import Document
 from backend.models.document_relation import DocumentRelation
 from backend.utils.time import utcnow
 
+DetectionMethod = Literal["rule", "llm", "hybrid"]
+_DETECTION_METHODS = frozenset({"rule", "llm", "hybrid"})
+
 
 def create_conflict(
     db: Session,
@@ -22,18 +26,32 @@ def create_conflict(
     document_id_b: int,
     description: str | None,
     *,
+    detection_method: DetectionMethod = "rule",
+    confidence: float | None = None,
+    similarity_score: float | None = None,
+    conflict_type: str | None = None,
+    evidence: dict[str, Any] | None = None,
+    analysis_version: str | None = None,
     commit: bool = True,
 ) -> ConflictFlag:
     """Create one open flag per document pair.
 
     Conflict scans may be retried, and a document can be scanned manually after
     ingestion. Returning the existing open flag keeps those retries idempotent even
-    without a schema migration for a canonical pair key.
+    without a schema migration for a canonical pair key. A later semantic scan enriches
+    the same open flag instead of creating a duplicate. None means "not measured" and
+    therefore never clears evidence already persisted by an earlier detector.
     """
-    existing = (
+    _validate_analysis_metadata(detection_method, confidence, similarity_score)
+    # Store new pairs in a canonical orientation. Existing legacy rows may use either
+    # orientation, so evidence is reoriented again below before enrichment.
+    if document_id_a > document_id_b:
+        document_id_a, document_id_b = document_id_b, document_id_a
+        evidence = _swap_evidence_sides(evidence)
+
+    latest = (
         db.query(ConflictFlag)
         .filter(
-            ConflictFlag.status == ConflictStatus.OPEN,
             or_(
                 and_(
                     ConflictFlag.document_id_a == document_id_a,
@@ -45,15 +63,52 @@ def create_conflict(
                 ),
             ),
         )
+        .order_by(ConflictFlag.id.desc())
+        .with_for_update()
         .first()
     )
+    if latest is not None and latest.status != ConflictStatus.OPEN:
+        # An Admin decision for this exact immutable pair is authoritative. This also
+        # closes the race where a precomputed scan waits behind resolution and would
+        # otherwise recreate the alert immediately after it was closed.
+        return latest
+
+    existing = latest
     if existing is not None:
+        incoming_is_reversed = (
+            existing.document_id_a == document_id_b
+            and existing.document_id_b == document_id_a
+        )
+        if incoming_is_reversed:
+            evidence = _swap_evidence_sides(evidence)
+        changed = _enrich_conflict(
+            existing,
+            description=description,
+            detection_method=detection_method,
+            confidence=confidence,
+            similarity_score=similarity_score,
+            conflict_type=conflict_type,
+            evidence=evidence,
+            analysis_version=analysis_version,
+        )
+        if changed:
+            if commit:
+                db.commit()
+                db.refresh(existing)
+            else:
+                db.flush()
         return existing
 
     conflict = ConflictFlag(
         document_id_a=document_id_a,
         document_id_b=document_id_b,
         description=description,
+        detection_method=detection_method,
+        confidence=confidence,
+        similarity_score=similarity_score,
+        conflict_type=conflict_type,
+        evidence=evidence,
+        analysis_version=analysis_version,
         status=ConflictStatus.OPEN,
     )
     db.add(conflict)
@@ -65,6 +120,124 @@ def create_conflict(
         # the same scan, while keeping it part of the caller's transaction.
         db.flush()
     return conflict
+
+
+def _validate_analysis_metadata(
+    detection_method: str,
+    confidence: float | None,
+    similarity_score: float | None,
+) -> None:
+    if detection_method not in _DETECTION_METHODS:
+        raise ValueError(f"Unsupported conflict detection method: {detection_method!r}.")
+    for field_name, value in (("confidence", confidence), ("similarity_score", similarity_score)):
+        if value is not None and not 0 <= value <= 1:
+            raise ValueError(f"{field_name} must be between 0 and 1.")
+
+
+def _merged_detection_method(current: str | None, incoming: DetectionMethod) -> DetectionMethod:
+    if current in (None, incoming):
+        return incoming
+    if current == "hybrid" or incoming == "hybrid":
+        return "hybrid"
+    if current in _DETECTION_METHODS:
+        return "hybrid"
+    # Defensive compatibility for an imported row with unknown legacy provenance.
+    return incoming
+
+
+def _merge_evidence(current: dict[str, Any] | None, incoming: dict[str, Any]) -> dict[str, Any]:
+    """Merge detector evidence without discarding facts collected by another source."""
+
+    if current is None:
+        return dict(incoming)
+
+    merged: dict[str, Any] = dict(current)
+    for key, incoming_value in incoming.items():
+        # These are complete versioned detector snapshots, not append-only event lists.
+        # Replacing one detector's namespace prevents a new confidence/version header
+        # from being displayed beside stale quotes from an older analysis.
+        if key in {"rule", "semantic"}:
+            merged[key] = incoming_value
+            continue
+        current_value = merged.get(key)
+        if isinstance(current_value, dict) and isinstance(incoming_value, dict):
+            merged[key] = _merge_evidence(current_value, incoming_value)
+        elif isinstance(current_value, list) and isinstance(incoming_value, list):
+            merged[key] = [*current_value]
+            for value in incoming_value:
+                if value not in merged[key]:
+                    merged[key].append(value)
+        else:
+            merged[key] = incoming_value
+    return merged
+
+
+_EVIDENCE_SIDE_KEY_PAIRS = (
+    ("document_a", "document_b"),
+    ("document_id_a", "document_id_b"),
+    ("quote_a", "quote_b"),
+    ("claim_a", "claim_b"),
+    ("scope_a", "scope_b"),
+    ("effective_period_a", "effective_period_b"),
+)
+
+
+def _swap_evidence_sides(value: Any) -> Any:
+    """Recursively map incoming A/B evidence to the persisted pair orientation."""
+
+    if isinstance(value, list):
+        return [_swap_evidence_sides(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    swapped = {key: _swap_evidence_sides(item) for key, item in value.items()}
+    for key_a, key_b in _EVIDENCE_SIDE_KEY_PAIRS:
+        has_a = key_a in swapped
+        has_b = key_b in swapped
+        if not has_a and not has_b:
+            continue
+        value_a = swapped.pop(key_a, None)
+        value_b = swapped.pop(key_b, None)
+        if has_b:
+            swapped[key_a] = value_b
+        if has_a:
+            swapped[key_b] = value_a
+    return swapped
+
+
+def _enrich_conflict(
+    conflict: ConflictFlag,
+    *,
+    description: str | None,
+    detection_method: DetectionMethod,
+    confidence: float | None,
+    similarity_score: float | None,
+    conflict_type: str | None,
+    evidence: dict[str, Any] | None,
+    analysis_version: str | None,
+) -> bool:
+    updates: dict[str, Any] = {
+        "description": description,
+        "confidence": confidence,
+        "similarity_score": similarity_score,
+        "conflict_type": conflict_type,
+        "analysis_version": analysis_version,
+    }
+    merged_method = _merged_detection_method(conflict.detection_method, detection_method)
+    changed = merged_method != conflict.detection_method
+    conflict.detection_method = merged_method
+
+    for field_name, value in updates.items():
+        if value is not None and getattr(conflict, field_name) != value:
+            setattr(conflict, field_name, value)
+            changed = True
+
+    if evidence is not None:
+        merged_evidence = _merge_evidence(conflict.evidence, evidence)
+        if merged_evidence != conflict.evidence:
+            conflict.evidence = merged_evidence
+            changed = True
+    return changed
 
 
 def list_open_conflicts(db: Session) -> list[ConflictFlag]:

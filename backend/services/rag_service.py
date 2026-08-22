@@ -33,7 +33,7 @@ from qdrant_client import models
 from backend.core.cohere_client import CohereRerankError
 from backend.core.cohere_client import rerank as cohere_rerank
 from backend.core.config import settings
-from backend.core.enums import DocumentReviewStatus, DocumentVisibility
+from backend.core.enums import DocumentCategory, DocumentReviewStatus, DocumentVisibility
 from backend.core.gemini_client import GeminiEmbeddingError, embed_query
 from backend.core.qdrant_client import get_qdrant_client
 from backend.core.sparse_embedding import SparseEmbeddingError, embed_query_sparse
@@ -134,7 +134,19 @@ def retrieve(
             models.IsNullCondition(is_null=models.PayloadField(key="project_id")),
         ]
 
-    query_filter = models.Filter(must=conditions, should=project_scope)
+    query_filter = models.Filter(
+        must=conditions,
+        should=project_scope,
+        # `other` means the classifier could not map the source to a supported
+        # knowledge-base purpose. Keep this defense even if stale DB/Qdrant metadata
+        # accidentally marks such a document approved and current.
+        must_not=[
+            models.FieldCondition(
+                key="category",
+                match=models.MatchValue(value=DocumentCategory.OTHER),
+            )
+        ],
+    )
     candidate_limit = top_k * OVERFETCH_FACTOR
 
     client = get_qdrant_client()

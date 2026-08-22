@@ -102,6 +102,9 @@ class Document(Base):
     classification_requires_admin_review: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     classification_version: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     classified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Canonical business facts extracted by the classifier for semantic conflict
+    # comparison. The JSON shape is versioned by `classification_version`.
+    conflict_facts: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
 
     reviewed_by: Mapped[int | None] = mapped_column(
         Integer,

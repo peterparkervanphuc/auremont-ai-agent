@@ -14,22 +14,24 @@ Tồn kho căn được tra **real-time qua HTTP**, không ingest vào Qdrant �
 
 **Bước 1 — Tạo resource trên mockapi.io**
 
-Tạo project mới, thêm resource tên `units` với 5 field dưới đây (mockapi tự thêm `id`, `lookup_inventory` sẽ bỏ qua field lạ này):
+Tạo project mới, thêm resource tên `units` với các field dưới đây (mockapi tự thêm `id`, `lookup_inventory` sẽ bỏ qua field lạ này):
 
 | Field | Kiểu | Ví dụ | Ghi chú |
 | :--- | :--- | :--- | :--- |
-| `unit_code` | string | `OP3-A-0203` | Mã căn |
-| `project_id` | string | `ocean-park-3` | Khớp `project_id` truyền vào khi tra cứu |
+| `unit_code` | string | `OCP1-S1-0203` | Mã căn |
+| `project_id` | string | `ocp1` | Khớp `project_id` truyền vào khi tra cứu |
+| `subdivision` | string | `The Sapphire 1` | Phân khu dùng để lọc câu hỏi tự nhiên |
 | `unit_type` | string | `2PN` | `1PN`…`10PN`, `Penthouse`, `Studio`, `Shophouse`, `Duplex` |
-| `price` | number | `3600000000` | VND. Nhận cả chuỗi `"3600000000"` |
+| `area_m2` | number | `54.0` | Diện tích thông thủy/tim tường theo nguồn |
+| `price` | number | `2880000000` | VND. Nhận cả chuỗi `"2880000000"` |
 | `status` | string | `available` | `available` / `reserved` / `sold` |
 
 Endpoint trả về một JSON array:
 
 ```json
 [
-  { "unit_code": "OP3-A-0203", "project_id": "ocean-park-3",
-    "unit_type": "2PN", "price": 3600000000, "status": "available" }
+  { "unit_code": "OCP1-S1-0203", "project_id": "ocp1", "subdivision": "The Sapphire 1",
+    "unit_type": "2PN", "price": 2880000000, "status": "available" }
 ]
 ```
 
@@ -47,7 +49,7 @@ INVENTORY_API_KEY=
 **Bước 3 — Kiểm tra**
 
 ```bash
-python -c "from backend.services.inventory_service import lookup_inventory; print(lookup_inventory('ocean-park-3', 'Còn căn 2PN nào trống không?'))"
+python -c "from backend.services.inventory_service import lookup_inventory; print(lookup_inventory('ocp1', 'Còn căn 2 ngủ nào trống ở The Sapphire không?'))"
 
 # hoặc unit test (không cần mạng, đã mock sẵn httpx)
 pytest tests/test_services/test_inventory_service.py -v
@@ -56,10 +58,35 @@ pytest tests/test_services/test_inventory_service.py -v
 **Cách hàm hoạt động** — `lookup_inventory(project_id, query)` trong `backend/services/inventory_service.py`:
 
 - Gửi `project_id` làm query param, timeout 5 giây.
-- Đọc loại căn ngay trong câu hỏi tự nhiên của Sale ("còn căn **2PN** không") và lọc theo đó; không nhắc loại căn nào thì trả cả bảng hàng.
+- Đọc loại căn ngay trong câu hỏi tự nhiên của Sale ("còn căn **2PN** không", "còn căn **2 ngủ** không") và lọc theo đó; không nhắc loại căn nào thì trả cả bảng hàng.
+- Lọc phân khu theo tên/alias: "The Sapphire" lấy cả Sapphire 1 và 2, còn "Sapphire 1" chỉ lấy đúng phân khu con đó.
+- Mọi field `unit_code`, `project_id`, `subdivision`, `unit_type`, `area_m2`, `price`, `status` đều được truyền vào Generate và Verifier; câu hỏi tiếp theo được kế thừa các điều kiện gần nhất chưa bị thay thế.
 - **Không còn căn khớp → trả về `[]`**, đây là câu trả lời hợp lệ ("hết căn 2PN").
 - **Không gọi được API → raise `InventoryApiError`**, để pipeline hiển thị "Tạm thời không tra được tồn kho". Hai trường hợp này tách bạch: gộp lại sẽ báo lỗi hệ thống trong khi thực chất chỉ là hết hàng.
 - Record thiếu field bắt buộc bị bỏ qua thay vì làm hỏng cả lần tra cứu.
+
+## Phát hiện mâu thuẫn tài liệu hybrid
+
+Luồng ingest dùng hai lớp và không cho LLM tự chọn tài liệu thắng:
+
+1. LLM phân loại đồng thời trích `conflict_facts` chuẩn hóa, mỗi fact phải có trích dẫn tồn tại trong nguồn.
+2. Rule xử lý duplicate, mã căn, giá, ngày, tỷ lệ và các thay đổi số liệu chắc chắn.
+3. Với cặp cùng phạm vi mà rule không kết luận được, semantic judge so sánh fact/ngữ cảnh và trả structured evidence A/B.
+4. Kết quả `conflict`, `uncertain` hoặc `compatible` có confidence dưới ngưỡng đều giữ tài liệu mới ngoài RAG và tạo cảnh báo để Admin duyệt.
+5. Tài liệu theo dự án được đối chiếu cả với chính sách toàn hệ thống; evidence chỉ hợp lệ khi quote đúng nguồn và cùng business fact, phạm vi/điều kiện, kỳ hiệu lực.
+
+Các lời gọi LLM chạy trước advisory lock. Khi vào lock, scanner kiểm tra lại fingerprint gồm nguồn, scope, thời gian và `conflict_facts`; nếu xuất hiện/thay đổi tài liệu đồng thời hoặc số candidate vượt giới hạn, hệ thống fail-closed thay vì công bố nhầm tài liệu. Một kết luận `compatible` trên tài liệu dài đã phải lấy mẫu luôn bị hạ thành `uncertain`, vì phần bị lược bỏ chưa thể chứng minh là sạch.
+
+| Biến | Mặc định | Ý nghĩa |
+| :--- | :--- | :--- |
+| `SEMANTIC_CONFLICT_DETECTION_ENABLED` | `true` | Bật semantic judge sau lớp rule. |
+| `SEMANTIC_CONFLICT_FAIL_CLOSED` | `true` | Lỗi/quota LLM giữ tài liệu cách ly thay vì xem là sạch. |
+| `SEMANTIC_CONFLICT_MIN_CONFIDENCE` | `0.75` | Ngưỡng hiển thị kết luận chắc chắn; thấp hơn vẫn chuyển Admin dưới dạng nghi ngờ. |
+| `SEMANTIC_CONFLICT_MAX_CANDIDATES` | `40` | Số cặp semantic tối đa; vượt ngưỡng sẽ cách ly/fail-closed, không bỏ qua âm thầm. |
+| `SEMANTIC_CONFLICT_MAX_CHARS_PER_DOCUMENT` | `48000` | Giới hạn mẫu phân bố đưa vào một phép so sánh. Tài liệu bị lấy mẫu không được tự động kết luận sạch. |
+| `SEMANTIC_CONFLICT_SAMPLE_SEGMENTS` | `5` | Số vùng đầu/giữa/cuối được phân bố đều trong mẫu dài. |
+| `SEMANTIC_CONFLICT_MAX_FACTS_PER_DOCUMENT` | `200` | Số fact chuẩn hóa tối đa gửi cho semantic judge. |
+| `SEMANTIC_CONFLICT_MAX_FACT_CHARS_PER_DOCUMENT` | `32000` | Ngân sách ký tự riêng cho fact để chặn prompt phình lớn. |
 
 ## Chạy thủ công (dev mode, hot reload)
 

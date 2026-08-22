@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from backend.core.enums import DocumentCategory, LegalStatus
 from backend.services import document_classification_service as classification_service
 from backend.services.document_classification_service import (
+    ConflictFact,
     DocumentClassification,
     DocumentClassificationError,
     DocumentClassificationQuotaError,
@@ -100,6 +101,31 @@ def test_classifier_quarantines_an_invented_project_id(monkeypatch):
     assert "không tồn tại" in result.reason
 
 
+def test_classifier_discards_conflict_fact_without_verbatim_source_evidence(monkeypatch):
+    expected = _classification(
+        conflict_facts=[
+            ConflictFact(
+                fact_key="payment.deadline",
+                claim="Thanh toan trong 45 ngay.",
+                value="45",
+                unit="day",
+                polarity="affirmative",
+                evidence="Thanh toan trong 45 ngay",
+            )
+        ]
+    )
+    monkeypatch.setattr(classification_service, "generate_json", lambda *_args, **_kwargs: expected)
+
+    result = classification_service.classify_document(
+        "payment.pdf",
+        "Tai lieu chi ghi thanh toan trong 30 ngay.",
+    )
+
+    assert result.conflict_facts == []
+    assert result.requires_admin_review is True
+    assert "discarded" in result.reason
+
+
 def test_response_schema_avoids_fields_rejected_by_gemini():
     assert "additionalProperties" not in DocumentClassification.model_json_schema()
 
@@ -157,6 +183,34 @@ def test_classification_model_normalizes_optional_strings_and_lists():
     assert result.unit_types == ["2PN", "3PN"]
     assert result.applicable_area is None
     assert result.reason == "Có tiêu đề rõ ràng."
+
+
+def test_classifier_normalizes_and_deduplicates_grounded_conflict_facts():
+    result = _classification(
+        conflict_facts=[
+            ConflictFact(
+                fact_key=" Payment / First installment / Deadline ",
+                claim="Thanh toan dot mot trong 30 ngay.",
+                value="30",
+                unit="day",
+                scope="The Beverly",
+                polarity="affirmative",
+                evidence="Thanh toan dot mot trong vong 30 ngay",
+            ),
+            ConflictFact(
+                fact_key="payment.first_installment.deadline",
+                claim="Cach viet khac cua cung mot fact.",
+                value="30",
+                unit="day",
+                scope="the beverly",
+                polarity="affirmative",
+                evidence="Hoan tat dot mot trong 30 ngay",
+            ),
+        ]
+    )
+
+    assert result.conflict_facts[0].fact_key == "payment.first.installment.deadline"
+    assert len(result.conflict_facts) == 1
 
 
 def test_invalid_llm_metadata_is_rejected_by_schema():

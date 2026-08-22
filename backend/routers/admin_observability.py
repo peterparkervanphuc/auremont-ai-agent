@@ -15,6 +15,7 @@ from backend.core.tracing import read_runs
 from backend.models.audit_log import AuditLog
 from backend.models.chat_session import ChatSession
 from backend.models.message import Message
+from backend.models.observability import LlmUsageEvent, PipelineTraceRun
 from backend.models.project import Project
 from backend.schemas.admin_dashboard import (
     AuditLogEntry,
@@ -60,12 +61,34 @@ def _parse_trace_time(value: object) -> datetime | None:
     return parsed
 
 
-def _trace_runs_since(cutoff: datetime) -> list[dict[str, Any]]:
-    rows = []
+def _trace_runs_since(db: Session, cutoff: datetime) -> list[dict[str, Any]]:
+    """Read durable traces first and merge legacy/debug JSONL records by run id."""
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    stored = (
+        db.query(PipelineTraceRun)
+        .filter(PipelineTraceRun.started_at >= cutoff)
+        .order_by(PipelineTraceRun.started_at.desc())
+        .limit(5_000)
+        .all()
+    )
+    for row in stored:
+        if not isinstance(row.payload, dict):
+            continue
+        raw = dict(row.payload)
+        raw.setdefault("run_id", row.run_id)
+        raw.setdefault("started_at", row.started_at.isoformat())
+        rows.append(raw)
+        seen.add(row.run_id)
+
     for raw in read_runs():
         started_at = _parse_trace_time(raw.get("started_at"))
-        if started_at is not None and started_at >= cutoff:
+        run_id = raw.get("run_id")
+        if started_at is not None and started_at >= cutoff and run_id not in seen:
             rows.append(raw)
+            if isinstance(run_id, str):
+                seen.add(run_id)
     return sorted(rows, key=lambda row: str(row.get("started_at", "")), reverse=True)
 
 
@@ -163,17 +186,37 @@ def _tool_metrics(runs: list[dict[str, Any]]) -> list[ToolReliabilityMetric]:
     return sorted(result, key=lambda row: (row.errors, row.calls), reverse=True)
 
 
-def _token_metrics(runs: list[dict[str, Any]], period_days: int) -> TokenMonitoringMetric:
+def _token_metrics(
+    db: Session,
+    runs: list[dict[str, Any]],
+    period_days: int,
+    cutoff: datetime,
+) -> TokenMonitoringMetric:
     today = date.today()
     daily: dict[date, dict[str, int]] = {
         today - timedelta(days=offset): {"input": 0, "output": 0} for offset in range(period_days)
     }
+
+    # Provider usage is the source of truth and includes classification/conflict LLM
+    # calls that never enter the chat pipeline. usage_id lets us merge legacy JSONL
+    # traces below without double-counting newer pipeline calls.
+    usage_rows = db.query(LlmUsageEvent).filter(LlmUsageEvent.created_at >= cutoff).all()
+    persisted_usage_ids = {row.usage_id for row in usage_rows}
+    for row in usage_rows:
+        if row.created_at.date() not in daily:
+            continue
+        daily[row.created_at.date()]["input"] += int(row.input_tokens or 0)
+        daily[row.created_at.date()]["output"] += int(row.output_tokens or 0)
+
     for run in runs:
         started_at = _parse_trace_time(run.get("started_at"))
         if started_at is None or started_at.date() not in daily:
             continue
         for step in run.get("steps") or []:
             if not isinstance(step, dict) or step.get("name") != "llm.usage":
+                continue
+            usage_id = step.get("usage_id")
+            if isinstance(usage_id, str) and usage_id in persisted_usage_ids:
                 continue
             daily[started_at.date()]["input"] += int(step.get("input_tokens") or 0)
             daily[started_at.date()]["output"] += int(step.get("output_tokens") or 0)
@@ -342,7 +385,7 @@ async def get_observability_overview(
     cutoff = now - timedelta(days=days)
     day_cutoff = now - timedelta(days=1)
     month_cutoff = now - timedelta(days=30)
-    runs = _trace_runs_since(cutoff)
+    runs = _trace_runs_since(db, cutoff)
 
     audit_rows = (
         db.query(AuditLog)
@@ -376,7 +419,7 @@ async def get_observability_overview(
     return ObservabilityOverviewResponse(
         generated_at=now,
         period_days=days,
-        tracing_enabled=settings.tracing_enabled,
+        tracing_enabled=settings.observability_metrics_enabled or settings.tracing_enabled,
         tool_reliability=_tool_metrics(runs),
         users=UserMonitoringMetric(
             dau=int(dau),
@@ -384,7 +427,7 @@ async def get_observability_overview(
             active_sessions=active_sessions,
             waiting_sessions=waiting_sessions,
         ),
-        tokens=_token_metrics(runs, days),
+        tokens=_token_metrics(db, runs, days, cutoff),
         most_used_modules=[ModuleUsageMetric(module=name, calls=count) for name, count in modules.most_common(8)],
         logs=_audit_logs(audit_rows, severity=severity, module=module)[:100],
         traces=trace_rows,
@@ -395,7 +438,12 @@ async def get_observability_overview(
 
 
 @router.get("/traces/{run_id}", response_model=TraceSummaryResponse)
-async def get_trace(run_id: str) -> TraceSummaryResponse:
+async def get_trace(run_id: str, db: Session = Depends(get_db)) -> TraceSummaryResponse:
+    stored = db.query(PipelineTraceRun).filter(PipelineTraceRun.run_id == run_id).first()
+    if stored is not None and isinstance(stored.payload, dict):
+        trace = _to_trace(stored.payload)
+        if trace is not None:
+            return trace
     for raw in read_runs():
         if raw.get("run_id") == run_id:
             trace = _to_trace(raw)

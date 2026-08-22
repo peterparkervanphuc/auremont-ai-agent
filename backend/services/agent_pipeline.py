@@ -41,6 +41,7 @@ from backend.ai.intent import (
     is_conversation_meta_query,
     is_customer_memory_query,
     is_search_refinement,
+    mentions_inventory_followup_field,
     names_specific_document_topic,
     preflight_policy,
 )
@@ -487,7 +488,13 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     # Keyword classification stays on the bare current-turn query — expanding it here
     # would let an old turn's inventory/document keywords leak into a question that no
     # longer needs them. Only the string actually embedded for retrieval is expanded.
-    needs_inventory = query_needs_inventory(query)
+    inventory_context_queries = _inventory_context_queries(state.get("history"))
+    continues_inventory_lookup = bool(
+        inventory_context_queries
+        and mentions_inventory_followup_field(query)
+        and any(query_needs_inventory(context_query) for context_query in inventory_context_queries)
+    )
+    needs_inventory = query_needs_inventory(query) or continues_inventory_lookup
     needs_document_retrieval = query_needs_documents(query)
     catalog = catalog_context_service.resolve_tower_context(
         state.get("db"), state.get("project_id"), query
@@ -697,8 +704,13 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
             units = apply_criteria(all_units, criteria)
         else:
             # Exact legacy path for callers without a session or when the feature flag is
-            # off: all old regex semantics, including SOFT-like area/subdivision filters.
-            units = lookup_inventory(project_id, state["query"])
+            # off. Preserve the recent-human-query fallback used by non-session callers.
+            context_queries = _inventory_context_queries(state.get("history"))
+            units = (
+                lookup_inventory(project_id, state["query"], context_queries)
+                if context_queries
+                else lookup_inventory(project_id, state["query"])
+            )
     except InventoryProjectUnresolvedError:
         # Not an API failure — nothing to log/alert on. This is a normal, frequent shape
         # of question (no project on the session, several projects in the catalogue) with
@@ -760,6 +772,21 @@ def _criteria_diagnose(state: PipelineState) -> dict[str, Any]:
         option_count=len(diagnosis.relax_options),
     )
     return {"zero_result_diagnosis": diagnosis}
+
+
+def _inventory_context_queries(history: list[dict] | None) -> list[str]:
+    """Recent human inventory constraints, newest first, without AI-generated figures."""
+
+    if not history:
+        return []
+    human_queries = [
+        str(turn.get("content", "")).strip()
+        for turn in reversed(history)
+        if turn.get("sender") != MessageSender.AGENT and str(turn.get("content", "")).strip()
+    ]
+    # Two human turns cover the common chain: project/type -> area -> price. Keeping the
+    # window deliberately small prevents an old customer requirement from resurfacing.
+    return human_queries[:2]
 
 
 def _generate(state: PipelineState) -> dict[str, Any]:

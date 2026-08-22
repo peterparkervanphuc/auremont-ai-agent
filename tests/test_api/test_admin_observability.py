@@ -14,6 +14,7 @@ from backend.main import app
 from backend.models.audit_log import AuditLog
 from backend.models.chat_session import ChatSession
 from backend.models.message import Message
+from backend.models.observability import LlmUsageEvent, PipelineTraceRun
 from backend.models.user import User
 from backend.utils.time import utcnow
 
@@ -107,3 +108,81 @@ def test_observability_aggregates_trace_tokens_logs_and_fallbacks(client, db_ses
     trace_response = test_client.get("/api/v1/admin/observability/traces/trace-123")
     assert trace_response.status_code == 200
     assert trace_response.json()["steps"][0]["detail"] == "3 tài liệu"
+
+
+def test_observability_reads_durable_mysql_traces_and_usage(client, db_session, tmp_path, monkeypatch):
+    test_client, _customer = client
+    now = utcnow()
+    monkeypatch.setattr(settings, "trace_file", str(tmp_path / "missing.jsonl"))
+    monkeypatch.setattr(settings, "observability_metrics_enabled", True)
+
+    trace = {
+        "run_id": "mysql-trace-1",
+        "started_at": now.isoformat(),
+        "duration_ms": 125.0,
+        "project_id": "ocp1",
+        "clearance": "internal",
+        "outcome": "answered",
+        "verifier_score": 0.92,
+        "steps": [
+            {"name": "retrieve", "at_ms": 2, "ok": True, "doc_count": 2, "duration_ms": 25},
+            {
+                "name": "llm.usage",
+                "at_ms": 30,
+                "usage_id": "usage-1",
+                "input_tokens": 300,
+                "output_tokens": 80,
+            },
+        ],
+    }
+    db_session.add_all(
+        [
+            PipelineTraceRun(
+                run_id="mysql-trace-1",
+                started_at=now,
+                duration_ms=125.0,
+                project_id="ocp1",
+                clearance="internal",
+                outcome="answered",
+                verifier_score=0.92,
+                payload=trace,
+            ),
+            LlmUsageEvent(
+                usage_id="usage-1",
+                run_id="mysql-trace-1",
+                operation="gemini_generation",
+                model="gemini-test",
+                input_tokens=300,
+                output_tokens=80,
+                total_tokens=380,
+                created_at=now,
+            ),
+            # This control-plane call has no pipeline trace and must still count.
+            LlmUsageEvent(
+                usage_id="usage-classification",
+                operation="gemini_generation",
+                model="gemini-test",
+                input_tokens=500,
+                output_tokens=100,
+                total_tokens=600,
+                created_at=now,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = test_client.get("/api/v1/admin/observability?days=14")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["tracing_enabled"] is True
+    assert body["tokens"]["input_tokens"] == 800
+    assert body["tokens"]["output_tokens"] == 180
+    assert body["traces"][0]["run_id"] == "mysql-trace-1"
+    rag = next(row for row in body["tool_reliability"] if row["key"] == "retrieve")
+    assert rag["calls"] == 1
+    assert rag["average_latency_ms"] == 25.0
+
+    trace_response = test_client.get("/api/v1/admin/observability/traces/mysql-trace-1")
+    assert trace_response.status_code == 200
+    assert trace_response.json()["outcome"] == "answered"

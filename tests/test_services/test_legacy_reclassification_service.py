@@ -114,12 +114,32 @@ def _mock_source(monkeypatch, service, classification=None):
 
 def test_legacy_candidate_selector_uses_persisted_version(db_session, admin):
     legacy = _document(db_session, admin, classification_version=None)
-    _document(db_session, admin, title="new.pdf", classification_version="llm-v1")
+    _document(
+        db_session,
+        admin,
+        title="new.pdf",
+        classification_version="llm-v3-grounded-facts",
+        conflict_facts=[],
+    )
+    incomplete = _document(
+        db_session,
+        admin,
+        title="incomplete-current.pdf",
+        classification_version="llm-v3-grounded-facts",
+        conflict_facts=None,
+    )
+    older_llm = _document(
+        db_session,
+        admin,
+        title="llm-v1.pdf",
+        classification_version="llm-v1",
+        conflict_facts=None,
+    )
     _document(db_session, admin, title="failed.pdf", status=DocumentStatus.FAILED, classification_version=None)
 
     rows = list_reclassification_candidates(db_session, legacy_only=True)
 
-    assert [row.document_id for row in rows] == [legacy.id]
+    assert [row.document_id for row in rows] == [legacy.id, incomplete.id, older_llm.id]
 
 
 def test_preview_is_read_only_and_recommends_exact_subdivision_project(db_session, admin, monkeypatch):
@@ -237,7 +257,7 @@ def test_apply_updates_metadata_and_preserves_active_state(db_session, admin, mo
     assert [call["is_current"] for call in vector_updates] == [False, True]
     db_session.refresh(document)
     assert document.building_codes == ["BE1"]
-    assert document.classification_version == "llm-v1"
+    assert document.classification_version == "llm-v3-grounded-facts"
     assert document.classification_requires_admin_review is True
     assert document.review_status == DocumentReviewStatus.APPROVED
     assert document.reviewed_by == admin.id
@@ -272,7 +292,7 @@ def test_admin_apply_activates_document_that_only_awaited_review(db_session, adm
     assert vector_updates[-1]["is_current"] is True
     db_session.refresh(document)
     assert document.review_status == DocumentReviewStatus.APPROVED
-    assert document.classification_version == "llm-v1"
+    assert document.classification_version == "llm-v3-grounded-facts"
 
 
 def test_retry_activates_approved_document_left_quarantined_by_partial_apply(db_session, admin, monkeypatch):
@@ -301,7 +321,7 @@ def test_retry_activates_approved_document_left_quarantined_by_partial_apply(db_
     assert result.is_current is True
     assert vector_updates[-1]["is_current"] is True
     db_session.refresh(document)
-    assert document.classification_version == "llm-v1"
+    assert document.classification_version == "llm-v3-grounded-facts"
 
 
 def test_blocked_document_never_becomes_current(db_session, admin, monkeypatch):

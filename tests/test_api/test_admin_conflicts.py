@@ -17,6 +17,7 @@ from backend.core.enums import (
 )
 from backend.core.mysql_client import Base, get_db
 from backend.main import app
+from backend.models.conflict_flag import ConflictFlag
 from backend.models.document_relation import DocumentRelation
 from backend.models.user import User
 from backend.repositories.conflict_flag import create_conflict
@@ -100,6 +101,123 @@ def test_resolving_keeps_the_chosen_document_and_blocks_the_other(client, db_ses
     # kiện retrieval ngay, thay vì tiếp tục mắc kẹt ở pending sau khi conflict đóng.
     assert get_document(db_session, new.id).review_status == DocumentReviewStatus.APPROVED
     assert get_document(db_session, new.id).is_current is True
+
+
+def test_existing_conflict_is_enriched_by_semantic_rescan_and_exposed_by_api(client, db_session, conflict):
+    flag, old, new = conflict
+    flag.evidence = {
+        "rule_signals": ["price_changed"],
+        "sources": {"rule": {"unit_code": "OCP1-S1-0203"}},
+    }
+    db_session.commit()
+
+    enriched = create_conflict(
+        db_session,
+        document_id_a=new.id,
+        document_id_b=old.id,
+        description="Hai tài liệu quy định giá bán khác nhau.",
+        detection_method="llm",
+        confidence=0.94,
+        similarity_score=0.82,
+        conflict_type="price",
+        evidence={
+            "facts": [{"fact_key": "unit.price", "document_a": "2.88 tỷ", "document_b": "3.10 tỷ"}],
+            "sources": {"llm": {"model": "semantic-judge"}},
+        },
+        analysis_version="semantic-conflict-v1",
+    )
+
+    assert enriched.id == flag.id
+    assert db_session.query(ConflictFlag).count() == 1
+    assert enriched.detection_method == "hybrid"
+    assert enriched.confidence == pytest.approx(0.94)
+    assert enriched.similarity_score == pytest.approx(0.82)
+    assert enriched.conflict_type == "price"
+    assert enriched.analysis_version == "semantic-conflict-v1"
+    assert enriched.evidence == {
+        "rule_signals": ["price_changed"],
+        # The rescan called create_conflict in reverse order; evidence is stored in
+        # the original flag's A/B orientation so the split-view cannot swap sources.
+        "facts": [{"fact_key": "unit.price", "document_a": "3.10 tỷ", "document_b": "2.88 tỷ"}],
+        "sources": {
+            "rule": {"unit_code": "OCP1-S1-0203"},
+            "llm": {"model": "semantic-judge"},
+        },
+    }
+
+    row = client.get("/api/v1/admin/conflicts").json()[0]
+    assert row["description"] == "Hai tài liệu quy định giá bán khác nhau."
+    assert row["detection_method"] == "hybrid"
+    assert row["confidence"] == pytest.approx(0.94)
+    assert row["similarity_score"] == pytest.approx(0.82)
+    assert row["conflict_type"] == "price"
+    assert row["analysis_version"] == "semantic-conflict-v1"
+    assert row["evidence"] == enriched.evidence
+
+
+def test_resolved_pair_is_not_reopened_by_a_precomputed_rescan(client, db_session, conflict):
+    flag, old, new = conflict
+    response = client.post(f"/api/v1/admin/conflicts/{flag.id}/resolve", json={"keep_document_id": new.id})
+    assert response.status_code == 200
+
+    raced = create_conflict(
+        db_session,
+        document_id_a=new.id,
+        document_id_b=old.id,
+        description="A stale semantic scan finished after the Admin decision.",
+        detection_method="llm",
+        confidence=0.99,
+        evidence={"semantic": {"evidence": [{"quote_a": "new", "quote_b": "old"}]}},
+    )
+
+    assert raced.id == flag.id
+    assert raced.status == ConflictStatus.RESOLVED
+    assert db_session.query(ConflictFlag).count() == 1
+    assert raced.description == "Giá khác nhau"
+
+
+def test_null_rescan_metadata_does_not_clear_existing_analysis(db_session, conflict):
+    flag, old, new = conflict
+    enriched = create_conflict(
+        db_session,
+        old.id,
+        new.id,
+        "Semantic result",
+        detection_method="llm",
+        confidence=0.88,
+        evidence={"facts": [{"fact_key": "payment.deadline"}]},
+    )
+
+    rescanned = create_conflict(
+        db_session,
+        old.id,
+        new.id,
+        None,
+        detection_method="llm",
+        confidence=None,
+        evidence=None,
+    )
+
+    assert rescanned.id == flag.id == enriched.id
+    assert rescanned.detection_method == "hybrid"
+    assert rescanned.description == "Semantic result"
+    assert rescanned.confidence == pytest.approx(0.88)
+    assert rescanned.evidence == {"facts": [{"fact_key": "payment.deadline"}]}
+
+
+@pytest.mark.parametrize(
+    ("field", "kwargs"),
+    [
+        ("confidence", {"confidence": 1.01}),
+        ("similarity_score", {"similarity_score": -0.01}),
+        ("detection method", {"detection_method": "manual"}),
+    ],
+)
+def test_conflict_analysis_metadata_is_validated(db_session, conflict, field, kwargs):
+    _flag, old, new = conflict
+
+    with pytest.raises(ValueError, match=field):
+        create_conflict(db_session, old.id, new.id, "Invalid analysis", **kwargs)
 
 
 def test_rejected_document_is_removed_from_retrieval(client, db_session, conflict, vector_syncs):

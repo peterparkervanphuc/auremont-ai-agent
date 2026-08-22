@@ -20,6 +20,7 @@ from backend.core.audit import log_event
 from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import (
+    DocumentCategory,
     DocumentReviewStatus,
     DocumentStatus,
     DocumentVisibility,
@@ -295,7 +296,7 @@ async def upload_document(
     db: Session = Depends(get_db),
     admin: User = Depends(require_role(UserRole.ADMIN)),
 ) -> IngestResponse:
-    """Upload PDF/DOCX: parse → scan → MinIO → chunk → Gemini → Qdrant."""
+    """Upload PDF/DOCX and defer indexing whenever classification needs review."""
     if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -421,7 +422,7 @@ async def upload_document(
             "Document was quarantined because identical content already exists."
             if duplicate_quarantined
             else (
-                "Document was classified and indexed, but is waiting for Admin metadata approval."
+                "Document was classified and stored, but will only be chunked and indexed after Admin approval."
                 if document.review_status != DocumentReviewStatus.APPROVED
                 else "Document uploaded and indexed successfully."
             )
@@ -825,6 +826,70 @@ async def update_document_metadata(
     expired/repealed takes the document out of retrieval.
     """
 
+    existing = get_document(db, document_id)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with id={document_id} not found.",
+        )
+
+    if existing.review_status == DocumentReviewStatus.PENDING:
+        # Pending uploads intentionally have no chunks or embeddings. The Admin's
+        # confirmation is the operation that builds their index, scans conflicts and
+        # only then publishes an eligible document to RAG.
+        updates = payload.model_dump(exclude_unset=True)
+        category = updates.pop("category")
+        started = time.perf_counter()
+        try:
+            document = reclassify_document(
+                db,
+                document_id=document_id,
+                category=category,
+                reviewed_by=admin.id,
+                metadata_updates=updates,
+            )
+        except DocumentAIQuotaExceededError as exc:
+            log_event(
+                "document.classification.approval_failure",
+                document_id=document_id,
+                admin_id=admin.id,
+                reason="ai_quota_exhausted",
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
+            raise _ai_quota_http_exception() from exc
+        except DocumentIngestionError as exc:
+            log_event(
+                "document.classification.approval_failure",
+                document_id=document_id,
+                admin_id=admin.id,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+            )
+            validation_markers = (
+                "cannot be approved for AI retrieval",
+                "no stored original file",
+                "does not exist in the project catalogue",
+                "not ready",
+                "changed while",
+                "was reviewed while",
+            )
+            error_status = (
+                status.HTTP_409_CONFLICT
+                if any(marker in str(exc) for marker in validation_markers)
+                else status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+            raise HTTPException(status_code=error_status, detail=str(exc)) from exc
+
+        log_event(
+            "document.classification.approved_and_indexed",
+            document_id=document.id,
+            admin_id=admin.id,
+            category=document.category,
+            is_current=document.is_current,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
+        )
+        _clear_answer_cache()
+        return document
+
     # Phase 1 writes the new metadata with the document quarantined, while holding its row
     # lock. A provider timeout that actually applied the payload therefore cannot leave a
     # half-written state answering.
@@ -956,6 +1021,7 @@ def _safe_vector_current(document: Document) -> bool:
         document.is_current
         and document.status == DocumentStatus.COMPLETED
         and document.review_status == DocumentReviewStatus.APPROVED
+        and document.category != DocumentCategory.OTHER
         and document.legal_status
         not in {
             LegalStatus.NOT_YET_EFFECTIVE,

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../api/client";
+import { AdminMetricCard } from "../../components/admin/AdminMetricCard";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import type { DocumentRelationResponse, DocumentRelationType, DocumentResponse } from "../../types";
-import { CheckIcon, LoaderIcon, XIcon } from "../../components/Icons";
+import { CheckIcon, DocumentIcon, LoaderIcon, RefreshIcon, WorkflowIcon, XIcon } from "../../components/Icons";
 
 const RELATIONS: Array<[DocumentRelationType, string]> = [
   ["replaces", "Thay thế hoàn toàn"],
@@ -82,13 +85,23 @@ export function DocumentRelationsTab() {
   };
 
   return (
-    <div className="page">
-      <h2 className="page-title">Quan hệ tài liệu</h2>
-      <p className="page-sub">Xác nhận bản mới cập nhật, thay thế hoặc bãi bỏ bản cũ. Bản cũ sẽ tự bị loại khỏi RAG khi quan hệ được duyệt.</p>
+    <div className="page admin-dashboard-page business-dashboard admin-workspace admin-relations-page">
+      <AdminPageHeader
+        eyebrow="Document lifecycle"
+        title="Quan hệ tài liệu"
+        description="Xác nhận tài liệu cập nhật, thay thế hoặc bãi bỏ nguồn cũ để giữ RAG nhất quán theo phiên bản."
+        actions={<><Link className="btn btn-outline" to="/documents"><DocumentIcon size={15} /> Kho tài liệu</Link><button className="business-refresh" type="button" disabled={loading} onClick={() => void load()}><RefreshIcon size={15} className={loading ? "is-spinning" : ""} /> Làm mới</button></>}
+      />
       {error && <div className="alert alert-danger" style={{ marginTop: 16 }}>{error}</div>}
 
-      <section className="review-form" style={{ marginTop: 24 }}>
-        <h3 className="section-title">Tạo quan hệ mới</h3>
+      <div className="admin-metric-grid admin-workspace-metrics settings-metric-grid">
+        <AdminMetricCard label="Tài liệu có thể liên kết" value={documents.length} hint="Nguồn trong kho" icon={<DocumentIcon size={20} />} tooltip="Tổng tài liệu backend trả về cho việc thiết lập quan hệ." />
+        <AdminMetricCard label="Chờ duyệt" value={relations.length} hint="Quan hệ chưa có hiệu lực" icon={<WorkflowIcon size={20} />} tone={relations.length ? "warning" : "success"} tooltip="Nguồn cũ chưa bị loại khỏi RAG cho tới khi quan hệ được duyệt." />
+        <AdminMetricCard label="Loại quan hệ" value={RELATIONS.length} hint="Quy tắc vòng đời hỗ trợ" icon={<CheckIcon size={20} />} tooltip="Thay thế, cập nhật, sửa đổi, bãi bỏ và các quan hệ nghiệp vụ khác." />
+      </div>
+
+      <section className="review-form business-panel admin-ui-panel relation-create-panel">
+        <div className="business-panel-head"><div><h3>Tạo quan hệ mới</h3><p>Chọn chiều phiên bản chính xác trước khi gửi duyệt.</p></div><span className="ops-caption-badge">New relation</span></div>
         <div className="review-grid">
           <label>Tài liệu mới<select value={sourceId} onChange={(event) => setSourceId(event.target.value)}><option value="">— Chọn tài liệu —</option>{documents.map((doc) => <option key={doc.id} value={doc.id}>{doc.title}</option>)}</select></label>
           <label>Tài liệu cũ<select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">— Chọn tài liệu —</option>{documents.filter((doc) => String(doc.id) !== sourceId).map((doc) => <option key={doc.id} value={doc.id}>{doc.title}</option>)}</select></label>
@@ -98,8 +111,8 @@ export function DocumentRelationsTab() {
         <button className="btn btn-primary" type="button" onClick={() => void create()} disabled={saving}>{saving && <LoaderIcon size={16} className="icon-spin" />} Tạo quan hệ chờ duyệt</button>
       </section>
 
-      <div style={{ marginTop: 28 }}>
-        <h3 className="section-title">Quan hệ chờ duyệt</h3>
+      <section className="business-panel admin-ui-panel relation-pending-panel">
+        <div className="business-panel-head"><div><h3>Quan hệ chờ duyệt</h3><p>Phê duyệt để áp dụng thay đổi vào phạm vi truy xuất.</p></div><span className="admin-count-badge">{relations.length}</span></div>
         {loading ? <div className="empty-state"><LoaderIcon size={24} className="icon-spin" /></div> : relations.length === 0 ? <div className="empty-state"><p>Không có quan hệ nào chờ duyệt.</p></div> : <div className="data-list">
           {relations.map((relation) => <div className="conflict-card" key={relation.id}>
             <div className="conflict-card-head">{RELATIONS.find(([value]) => value === relation.relation_type)?.[1] ?? relation.relation_type}</div>
@@ -108,7 +121,7 @@ export function DocumentRelationsTab() {
             <div className="conflict-actions"><button className="btn btn-primary" type="button" disabled={saving} onClick={() => void review(relation.id, true)}><CheckIcon size={16} /> Duyệt</button><button className="btn btn-danger" type="button" disabled={saving} onClick={() => void review(relation.id, false)}><XIcon size={16} /> Bác bỏ</button></div>
           </div>)}
         </div>}
-      </div>
+      </section>
     </div>
   );
 }

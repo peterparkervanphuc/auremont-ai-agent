@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { adminDashboardApi } from "../../api/adminDashboard";
 import { ActivityIcon, ChartIcon, RefreshIcon, UsersIcon } from "../../components/Icons";
 import { AdminMetricCard } from "../../components/admin/AdminMetricCard";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import type { SalesBoard } from "../../types/admin";
 import { parseServerDate } from "../../utils/datetime";
 
@@ -64,30 +65,30 @@ export function SalesManagementPage() {
   };
 
   return (
-    <div className="page admin-dashboard-page">
-      <header className="admin-page-head">
-        <div>
-          <span className="admin-eyebrow">Sales operations</span>
-          <h1 className="page-title">Quản lý Sale</h1>
-          <p className="page-sub">Theo dõi tải xử lý, trạng thái hoạt động và phân phối khách hàng theo thời gian thực.</p>
-        </div>
-        <div className="admin-head-actions">
+    <div className="page admin-dashboard-page business-dashboard admin-workspace sales-workspace">
+      <AdminPageHeader
+        eyebrow="Sales operations"
+        title="Quản lý Sale"
+        description="Theo dõi tải xử lý, trạng thái hoạt động và phân phối khách hàng theo thời gian thực."
+        actions={
+          <>
           <div className="admin-segmented" aria-label="Chế độ xem">
             <button type="button" className={view === "table" ? "is-active" : ""} onClick={() => setView("table")}>Table</button>
             <button type="button" className={view === "grid" ? "is-active" : ""} onClick={() => setView("grid")}>Grid</button>
           </div>
           <button type="button" className="btn btn-outline" onClick={() => void load()}><RefreshIcon size={15} /> Làm mới</button>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {error && <div className="alert alert-danger">{error}</div>}
       {!board ? <div className="admin-empty">Đang tải bảng điều phối Sale…</div> : (
         <>
           <div className="admin-metric-grid">
-            <AdminMetricCard label="Tài khoản Sale" value={board.summary.total_sales} hint={`${board.summary.active_accounts} đang kích hoạt`} icon={<UsersIcon size={20} />} />
-            <AdminMetricCard label="Đang online" value={board.summary.online_sales} hint={`Ước tính trong ${board.presence_window_minutes} phút`} icon={<ActivityIcon size={20} />} tone="success" />
-            <AdminMetricCard label="Đang bận" value={board.summary.busy_sales} hint={`${board.summary.live_customers} phiên live`} icon={<ChartIcon size={20} />} tone="warning" />
-            <AdminMetricCard label="Khách chờ Sale" value={board.summary.waiting_customers} hint="Cần phân công" icon={<UsersIcon size={20} />} tone={board.summary.waiting_customers ? "danger" : "default"} />
+            <AdminMetricCard label="Tài khoản Sale" value={board.summary.total_sales} hint={`${board.summary.active_accounts} đang kích hoạt`} icon={<UsersIcon size={20} />} tooltip="Tổng tài khoản Sale hợp lệ trong hệ thống." />
+            <AdminMetricCard label="Đang online" value={board.summary.online_sales} hint={`Ước tính trong ${board.presence_window_minutes} phút`} icon={<ActivityIcon size={20} />} tone="success" tooltip="Trạng thái được suy ra từ hoạt động gần nhất." />
+            <AdminMetricCard label="Đang bận" value={board.summary.busy_sales} hint={`${board.summary.live_customers} phiên live`} icon={<ChartIcon size={20} />} tone="warning" tooltip="Sale đang sở hữu ít nhất một phiên hỗ trợ trực tiếp." />
+            <AdminMetricCard label="Khách chờ Sale" value={board.summary.waiting_customers} hint="Cần phân công" icon={<UsersIcon size={20} />} tone={board.summary.waiting_customers ? "danger" : "default"} tooltip="Các phiên đã yêu cầu con người nhưng chưa có Sale tiếp nhận." />
           </div>
 
           <section className="admin-panel">

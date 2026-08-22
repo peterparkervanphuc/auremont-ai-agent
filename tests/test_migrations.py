@@ -24,6 +24,7 @@ from backend.models import (  # noqa: F401  (đăng ký bảng vào Base.metadat
     feedback,
     hitl_log,
     message,
+    observability,
     project,
     user,
 )
@@ -41,6 +42,8 @@ EXPECTED_TABLES = {
     "hitl_logs",
     "conflict_flags",
     "document_relations",
+    "pipeline_trace_runs",
+    "llm_usage_events",
 }
 
 
@@ -80,6 +83,21 @@ def test_hitl_audit_trail_keeps_who_what_when(migrated_db):
     columns = {c["name"] for c in inspect(migrated_db).get_columns("hitl_logs")}
     for column in ("message_id", "sale_id", "status", "confirmed_content", "confirmed_at", "created_at"):
         assert column in columns, f"hitl_logs thiếu cột audit: {column}"
+
+
+def test_conflict_analysis_metadata_is_persisted(migrated_db):
+    conflict_columns = {column["name"] for column in inspect(migrated_db).get_columns("conflict_flags")}
+    assert {
+        "detection_method",
+        "confidence",
+        "similarity_score",
+        "conflict_type",
+        "evidence",
+        "analysis_version",
+    } <= conflict_columns
+
+    document_columns = {column["name"] for column in inspect(migrated_db).get_columns("documents")}
+    assert "conflict_facts" in document_columns
 
 
 def test_schema_matches_models(migrated_db):

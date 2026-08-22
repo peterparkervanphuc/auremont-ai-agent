@@ -46,7 +46,7 @@ def document(db_session):
         title="bang-gia.pdf",
         file_path="documents/1/bang-gia.pdf",
         status=DocumentStatus.COMPLETED,
-        review_status=DocumentReviewStatus.PENDING,
+        review_status=DocumentReviewStatus.APPROVED,
         category=DocumentCategory.OTHER,
         visibility="internal",
         is_current=True,
@@ -139,6 +139,28 @@ class TestHappyPath:
         assert kinds.index("index") < kinds.index("scan") < len(kinds) - 1
         assert recorder[-1] == ("sync", DocumentCategory.PRICE_LIST, True)
 
+    def test_first_pending_approval_builds_vectors_even_when_metadata_is_unchanged(
+        self, db_session, document, recorder
+    ):
+        document.category = DocumentCategory.PRICE_LIST
+        document.review_status = DocumentReviewStatus.PENDING
+        document.is_current = False
+        db_session.commit()
+
+        result = reclassify_document(
+            db_session,
+            document_id=document.id,
+            category=DocumentCategory.PRICE_LIST,
+            reviewed_by=1,
+        )
+
+        assert result.review_status == DocumentReviewStatus.APPROVED
+        assert result.is_current is True
+        assert ("chunk", DocumentCategory.PRICE_LIST) in recorder
+        assert ("index", False) in recorder
+        assert recorder[-1] == ("sync", DocumentCategory.PRICE_LIST, True)
+        assert not any(event[0] == "sync" for event in recorder[:-1])
+
     def test_conflicts_are_rescanned_under_the_new_category(self, db_session, document, recorder):
         """The comparison set changed, so the previous scan's verdict no longer applies."""
         reclassify_document(
@@ -169,7 +191,7 @@ class TestHappyPath:
         assert recorder[0] == ("sync", DocumentCategory.OTHER, False)
         assert ("scan", DocumentCategory.OTHER) in recorder
         assert not any(event[0] in {"chunk", "delete_vectors", "index"} for event in recorder)
-        assert recorder[-1] == ("sync", DocumentCategory.OTHER, True)
+        assert recorder[-1] == ("sync", DocumentCategory.OTHER, False)
 
     def test_project_correction_reindexes_vectors_with_the_catalogue_project(
         self, db_session, document, recorder
@@ -272,6 +294,23 @@ class TestRejectedRequests:
 
         db_session.expire_all()
         assert db_session.get(Document, document.id).is_current is True
+        assert recorder == []
+
+    def test_pending_other_document_requires_a_supported_category(
+        self, db_session, document, recorder
+    ):
+        document.review_status = DocumentReviewStatus.PENDING
+        document.is_current = False
+        db_session.commit()
+
+        with pytest.raises(DocumentIngestionError, match="cannot be approved"):
+            reclassify_document(
+                db_session,
+                document_id=document.id,
+                category=DocumentCategory.OTHER,
+                reviewed_by=1,
+            )
+
         assert recorder == []
 
     def test_a_document_still_processing_is_refused(self, db_session, document, recorder):

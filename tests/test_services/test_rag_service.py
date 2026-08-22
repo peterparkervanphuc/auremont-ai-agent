@@ -145,6 +145,15 @@ def test_retrieval_still_excludes_documents_that_are_not_current(qdrant):
     assert _is_current(qdrant.query_calls[0]) is True
 
 
+def test_retrieval_excludes_unclassified_other_documents(qdrant):
+    rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
+
+    excluded = qdrant.query_calls[0]["query_filter"].must_not
+    assert len(excluded) == 1
+    assert excluded[0].key == "category"
+    assert excluded[0].match.value == "other"
+
+
 # --- Truy vấn ------------------------------------------------------------------------
 
 
@@ -621,6 +630,7 @@ def live_qdrant(monkeypatch):
         vectors=[[1.0, 0.0, 0.0]],
         sparse_vectors=embed_documents_sparse(["Căn 2PN giá 3.6 tỷ."]),
         review_status="approved",
+        category="price_list",
     )
     vector_store_service.index_document_chunks(
         document_id=2,
@@ -631,6 +641,7 @@ def live_qdrant(monkeypatch):
         vectors=[[0.9, 0.1, 0.0]],
         sparse_vectors=embed_documents_sparse(["Tiện ích nội khu."]),
         review_status="approved",
+        category="subdivision_info",
     )
     return client
 
@@ -665,6 +676,7 @@ def test_live_project_scope_also_includes_global_documents(live_qdrant):
         vectors=[[1.0, 0.0, 0.0]],
         sparse_vectors=embed_documents_sparse(["Hướng dẫn giao dịch chung."]),
         review_status="approved",
+        category="internal_guide",
     )
 
     result = rag_service.retrieve(
@@ -716,6 +728,7 @@ def live_hybrid_qdrant(monkeypatch):
         vectors=[[1.0, 0.0, 0.0]],
         sparse_vectors=embed_documents_sparse([semantic_text]),
         review_status="approved",
+        category="price_list",
     )
     vector_store_service.index_document_chunks(
         document_id=2,
@@ -726,6 +739,7 @@ def live_hybrid_qdrant(monkeypatch):
         vectors=[[0.0, 1.0, 0.0]],
         sparse_vectors=embed_documents_sparse([keyword_text]),
         review_status="approved",
+        category="inventory_snapshot",
     )
     return client
 

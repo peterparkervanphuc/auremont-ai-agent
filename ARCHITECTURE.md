@@ -162,7 +162,7 @@ Answer images (`answer_images_service.py`) — two strategies:
 - **Auto-attached** (e.g. "tiện ích có gì") — capped at 3, strict topic match, no fallback.
 
 ### Ingestion
-`sanitize_and_scan` (regex prompt-injection check) → MinIO → `document_classification_service` (auto-classify + confidence) → chunk → embed → optional Cohere rerank prep → Qdrant.
+`sanitize_and_scan` (regex prompt-injection check) → `document_classification_service` → MinIO. By default every new upload stops after storing the original and the LLM metadata proposal. Admin approval/correction then triggers category-aware chunking → embedding → conflict scan → Qdrant publication. Pending and `other` documents are excluded again at retrieval as defense in depth. A confidence-based auto-approval path remains feature-configurable for trusted deployments but is disabled by the default approval gate.
 
 ### Eval
 Three complementary layers, none replacing the others:

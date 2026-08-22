@@ -23,6 +23,7 @@ from backend.models import (  # noqa: F401
     document_relation,
     hitl_log,
     message,
+    observability,
     project,
     user,
 )

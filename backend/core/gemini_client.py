@@ -1,5 +1,6 @@
 import logging
 import time
+import uuid
 from typing import Any, TypeVar, cast
 
 import google.genai as genai
@@ -133,13 +134,37 @@ def client_models_generate(prompt: str, config):
             if usage is not None:
                 input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
                 output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+                total_tokens = int(getattr(usage, "total_token_count", 0) or input_tokens + output_tokens)
+                usage_id = uuid.uuid4().hex
                 tracing.step(
                     "llm.usage",
+                    usage_id=usage_id,
                     model=settings.GEMINI_MODEL,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
-                    total_tokens=int(getattr(usage, "total_token_count", 0) or input_tokens + output_tokens),
+                    total_tokens=total_tokens,
                 )
+                if settings.observability_metrics_enabled:
+                    # This independent best-effort transaction also covers document
+                    # classification/conflict calls that run outside the chat graph.
+                    try:
+                        from backend.core.observability_sink import persist_llm_usage
+
+                        persist_llm_usage(
+                            usage_id=usage_id,
+                            run_id=tracing.current_run_id(),
+                            operation="gemini_generation",
+                            model=settings.GEMINI_MODEL,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            total_tokens=total_tokens,
+                        )
+                    except Exception:  # pragma: no cover - metrics must never break generation
+                        logger.warning(
+                            "Could not record Gemini token usage.",
+                            exc_info=True,
+                            extra={"event": "observability.usage.record.failed"},
+                        )
             return response
         except genai_errors.APIError as exc:
             if exc.code not in _GENERATE_RETRY_STATUS_CODES or attempt == _GENERATE_MAX_ATTEMPTS:

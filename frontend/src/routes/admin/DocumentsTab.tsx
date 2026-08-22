@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
+import { AdminMetricCard } from "../../components/admin/AdminMetricCard";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import type {
   DocumentCategory,
   DocumentResponse,
@@ -11,10 +13,14 @@ import { parseServerDate } from "../../utils/datetime";
 import {
   AlertIcon,
   CheckIcon,
+  DocumentIcon,
   InboxIcon,
   LoaderIcon,
+  RefreshIcon,
+  ShieldCheckIcon,
   TrashIcon,
   UploadIcon,
+  WorkflowIcon,
   XIcon,
 } from "../../components/Icons";
 
@@ -88,6 +94,24 @@ interface UploadQueueItem {
   message?: string;
 }
 
+type DocumentFilter = "all" | "ready" | "review" | "attention";
+
+function isReadyDocument(document: DocumentResponse): boolean {
+  return document.status === "completed"
+    && document.review_status === "approved"
+    && document.is_current;
+}
+
+function needsDocumentReview(document: DocumentResponse): boolean {
+  return document.review_status === "pending";
+}
+
+function needsDocumentAttention(document: DocumentResponse): boolean {
+  return document.status === "failed"
+    || document.status === "blocked"
+    || !document.is_current;
+}
+
 export function DocumentsTab() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
@@ -102,13 +126,23 @@ export function DocumentsTab() {
   // document had to be switched over one by one in the table below after the fact.
   const [uploadVisibility, setUploadVisibility] = useState<DocumentVisibility>("internal");
   const [reclassifyingId, setReclassifyingId] = useState<number | null>(null);
+  const [documentFilter, setDocumentFilter] = useState<DocumentFilter>("all");
   const categoryFilter = searchParams.get("category") ?? "";
   const coverageScope = searchParams.get("coverage_scope") ?? "";
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const filteredDocuments = documents.filter((document) =>
+  const scopedDocuments = documents.filter((document) =>
     (!searchParams.get("project_id") || document.project_id === searchParams.get("project_id")) &&
     (!categoryFilter || document.category === categoryFilter)
   );
+  const readyDocuments = scopedDocuments.filter(isReadyDocument);
+  const reviewDocuments = scopedDocuments.filter(needsDocumentReview);
+  const attentionDocuments = scopedDocuments.filter(needsDocumentAttention);
+  const filteredDocuments = scopedDocuments.filter((document) => {
+    if (documentFilter === "ready") return isReadyDocument(document);
+    if (documentFilter === "review") return needsDocumentReview(document);
+    if (documentFilter === "attention") return needsDocumentAttention(document);
+    return true;
+  });
 
   const uploading = queue.some((item) => item.status === "pending" || item.status === "uploading");
 
@@ -273,14 +307,33 @@ export function DocumentsTab() {
   };
 
   return (
-    <div className="page">
-      <h2 className="page-title">Kho Tài liệu</h2>
-      <p className="page-sub">
-        Tải PDF/DOCX để hệ thống đọc hiểu và đưa vào kho tri thức, giúp AI trả lời khách chính xác hơn.
-      </p>
+    <div className="page admin-dashboard-page business-dashboard admin-workspace admin-documents-page">
+      <AdminPageHeader
+        eyebrow="Knowledge operations"
+        title="Kho Tài liệu"
+        description="Tải PDF/DOCX, theo dõi trạng thái xử lý và quản trị nguồn tri thức được phép tham gia RAG."
+        actions={
+          <>
+            <Link className="btn btn-outline" to="/document-relations"><WorkflowIcon size={15} /> Quan hệ phiên bản</Link>
+            <Link className="btn btn-primary" to="/document-review"><ShieldCheckIcon size={15} /> Duyệt metadata</Link>
+          </>
+        }
+      />
 
       {actionError && <div className="alert alert-danger">{actionError}</div>}
 
+      <div className="admin-metric-grid admin-workspace-metrics">
+        <AdminMetricCard label="Tổng tài liệu" value={scopedDocuments.length} hint="Trong phạm vi đang xem" icon={<DocumentIcon size={20} />} tooltip="Nhấn để hiển thị toàn bộ tài liệu trong bộ lọc dự án hiện tại." active={documentFilter === "all"} onClick={() => setDocumentFilter("all")} />
+        <AdminMetricCard label="Sẵn sàng cho AI" value={readyDocuments.length} hint="Đã duyệt và vector hóa" icon={<CheckIcon size={20} />} tone="success" tooltip="Chỉ gồm tài liệu hiện hành, đã duyệt metadata và xử lý thành công." active={documentFilter === "ready"} onClick={() => setDocumentFilter("ready")} />
+        <AdminMetricCard label="Chờ Admin duyệt" value={reviewDocuments.length} hint="Chưa chunk/embedding" icon={<ShieldCheckIcon size={20} />} tone="warning" tooltip="Tài liệu đang cách ly cho tới khi metadata được xác nhận." active={documentFilter === "review"} onClick={() => setDocumentFilter("review")} />
+        <AdminMetricCard label="Cần kiểm tra" value={attentionDocuments.length} hint="Lỗi, bị chặn hoặc cách ly" icon={<AlertIcon size={20} />} tone={attentionDocuments.length ? "danger" : "default"} tooltip="Các nguồn chưa thể tham gia trả lời và cần Admin xử lý." active={documentFilter === "attention"} onClick={() => setDocumentFilter("attention")} />
+      </div>
+
+      <section className="business-panel admin-ui-panel admin-upload-panel">
+        <div className="business-panel-head">
+          <div><h3>Nạp tài liệu mới</h3><p>Chọn phạm vi, phân quyền rồi thả nhiều file vào hàng đợi xử lý.</p></div>
+          <button type="button" className="business-refresh" onClick={loadDocuments}><RefreshIcon size={15} /> Đồng bộ</button>
+        </div>
       <div className="upload-project-row">
         <label htmlFor="upload-project" className="upload-project-label">
           Dự án
@@ -399,14 +452,17 @@ export function DocumentsTab() {
           )}
         </div>
       )}
+      </section>
 
-      <div style={{ marginTop: 32 }}>
-        <h3 className="section-title">Danh sách tài liệu</h3>
-        <p className="page-sub">
+      <section className="business-panel admin-ui-panel admin-document-list-panel">
+        <div className="business-panel-head">
+          <div><h3>Danh sách tài liệu</h3><p>
           Sale tra cứu được toàn bộ nội dung trong file, không phụ thuộc loại tài liệu chọn ở đây. Loại tài liệu
           chỉ quyết định cách hệ thống cắt nội dung (bảng giá giữ nguyên hàng, văn bản luật cắt theo Điều/Khoản)
           và cách đối chiếu mâu thuẫn. File gồm nhiều phần thì chọn phần chiếm chính, hoặc để &ldquo;Khác&rdquo;.
-        </p>
+          </p></div>
+          <span className="admin-count-badge">{filteredDocuments.length} tài liệu</span>
+        </div>
 
         {(searchParams.get("project_id") || coverageScope || categoryFilter) && <div className="document-filter-notice"><span>Đang xem tài liệu được chọn từ dashboard.</span><button type="button" onClick={() => setSearchParams({})}>Xóa bộ lọc</button></div>}
 
@@ -424,6 +480,7 @@ export function DocumentsTab() {
 
               return (
                 <div key={document.id} className="data-row">
+                  <div className="data-row-icon"><DocumentIcon size={18} /></div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     {document.file_path ? (
                       <button
@@ -494,7 +551,7 @@ export function DocumentsTab() {
             })}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

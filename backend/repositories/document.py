@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.enums import (
     ConflictStatus,
+    DocumentCategory,
     DocumentRelationType,
     DocumentReviewStatus,
     DocumentStatus,
@@ -89,15 +90,17 @@ def list_completed_siblings(db: Session, project_id: str | None, exclude_id: int
     all. The caller compensates for the missing project anchor by demanding explicit
     overlapping scope instead — see `_shares_explicit_scope` in ingestion_service.
     """
-    scope = Document.project_id == project_id if project_id else Document.project_id.is_(None)
+    query = db.query(Document).filter(
+        Document.id != exclude_id,
+        Document.status == DocumentStatus.COMPLETED,
+    )
+    if project_id:
+        # A company-wide document can override a local one, so project uploads must
+        # include global policies in their semantic comparison set.
+        query = query.filter(or_(Document.project_id == project_id, Document.project_id.is_(None)))
 
     return (
-        db.query(Document)
-        .filter(
-            scope,
-            Document.id != exclude_id,
-            Document.status == DocumentStatus.COMPLETED,
-        )
+        query
         .order_by(Document.created_at.desc())
         .all()
     )
@@ -253,6 +256,9 @@ def _normalised_string_set(values: list[str] | None) -> frozenset[str]:
 def is_document_eligible_after_classification_approval(db: Session, document: Document) -> bool:
     """Whether classification approval is the document's only remaining quarantine."""
 
+    if document.category == DocumentCategory.OTHER:
+        return False
+
     if document.legal_status in {
         LegalStatus.NOT_YET_EFFECTIVE,
         LegalStatus.EXPIRED,
@@ -328,6 +334,9 @@ def update_document_classification_suggestion(
     document.legal_issuer = classification.legal_issuer
     document.legal_domain = classification.legal_domain
     document.legal_status = classification.legal_status
+    # [] means the current classifier completed and found no grounded assertions;
+    # NULL is reserved for legacy/incomplete rows that still require backfill.
+    document.conflict_facts = [fact.model_dump(mode="json") for fact in classification.conflict_facts]
 
     document.classification_confidence = classification.confidence
     document.classification_reason = classification.reason
