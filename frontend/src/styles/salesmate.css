@@ -1819,12 +1819,28 @@
   overflow: hidden;
 }
 
+/* Up to 5 photos per listing (floor plan/unit-type shots first, subdivision overview
+   shots after — see answer_images_service.select_listing_images): the first one is the
+   hero (spans both columns), the rest sit below it as a 2-column grid of smaller tiles. A
+   single photo — or the placeholder — still renders full-width via the same :first-child
+   rule, so this scales from 0 to 5 images without a separate layout for each count. */
+.listing-card-images {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2px;
+}
+
 .listing-card-image {
   width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 1 / 1;
   object-fit: cover;
   display: block;
   background: var(--bg-3);
+}
+
+.listing-card-images .listing-card-image:first-child {
+  grid-column: 1 / -1;
+  aspect-ratio: 16 / 9;
 }
 
 .listing-card-image--placeholder {
@@ -1857,6 +1873,23 @@
   font-size: 1rem;
   font-weight: 800;
   color: var(--accent);
+}
+
+.listing-card-amenities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.listing-card-amenity {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 3px 9px;
 }
 
 .listing-carousel-nav {

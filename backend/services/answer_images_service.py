@@ -274,6 +274,52 @@ def resolve_project_ids(db: Session, text: str) -> list[str]:
         return []
 
 
+# Cap for a single property-listing card (agent_pipeline._resolve_listing_images) — enough
+# to actually illustrate a unit (floor plan + how the subdivision looks) without turning
+# one card among several into a full gallery the reader has to scroll past.
+_LISTING_MAX_IMAGES = 5
+
+
+def select_listing_images(gallery: list[str], unit_type: str) -> list[str]:
+    """Pick photos to illustrate one recommended listing (agent_pipeline.PropertyListing):
+    floor-plan/unit-type shots first — what the room itself looks like — then the
+    subdivision's own overview shots — what the phân khu looks like — then whatever is
+    left in the gallery, so a listing is never illustrated with zero photos as long as the
+    project has any at all.
+
+    Same filename-token matching the rest of this module already uses. `_wanted_tokens`
+    already extracts bedroom-count tokens ("2pn", "2-phong-ngu") from a query string, which
+    is exactly what a unit type like "2PN" is — so this finds "...-2pn-..." style
+    floor-plan filenames when the catalogue tags them that way (e.g. The Senique Hanoi),
+    and falls back to the subdivision's generic floor plans/overview shots otherwise.
+    """
+    if not gallery:
+        return []
+
+    floor_plan_tokens = _wanted_tokens(_normalize(f"{unit_type} mat bang"))
+    floor_plan_matches = [url for url in gallery if any(token in _normalize_filename(url) for token in floor_plan_tokens)]
+    overview_matches = [url for url in gallery if any(token in _normalize_filename(url) for token in _OVERVIEW_TOKENS)]
+
+    selected: list[str] = []
+    for url in (*floor_plan_matches, *overview_matches, *gallery):
+        if url not in selected:
+            selected.append(url)
+        if len(selected) >= _LISTING_MAX_IMAGES:
+            break
+    return selected
+
+
+def select_listing_amenities(project: Project, max_amenities: int = 4) -> list[str]:
+    """A few named amenities from the project's own catalogue record, for a listing card.
+
+    Deterministic, read straight from `project.details["amenities"]` — never left for the
+    model to invent, same reasoning as `select_listing_images` never letting it guess a URL.
+    """
+    amenities = (project.details or {}).get("amenities") or []
+    names = [item["name"] for item in amenities if isinstance(item, dict) and isinstance(item.get("name"), str)]
+    return names[:max_amenities]
+
+
 def _filter_by_topic(
     gallery: list[str], normalized_query: str, known_towers: list[str] | None = None
 ) -> list[str]:

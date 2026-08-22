@@ -61,8 +61,8 @@ def test_internal_clearance_fails_closed_when_unparseable(monkeypatch):
 def test_public_clearance_carries_listings_through(monkeypatch):
     """Numeric details for a recommendation now live in `listings` (rendered as their own
     cards) rather than as bullet lines in `text` — see prompts.PropertyListing. No `db` on
-    state here, so the image/project_id can't resolve; the listing must still come through
-    with those two fields null rather than being dropped."""
+    state here, so images/amenities/project_id can't resolve; the listing must still come
+    through with those fields empty rather than being dropped."""
     monkeypatch.setattr(
         agent_pipeline,
         "generate_json",
@@ -84,7 +84,8 @@ def test_public_clearance_carries_listings_through(monkeypatch):
             "unit_type": "2PN",
             "area_range": "55-64 m²",
             "price_range": "3,1-4,3 tỷ đồng",
-            "image_url": None,
+            "image_urls": [],
+            "amenities": [],
             "project_id": None,
         }
     ]

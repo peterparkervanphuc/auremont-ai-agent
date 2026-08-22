@@ -917,19 +917,21 @@ def _generate(state: PipelineState) -> dict[str, Any]:
 
 
 def _resolve_listing_images(db: Session | None, listings: list["prompts.PropertyListing"]) -> list[dict]:
-    """Attach a real subdivision photo to each model-proposed listing.
+    """Attach real subdivision photos and amenities to each model-proposed listing.
 
     The model only ever supplies text fields (project_name, unit_type, area_range,
-    price_range) — never an image URL, so it cannot hallucinate one. This resolves the
-    project the same way `answer_images_service.resolve_project_id` already does for
-    memory/images, then reuses its first gallery photo, exactly like `collect_images`
-    does for the existing image strip. A listing whose project or gallery can't be
-    resolved is still kept, just with `image_url=None` — the frontend renders a
-    placeholder rather than losing the listing entirely over a missing photo.
+    price_range) — never an image URL or an amenity name, so it cannot hallucinate either.
+    This resolves the project the same way `answer_images_service.resolve_project_id`
+    already does for memory/images, then picks a few photos matching the unit type (falling
+    back to the subdivision's own overview shots) via `select_listing_images`, and a few
+    named amenities straight from the catalogue record via `select_listing_amenities`. A
+    listing whose project can't be resolved is still kept, just with both empty — the
+    frontend renders a placeholder rather than losing the listing entirely over that.
     """
     resolved: list[dict] = []
     for listing in listings:
-        image_url: str | None = None
+        image_urls: list[str] = []
+        amenities: list[str] = []
         project_id: str | None = None
         if db is not None:
             try:
@@ -937,14 +939,18 @@ def _resolve_listing_images(db: Session | None, listings: list["prompts.Property
                 project = db.get(Project, project_id) if project_id else None
                 if project is not None:
                     gallery = ((project.details or {}).get("images") or {}).get("gallery") or []
-                    if gallery and isinstance(gallery[0], str):
-                        # Same normalisation as answer_images_service.collect_images — a
-                        # stored gallery entry is often a bare MinIO object key with a
-                        # stray leading slash, not a browser-loadable URL on its own.
-                        image_url = answer_images_service.public_gallery_url(gallery[0])
+                    gallery = [url for url in gallery if isinstance(url, str)]
+                    # Same normalisation as answer_images_service.collect_images — a stored
+                    # gallery entry is often a bare MinIO object key with a stray leading
+                    # slash, not a browser-loadable URL on its own.
+                    image_urls = [
+                        answer_images_service.public_gallery_url(url)
+                        for url in answer_images_service.select_listing_images(gallery, listing.unit_type)
+                    ]
+                    amenities = answer_images_service.select_listing_amenities(project)
             except Exception:
                 logger.exception(
-                    "Could not resolve a listing's project image; keeping the listing without one.",
+                    "Could not resolve a listing's photos/amenities; keeping the listing without them.",
                     extra={"event": "pipeline.listing_image.failed", "project_name": listing.project_name},
                 )
         resolved.append(
@@ -953,7 +959,8 @@ def _resolve_listing_images(db: Session | None, listings: list["prompts.Property
                 "unit_type": listing.unit_type,
                 "area_range": listing.area_range,
                 "price_range": listing.price_range,
-                "image_url": image_url,
+                "image_urls": image_urls,
+                "amenities": amenities,
                 "project_id": project_id,
             }
         )

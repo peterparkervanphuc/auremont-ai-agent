@@ -47,7 +47,8 @@ def test_risk_check_catches_a_price_that_only_lives_in_listings():
                 "unit_type": "2PN",
                 "area_range": "55-64 m²",
                 "price_range": "3,1-4,3 tỷ đồng",
-                "image_url": None,
+                "image_urls": [],
+                "amenities": [],
                 "project_id": None,
             }
         ],
@@ -64,7 +65,7 @@ def test_risk_check_stays_false_with_no_listings_and_a_price_free_answer():
     assert result["requires_hitl"] is False
 
 
-def test_resolve_listing_images_attaches_a_real_gallery_photo(monkeypatch):
+def test_resolve_listing_images_attaches_real_gallery_photos_and_amenities(monkeypatch):
     monkeypatch.setattr(
         agent_pipeline.answer_images_service, "resolve_project_id", lambda _db, text: "the-sapphire-2"
     )
@@ -73,7 +74,10 @@ def test_resolve_listing_images_attaches_a_real_gallery_photo(monkeypatch):
             "the-sapphire-2": Project(
                 id="the-sapphire-2",
                 name="The Sapphire 2",
-                details={"images": {"gallery": ["http://minio/sapphire-2/a.jpg", "http://minio/sapphire-2/b.jpg"]}},
+                details={
+                    "images": {"gallery": ["http://minio/sapphire-2/a.jpg", "http://minio/sapphire-2/b.jpg"]},
+                    "amenities": [{"name": "Hồ bơi"}, {"name": "Sân tennis"}],
+                },
             )
         }
     )
@@ -86,7 +90,8 @@ def test_resolve_listing_images_attaches_a_real_gallery_photo(monkeypatch):
             "unit_type": "2PN",
             "area_range": "55-64 m²",
             "price_range": "3,1-4,3 tỷ đồng",
-            "image_url": "http://minio/sapphire-2/a.jpg",
+            "image_urls": ["http://minio/sapphire-2/a.jpg", "http://minio/sapphire-2/b.jpg"],
+            "amenities": ["Hồ bơi", "Sân tennis"],
             "project_id": "the-sapphire-2",
         }
     ]
@@ -103,7 +108,8 @@ def test_resolve_listing_images_keeps_the_listing_when_nothing_resolves(monkeypa
             "unit_type": "2PN",
             "area_range": "55-64 m²",
             "price_range": "3,1-4,3 tỷ đồng",
-            "image_url": None,
+            "image_urls": [],
+            "amenities": [],
             "project_id": None,
         }
     ]
@@ -112,6 +118,7 @@ def test_resolve_listing_images_keeps_the_listing_when_nothing_resolves(monkeypa
 def test_resolve_listing_images_handles_a_missing_db():
     resolved = agent_pipeline._resolve_listing_images(None, [_listing()])
 
-    assert resolved[0]["image_url"] is None
+    assert resolved[0]["image_urls"] == []
+    assert resolved[0]["amenities"] == []
     assert resolved[0]["project_id"] is None
     assert resolved[0]["project_name"] == "The Sapphire 2"

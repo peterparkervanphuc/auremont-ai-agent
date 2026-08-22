@@ -32,16 +32,17 @@ class AnswerImage(BaseModel):
 class PropertyListing(BaseModel):
     """One recommended unit, rendered as its own card (with paging arrows between cards)
     instead of as a bullet line in `content` — see prompts.PropertyListing and
-    agent_pipeline._resolve_listing_images, which is what fills in `image_url`/
-    `project_id`. Both are optional: a listing whose project/gallery photo could not be
-    resolved is still shown, just without a photo.
+    agent_pipeline._resolve_listing_images, which is what fills in `image_urls`/
+    `amenities`/`project_id`. All three default empty: a listing whose project/gallery
+    could not be resolved is still shown, just without photos or amenity tags.
     """
 
     project_name: str
     unit_type: str
     area_range: str
     price_range: str
-    image_url: str | None = None
+    image_urls: list[str] = []
+    amenities: list[str] = []
     project_id: str | None = None
 
 

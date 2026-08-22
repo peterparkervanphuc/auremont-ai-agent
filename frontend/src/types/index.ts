@@ -59,15 +59,16 @@ export interface AnswerImage {
 
 /** One recommended unit, rendered as its own card (with paging arrows between cards)
  * instead of as a bullet line in `content` — see backend/ai/prompts.py::PropertyListing.
- * `image_url`/`project_id` are resolved server-side, never supplied by the model, and are
- * null when the project/gallery photo could not be resolved (the card still renders, with
- * a placeholder instead of a photo). */
+ * `image_urls`/`amenities`/`project_id` are resolved server-side, never supplied by the
+ * model, and default empty when the project/gallery could not be resolved (the card still
+ * renders, with a placeholder instead of photos). */
 export interface PropertyListing {
   project_name: string;
   unit_type: string;
   area_range: string;
   price_range: string;
-  image_url: string | null;
+  image_urls: string[];
+  amenities: string[];
   project_id: string | null;
 }
 

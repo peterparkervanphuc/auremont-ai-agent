@@ -286,3 +286,87 @@ def test_a_broken_catalogue_never_costs_the_answer():
             raise RuntimeError("catalogue unavailable")
 
     assert answer_images_service.collect_images(_ExplodingDb(), "tiện ích The Palma có gì", "") == []
+
+
+# --- select_listing_images / select_listing_amenities (property listing cards) ----------
+
+SENIQUE_GALLERY = [
+    "https://cdn/p/senique/be-boi-50m-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/can-ho-1pn-medium-42-m2-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/can-ho-2pn-large-813-m2-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/can-ho-2pn-medium-643-m2-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/can-ho-3pn-small-832-m2-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/phoi-canh-tong-the-the-senique-hanoi.jpg",
+    "https://cdn/p/senique/vi-tri-the-senique-hanoi.jpg",
+]
+
+
+def test_select_listing_images_prefers_unit_type_tagged_floor_plans():
+    """The Senique Hanoi tags floor plans by bedroom count in the filename — a "2PN"
+    listing must get the "can-ho-2pn-..." shots first, not just any floor plan."""
+    selected = answer_images_service.select_listing_images(SENIQUE_GALLERY, "2PN")
+
+    assert selected[0] == "https://cdn/p/senique/can-ho-2pn-large-813-m2-the-senique-hanoi.jpg"
+    assert selected[1] == "https://cdn/p/senique/can-ho-2pn-medium-643-m2-the-senique-hanoi.jpg"
+    # 1PN/3PN photos are the wrong unit type — they must not crowd out the overview shot.
+    assert "https://cdn/p/senique/phoi-canh-tong-the-the-senique-hanoi.jpg" in selected
+
+
+def test_select_listing_images_prefers_any_floor_plan_over_the_overview_shot():
+    """The Pavilion tags floor plans by tower, not by unit type — with no exact "2PN" tag
+    to match, a listing still prefers whatever floor-plan photos the subdivision does have
+    (still "mặt bằng" content) ahead of the generic overview shot."""
+    selected = answer_images_service.select_listing_images(PAVILION_GALLERY, "2PN")
+
+    assert selected[0] == "https://cdn/p/the-pavilion/mat-bang-toa-p1.jpg"
+    assert "https://cdn/p/the-pavilion/tong-mat-bang-the-pavilion.jpg" in selected
+
+
+def test_select_listing_images_falls_back_to_subdivision_overview_shots_with_no_floor_plans():
+    """When a subdivision's gallery has no floor-plan photo at all, a listing still gets
+    the overview shot rather than an unrelated amenity photo."""
+    gallery = [
+        "https://cdn/p/the-palma/tien-ich-be-boi.jpg",
+        "https://cdn/p/the-palma/tien-ich-gym.jpg",
+        "https://cdn/p/the-palma/phoi-canh-tong-the.jpg",
+    ]
+
+    selected = answer_images_service.select_listing_images(gallery, "2PN")
+
+    assert selected[0] == "https://cdn/p/the-palma/phoi-canh-tong-the.jpg"
+
+
+def test_select_listing_images_caps_at_five():
+    gallery = [f"https://cdn/p/x/photo-{i}.jpg" for i in range(12)]
+
+    assert len(answer_images_service.select_listing_images(gallery, "2PN")) == 5
+
+
+def test_select_listing_images_empty_gallery_returns_empty():
+    assert answer_images_service.select_listing_images([], "2PN") == []
+
+
+class _FakeProjectWithAmenities:
+    details = {
+        "amenities": [
+            {"name": "Sân chơi trẻ em", "zone": "Sapphire 1"},
+            {"name": "Vườn dưỡng sinh", "zone": "Sapphire 1"},
+            {"name": "Hồ bơi", "zone": "Sapphire 1"},
+            {"name": "Sân tennis", "zone": "Sapphire 1"},
+            {"name": "Phòng gym", "zone": "Sapphire 1"},
+        ]
+    }
+
+
+def test_select_listing_amenities_returns_a_few_names():
+    names = answer_images_service.select_listing_amenities(_FakeProjectWithAmenities())
+
+    assert names == ["Sân chơi trẻ em", "Vườn dưỡng sinh", "Hồ bơi", "Sân tennis"]
+
+
+class _FakeProjectWithoutAmenities:
+    details: dict = {}
+
+
+def test_select_listing_amenities_handles_missing_data():
+    assert answer_images_service.select_listing_amenities(_FakeProjectWithoutAmenities()) == []
