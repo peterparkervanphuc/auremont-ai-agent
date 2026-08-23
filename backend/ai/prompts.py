@@ -569,6 +569,313 @@ _SUGGESTED_QUESTIONS_RULES = (
 )
 
 
+def _document_context_sections(*, docs: list[dict], query: str, catalog_offer_context: str) -> list[str]:
+    """The retrieved document context, plus how the model must read it.
+
+    Lifted out of `build_prompt` verbatim. It decides what the model is told,
+    never how the prompt is ordered, so it reads better beside its own rules.
+    """
+    parts: list[str] = []
+    if docs:
+        bedroom_aliases = _bedroom_aliases_in_context(query, docs)
+        prompt_docs = [_annotate_bedroom_aliases(doc, bedroom_aliases) for doc in docs]
+        context = "\n\n".join(_format_doc(index, doc) for index, doc in enumerate(prompt_docs, start=1))
+        parts.append(f"NGỮ CẢNH TỪ TÀI LIỆU DỰ ÁN:\n{context}")
+        if bedroom_aliases:
+            mappings = ", ".join(f"{pn} = {br}" for br, pn in bedroom_aliases.items())
+            parts.append(
+                f"QUY ƯỚC KÝ HIỆU TRONG NGỮ CẢNH: PN và BR đều chỉ số phòng ngủ; {mappings}. "
+                "Phải dùng các dòng BR tương ứng để trả lời "
+                "câu hỏi PN, không được coi là thiếu dữ liệu chỉ vì khác ký hiệu."
+            )
+        if catalog_offer_context.strip():
+            # NGỮ CẢNH TỪ TÀI LIỆU DỰ ÁN often carries its own price/note table per unit
+            # type too (each project's "..._ThongTinDuAn_Full.pdf" has one), and it is
+            # usually NOT the same number as BẢNG GIÁ CATALOGUE THAM KHẢO above — the
+            # document table is aggregated current secondary-market/listing data ("giá tin
+            # đăng", "Thị trường T8/2026" — i.e. resale prices, naturally higher than launch
+            # price), while the catalogue table is the developer's own published Min-Max.
+            # Without this instruction the model quotes whichever number it reads first as
+            # if it were simply "the price", which reads as a wrong/inconsistent figure to
+            # anyone who has seen the developer's official price sheet (it is not wrong,
+            # it is a different, unlabelled thing).
+            parts.append(
+                "LƯU Ý GIÁ TỪ 2 NGUỒN KHÁC NHAU — ĐỌC KỸ TRƯỚC KHI TRẢ LỜI GIÁ: nếu NGỮ CẢNH "
+                "TỪ TÀI LIỆU DỰ ÁN có một mức giá khác với BẢNG GIÁ CATALOGUE THAM KHẢO cho CÙNG "
+                "loại căn, đó LUÔN LUÔN là giá thị trường thứ cấp/tin đăng hiện tại (bán lại), "
+                "KHÔNG PHẢI giá gốc chủ đầu tư công bố — TUYỆT ĐỐI không tự coi đây là 'giá dự "
+                "phòng/giá thực tế đáng tin hơn' rồi ưu tiên dùng nó. Câu đầu tiên trả lời 'giá "
+                "bao nhiêu' BẮT BUỘC phải là số liệu trong BẢNG GIÁ CATALOGUE THAM KHẢO (giá "
+                "chính thức) — không mở đầu bằng số liệu từ tài liệu dự án dù nó xuất hiện trước "
+                "trong ngữ cảnh. CHỈ nhắc thêm số liệu từ tài liệu SAU KHI đã nêu giá catalogue, "
+                "và PHẢI ghi rõ đó là giá thị trường thứ cấp/tin đăng — không được gộp chung hai "
+                "mức giá thành một khoảng, không được suy diễn hay bịa thêm một mức giá 'khu vực "
+                "lân cận' nào khác không có trong ngữ cảnh."
+            )
+    return parts
+
+
+def _public_answer_rules(*, units: list[InventoryUnit], catalog_offer_context: str) -> str:
+    """How the assistant answers a customer: consultative, one question at a time."""
+    public_inventory_layout = (
+        "- Khi có TỒN KHO REAL-TIME: mỗi mã căn là MỘT thẻ listings riêng, kèm unit_code/status "
+        "(xem mục TRÌNH BÀY KẾT QUẢ TỒN KHO) — KHÔNG viết lại thành gạch đầu dòng trong text, "
+        "KHÔNG giới hạn số lượng thẻ.\n"
+        if units
+        else ""
+    )
+    catalogue_layout = (
+        "- Khi có cả BẢNG GIÁ CATALOGUE THAM KHẢO và TỒN KHO REAL-TIME, phải dùng CẢ HAI nhưng tách rõ: "
+        "tồn kho là mã căn/trạng thái hiện tại; catalogue là khoảng giá tham khảo theo dự án/loại căn. "
+        "BẮT BUỘC nêu số cụ thể cho ĐỦ các khoảng liên quan (tên dự án/phân khu · loại căn · diện "
+        "tích · khoảng giá), không giới hạn số lượng như quy tắc ở mục TƯ VẤN bên dưới — không tự ý "
+        "cắt xuống 1-2 — và không biến khoảng giá thành cam kết còn căn.\n"
+        if catalog_offer_context.strip() and units
+        # TỒN KHO REAL-TIME above reported zero matches — but that check only covers
+        # whichever project(s) the live-inventory mapping resolved for this query, a
+        # narrow scope that must not be read as "no such apartments exist anywhere".
+        # Without this, the model treats an empty live-inventory block as ground
+        # truth and states there are no matching units at all, contradicting the
+        # (often much broader) BẢNG GIÁ CATALOGUE THAM KHẢO context sitting right
+        # above it in the same prompt — a hallucination the Verifier reliably (but
+        # not always, since it is itself a probabilistic judge) catches and rejects,
+        # so fixing it here prevents a 50/50 chance of the whole answer declining.
+        else (
+            "- TỒN KHO REAL-TIME ở trên báo 0 kết quả — điều đó chỉ có nghĩa là hệ thống mã căn "
+            "real-time (đang giới hạn theo dự án/phạm vi được tra) không khớp, KHÔNG có nghĩa là "
+            "không tồn tại căn hộ nào phù hợp. TUYỆT ĐỐI không viết 'không có căn nào', 'hệ thống "
+            "ghi nhận chưa có căn hộ trống' hay các câu tương đương. Phải dùng BẢNG GIÁ CATALOGUE "
+            "THAM KHẢO ở trên để chọn ĐỦ các lựa chọn phù hợp, không giới hạn số lượng (xem mục TƯ VẤN) "
+            "và điền vào listings theo ĐÚNG quy "
+            "tắc ở mục LISTINGS phía trên (project_name/unit_type/area_range/price_range) — KHÔNG "
+            "viết số liệu đó thành gạch đầu dòng hay liệt kê trong text, thẻ listings đã hiển thị "
+            "số liệu này rồi; text chỉ nói ngắn gọn đây là khoảng tham khảo theo catalogue, không "
+            "phải xác nhận còn mã căn trống.\n"
+            if catalog_offer_context.strip() and not units
+            else ""
+        )
+    )
+    return (
+        "Trả lời câu hỏi trên với vai trò chuyên viên tư vấn đang trò chuyện trực tiếp với "
+        "khách, tự nhiên và đúng trọng tâm. Văn bản thuần, không dùng ký tự Markdown nào "
+        "(không dấu sao, không thăng) — NÊN có đúng 1 emoji phù hợp ngữ cảnh cho sinh động.\n"
+        + public_inventory_layout
+        + catalogue_layout
+        + "- Viết thành câu tự nhiên; BẮT BUỘC xuống dòng theo gạch đầu dòng, mỗi lựa chọn một "
+        "dòng, ngay khi nêu số liệu của từ 2 lựa chọn trở lên trong cùng tin nhắn — không "
+        "nhồi nhiều số liệu vào chung một câu văn dài dù câu đó đọc trôi chảy.\n"
+        "- Với các lựa chọn chỉ có trong tài liệu/catalogue (không phải mã căn live), nếu có nhiều "
+        "loại căn cùng khớp NHƯNG cùng nằm trong MỘT phân khu/dự án đã xác định, đưa ĐỦ các lựa "
+        "chọn đó vào listings, không giới hạn số lượng (xem mục LISTINGS/TƯ VẤN) — không tự ý cắt xuống "
+        "1-2, khách hỏi theo tiêu chí rộng (vd một mức ngân sách, một loại hình) là đang muốn "
+        "thấy hết các lựa chọn đang có trong phân khu đó.\n"
+        "- Nếu câu hỏi còn chung chung và có nhiều lựa chọn khớp, hỏi lại MỘT điều về nhu "
+        "cầu trước khi tư vấn cụ thể (không gộp nhiều câu khảo sát vào một tin nhắn); nếu đã "
+        "rõ ràng thì trả lời thẳng.\n"
+        "- Khi khách chỉ nêu MỘT mức ngân sách/khoảng giá ('tư vấn căn từ 3 đến 5 tỷ') mà chưa "
+        "nói rõ loại hình bất động sản, điều cần hỏi lại đầu tiên PHẢI là loại hình — chung cư, "
+        "biệt thự hay shophouse/shop TMDV — vì mỗi loại hình có mức giá và cách tư vấn khác "
+        "hẳn nhau; đừng mặc định là chung cư rồi liệt kê thẳng listings luôn. Chỉ bỏ qua câu "
+        "hỏi này khi khách đã nói rõ loại hình (trong câu hiện tại hoặc lịch sử hội thoại gần "
+        "đây), hoặc khi ngữ cảnh chỉ có đúng một loại hình khớp mức giá đó.\n"
+        "- Khi đã biết loại hình VÀ ngân sách (đủ để tra catalogue) nhưng các căn khớp trải "
+        "trên NHIỀU phân khu/dự án khác nhau, và khách CHƯA chỉ định phân khu nào (không nêu "
+        "tên phân khu trong câu hiện tại lẫn lịch sử hội thoại gần đây), TRẢ VỀ MỘT THẺ TÓM TẮT "
+        "CHO MỖI PHÂN KHU khớp thay vì từng loại căn — mỗi phân khu MỘT phần tử listings với: "
+        "project_name (tên phân khu), unit_type LUÔN ghi đúng nguyên văn 'Nhiều loại căn' (KHÔNG "
+        "được ghi cụ thể '2PN'/'3PN' hay bất kỳ số phòng ngủ nào vào unit_type ở bước này — hệ "
+        "thống sẽ tự động gắn nhầm ảnh mặt bằng của đúng loại căn đó nếu unit_type chứa số phòng "
+        "ngủ, trong khi thẻ ở bước này CẦN ảnh tổng thể/phối cảnh của phân khu, chưa phải ảnh "
+        "mặt bằng của một loại căn cụ thể), area_range và price_range GỘP từ diện tích/mức giá "
+        "THẤP NHẤT đến CAO NHẤT trong số các loại căn của phân khu đó thực sự khớp ngân sách/tiêu "
+        "chí khách vừa nêu (bỏ qua loại căn nào của phân khu đó vượt ngân sách, dù phân khu có "
+        "bán loại đó) — vd phân khu có Studio 1,2-1,3 tỷ và 2PN 3,4-4,5 tỷ đều khớp 'dưới 5 tỷ' "
+        "thì price_range của thẻ phân khu đó ghi '1,2 - 4,5 tỷ đồng'. SAI — khách hỏi 'dưới 5 "
+        "tỷ' mà một phân khu có Studio 1,7 tỷ, 2PN 4,2 tỷ VÀ 3PN 6,5 tỷ (3PN vượt ngân sách), "
+        "price_range KHÔNG được ghi '1,7 - 6,5 tỷ đồng' (đã lẫn cả phần vượt ngân sách vào). "
+        "ĐÚNG — cùng phân khu đó, bỏ hẳn 3PN ra khỏi phép gộp vì vượt ngân sách, price_range chỉ "
+        "ghi '1,7 - 4,2 tỷ đồng' (dừng đúng ở loại căn cao nhất còn nằm trong 'dưới 5 tỷ'). Nếu "
+        "MỌI loại căn của một phân khu đều vượt ngân sách, bỏ hẳn phân khu đó khỏi listings/"
+        "quick_replies, đừng cố đưa vào rồi ghi giá vượt mức khách nêu. listings PHẢI liệt kê "
+        "ĐỦ mọi phân khu khớp, không giới hạn số lượng (như quy tắc ở trên) — dù khớp bao nhiêu "
+        "phân khu cũng đưa hết vào listings, không âm thầm bỏ bớt. quick_replies là lối tắt để "
+        "bấm nhanh — KHÔNG BẮT BUỘC phủ hết số phân khu "
+        "đã có trong listings, chỉ cần chọn TỐI ĐA 4 tên tiêu biểu nhất trong số các phân khu "
+        "đã đưa vào listings (nếu listings có nhiều hơn 4 phân khu, quick_replies vẫn chỉ lấy "
+        "4, phần còn lại khách vẫn thấy đủ trong các thẻ listings, chỉ là không có nút bấm "
+        "nhanh riêng — không vì giới hạn 4 của quick_replies mà cắt bớt số phân khu trong "
+        "listings xuống theo).\n"
+        "  SAI — 8 phân khu khớp tiêu chí nhưng chỉ điền 4 phần tử vào listings (rồi mới điền "
+        "quick_replies từ đúng 4 phân khu đó) vì đang nhầm giới hạn 4 của quick_replies sang "
+        "cho cả listings — khách bị giấu mất 4 phân khu còn lại đang thực sự khớp.\n"
+        "  ĐÚNG — 8 phân khu khớp thì listings có đủ 8 phần tử; quick_replies chỉ chọn ra 4 "
+        "tên tiêu biểu trong 8 phân khu đó, 4 phân khu còn lại khách vẫn thấy qua các thẻ "
+        "listings (lướt/bấm mũi tên), chỉ không có nút bấm nhanh.\n"
+        "  text KHÔNG lặp lại số liệu đã có trong thẻ (theo đúng quy tắc LISTINGS ở trên), chỉ có câu "
+        "dẫn ngắn VÀ BẮT BUỘC một câu mời chọn phân khu để xem mặt bằng/layout chi tiết từng "
+        "loại căn (vd 'Anh chị muốn xem chi tiết mặt bằng phân khu nào ạ?') — đây là gợi ý cho "
+        "lượt tiếp theo, không phải hỏi khảo sát nhu cầu nên KHÔNG cần tuân quy tắc 'chỉ hỏi một "
+        "điều mỗi lượt' của mục TÌM HIỂU NHU CẦU. Ở lượt SAU, khi khách đã chọn đúng một phân "
+        "khu (qua quick_reply hoặc gõ tên), MỚI liệt kê ĐỦ các loại căn cụ thể (mỗi loại một "
+        "phần tử listings, unit_type ghi rõ '2PN'/'3PN'... như bình thường để hệ thống gắn đúng "
+        "ảnh mặt bằng của loại căn đó) khớp ngân sách của riêng phân khu đó, không giới hạn số "
+        "lượng như quy tắc ở trên. Bỏ qua bước thẻ tóm tắt phân khu này khi: chỉ có ĐÚNG MỘT phân "
+        "khu khớp mức giá/tiêu chí đó (không có gì để chọn, liệt kê thẳng từng loại căn của "
+        "phân khu đó), khách đã tự nêu tên phân khu cụ thể, hoặc khách chủ động hỏi muốn xem/so "
+        "sánh chi tiết từng loại căn của tất cả phân khu cùng lúc.\n"
+        "- Bám đúng loại căn / phân khu / tòa mà câu hỏi nhắc tới, đừng trả lời chung chung "
+        "cho cả dự án khi khách đang hỏi một loại căn cụ thể.\n"
+        "- Nếu khách từng nêu một tiêu chí cảm xúc/phong cách sống (yên tĩnh, cây xanh, gần "
+        "trường học...) trong lịch sử hội thoại, câu trả lời gợi ý căn/phân khu PHẢI nhắc lại "
+        "đúng từ khoá đó — dù ngữ cảnh không đủ dữ liệu để khẳng định phân khu nào đáp ứng "
+        "(lúc đó nói thẳng chưa đủ dữ liệu so sánh theo tiêu chí này), tuyệt đối không im "
+        "lặng bỏ qua và chỉ báo giá/diện tích như thể khách chưa từng nói điều đó.\n"
+        "- Chỉ kèm điều kiện VAT, diện tích tính theo hoặc mốc thời gian khi điều kiện đó nằm "
+        "trong cùng bản ghi/khối nguồn với con số đang nêu; thiếu thì không tự bổ sung.\n"
+        "- Không viết tên tài liệu, số trang hay số thứ tự khối ngữ cảnh ([1], [2]) vào câu "
+        "trả lời — giao diện đã hiện phần nguồn riêng bên dưới.\n"
+        "- Nếu ngữ cảnh chưa có dữ liệu cho phần nào, nói thẳng thay vì suy đoán — nêu đúng "
+        "tên chủ đề CÂU HỎI HIỆN TẠI đang thiếu dữ liệu, không sao chép nguyên văn câu 'chưa "
+        "có dữ liệu về [chủ đề khác]' đã dùng ở lượt trước trong lịch sử cho một chủ đề khác.\n"
+        "- Nếu hợp lý, khép lại bằng một gợi ý tự nhiên cho bước tiếp theo về nội dung (so "
+        "sánh thêm, xem thêm hình nếu có, hỏi thêm một điều về nhu cầu) — không lặp lại máy "
+        "móc ở mọi câu trả lời, và không tự mời để lại liên hệ hay gặp chuyên viên.\n"
+        "- Chỉ mời sang chủ đề mà NGỮ CẢNH đang có thật sự chứa thông tin — không đoán chủ đề "
+        "'nghe hợp lý' từ kiến thức nền chung rồi mời khách bấm vào, khách bấm vào không có "
+        "dữ liệu để trả lời là trải nghiệm tệ.\n"
+        "- Nếu câu bạn vừa hỏi có vài lựa chọn ngắn, rõ ràng, điền vào quick_replies đúng "
+        "như khách sẽ gõ (2-4 lựa chọn); nếu không thì để quick_replies trống.\n"
+        + _SUGGESTED_QUESTIONS_RULES.format(asker="khách")
+    )
+
+
+def _sale_answer_rules(*, units: list[InventoryUnit]) -> str:
+    """How the assistant answers a Sale: a dense brief they read in front of a client."""
+    internal_layout = (
+        "- Dòng đầu tiên tóm tắt đúng tổng số căn còn trống và khoảng giá, KHÔNG bắt đầu bằng '- '.\n"
+        "- Sau đó liệt kê ĐỦ mọi căn trong TỒN KHO REAL-TIME, mỗi căn một dòng bắt đầu bằng '- '; "
+        "không bỏ bớt căn và không gộp nhiều căn vào một dòng.\n"
+        if units
+        else (
+            "- Dòng đầu tiên trả lời thẳng điều Sale hỏi, kèm con số chính và KHÔNG bắt đầu bằng '- '.\n"
+            "- Nếu còn nội dung liệt kê, mỗi lựa chọn sau đó mới bắt đầu bằng '- '. Tối đa 6 dòng tổng cộng.\n"
+        )
+    )
+    return (
+        "Trả lời câu hỏi trên với tư cách chuyên viên tư vấn dự án, ngắn gọn và đúng trọng "
+        "tâm như đang brief cho đồng nghiệp sắp gặp khách. Văn bản thuần, không dùng ký tự "
+        "Markdown nào (không dấu sao, không thăng).\n"
+        + internal_layout
+        + "- Nếu Sale hỏi nhiều ý trong cùng một câu (ví dụ giá VÀ diện tích), phải trả lời đủ từng ý "
+        "được hỏi. Trước khi nói một ý là chưa có dữ liệu, rà soát toàn bộ các đoạn và bảng trong NGỮ CẢNH; "
+        "không được bỏ sót số liệu chỉ vì nó nằm ở một khối ngữ cảnh phía sau.\n"
+        "- Bám đúng loại căn / phân khu / tòa mà câu hỏi nhắc tới, đừng trả lời chung chung "
+        "cho cả dự án khi Sale đang hỏi một loại căn cụ thể.\n"
+        "- Chỉ kèm điều kiện VAT, diện tích tính theo hoặc mốc thời gian khi cùng bản ghi/khối "
+        "nguồn với con số; thiếu thì không tự bổ sung.\n"
+        "- Không viết tên tài liệu, số trang hay số thứ tự khối ngữ cảnh ([1], [2]) vào câu "
+        "trả lời — giao diện đã hiện phần nguồn riêng bên dưới.\n"
+        "- Nếu ngữ cảnh chưa có dữ liệu cho phần nào, nói thẳng trong một dòng thay vì suy đoán.\n"
+        + _SUGGESTED_QUESTIONS_RULES.format(asker="Sale")
+    )
+
+
+def _answer_rules(*, is_public: bool, units: list[InventoryUnit], catalog_offer_context: str) -> str:
+    """The answering rules for whichever audience this question came from."""
+    if is_public:
+        return _public_answer_rules(units=units, catalog_offer_context=catalog_offer_context)
+    return _sale_answer_rules(units=units)
+
+
+def _image_sections(*, images: list[dict] | None, is_public: bool, query: str) -> list[str]:
+    """Rules for talking about photos the image tool has already attached.
+
+    Lifted out of `build_prompt` verbatim. It decides what the model is told,
+    never how the prompt is ordered, so it reads better beside its own rules.
+    """
+    parts: list[str] = []
+    if images:
+        # The tool has already run, so this states a fact rather than a promise. Without it
+        # the model reads "no images in the context" off its own prompt and tells the asker
+        # to go find pictures elsewhere — printed directly above a strip of those pictures.
+        project_name = images[0].get("project_name") or "dự án"
+        who = "khách hàng" if is_public else "Sale"
+        shared_rule = (
+            f"ẢNH ĐÃ ĐÍNH KÈM: {len(images)} ảnh {project_name} ĐANG hiển thị trên màn hình của "
+            f"{who}, ngay dưới câu trả lời này. CẤM tuyệt đối mọi câu phủ nhận điều đó — không "
+            "viết 'không có hình ảnh', 'không có tệp ảnh', 'tài liệu không chứa ảnh', 'không "
+            f"hiển thị được ảnh', và không bảo {who} đi hỏi nơi khác xin ảnh. Không mô tả từng ảnh. "
+        )
+        if wants_images_for_prompt(query):
+            # They asked to see something: the photos ARE the answer, and the text is a
+            # short caption for them.
+            parts.append(shared_rule + "Phần chữ chỉ tóm tắt 2-3 câu về hạng mục được hỏi dựa trên ngữ cảnh.")
+        else:
+            # Nobody asked for these — they ride along to illustrate a text answer (see
+            # answer_images_service's automatic route). The question still has to be
+            # answered on its own terms: without this the model reads "images attached" as
+            # an instruction to write about the images and drifts off a question that was
+            # never about them, e.g. answering "giá căn 2PN" with a description of the
+            # amenities pictured.
+            parts.append(
+                shared_rule + "Ảnh chỉ là minh hoạ kèm theo, KHÔNG phải nội dung được hỏi: trả lời "
+                "đúng trọng tâm câu hỏi như khi không có ảnh, không đổi chủ đề sang mô tả ảnh và "
+                "không bắt buộc phải nhắc tới ảnh."
+            )
+    elif wants_images_for_prompt(query):
+        parts.append(
+            "ẢNH: catalogue không có ảnh nào khớp yêu cầu này — KHÔNG có ảnh nào đang hiển thị "
+            "trên màn hình. TUYỆT ĐỐI không viết 'ảnh đang hiển thị', 'đã gửi/đính kèm hình ảnh', "
+            "'xem ngay trên màn hình' hay bất kỳ câu nào ngụ ý có ảnh — khách sẽ thấy tin nhắn "
+            "trống trơn dưới một lời khẳng định sai. Nói ngắn gọn trong một dòng là chưa có ảnh "
+            "cho hạng mục được hỏi."
+        )
+    return parts
+
+
+def _floor_plan_sections(*, floor_plan_towers_only: list[str] | None) -> list[str]:
+    """Floor-plan guidance for the towers a question narrowed to.
+
+    Lifted out of `build_prompt` verbatim. It decides what the model is told,
+    never how the prompt is ordered, so it reads better beside its own rules.
+    """
+    parts: list[str] = []
+    if floor_plan_towers_only is not None:
+        listings_note = (
+            " Vì lý do NÀY, khi liệt kê các loại căn của phân khu này vào listings (xem mục "
+            "LISTINGS/TƯ VẤN) — nghĩa là khi câu hỏi thực sự muốn biết GIÁ/DIỆN TÍCH theo loại căn "
+            "(vd 'các loại căn hộ gồm những gì', 'giá dưới X tỷ') — KHÔNG tách mỗi loại căn (Studio/"
+            "1PN/2PN...) thành một thẻ riêng như quy tắc thông thường — mọi thẻ sẽ hiện đúng một tấm "
+            "ảnh giống hệt nhau (vì không có ảnh riêng cho từng loại), chỉ khác mỗi số, đọc như hệ "
+            "thống bị lặp/lỗi. Thay vào đó GỘP các loại căn khớp tiêu chí của phân khu này thành "
+            "MỘT thẻ listings duy nhất — unit_type ghi đúng nguyên văn 'Nhiều loại căn', area_range/"
+            "price_range GỘP từ thấp nhất đến cao nhất trong số các loại căn thực sự khớp tiêu chí "
+            "khách nêu (cùng cách gộp đã dùng ở thẻ tóm tắt phân khu tại mục TƯ VẤN, kể cả khi ở đây "
+            "chỉ có một phân khu, không phải nhiều phân khu). NGƯỢC LẠI, khi câu hỏi xin riêng MẶT "
+            "BẰNG/LAYOUT (không hỏi giá/loại căn), đây KHÔNG phải lúc dùng thẻ 'Nhiều loại căn' này "
+            "— để trống listings và trả lời theo đúng câu mời xem mặt bằng tòa đã nêu ở trên, ảnh "
+            "mặt bằng thật hiển thị qua cơ chế ảnh riêng, không qua thẻ giá."
+        )
+        if floor_plan_towers_only:
+            tower_list = ", ".join(floor_plan_towers_only)
+            parts.append(
+                "LƯU Ý MẶT BẰNG: dự án/phân khu đang nhắc tới KHÔNG có ảnh mặt bằng riêng theo "
+                f"từng loại căn (Studio/1PN/2PN/3PN...) — chỉ có bản vẽ mặt bằng TỔNG theo TÒA: "
+                f"{tower_list}. Nếu muốn mời xem thêm mặt bằng/layout, câu mời PHẢI theo tên tòa "
+                f"này (vd 'Anh chị muốn xem mặt bằng tòa {floor_plan_towers_only[0]} không?'), TUYỆT "
+                "ĐỐI không mời xem mặt bằng/layout theo loại phòng (1PN/2PN...) vì không có ảnh "
+                "riêng cho từng loại — mời kiểu đó sẽ dẫn khách tới một câu hỏi không có ảnh trả lời." + listings_note
+            )
+        else:
+            parts.append(
+                "LƯU Ý MẶT BẰNG: dự án/phân khu đang nhắc tới hiện CHƯA có ảnh mặt bằng nào trong hệ "
+                "thống (không theo loại căn, cũng không theo tòa). Nếu được hỏi về mặt bằng/layout, "
+                "nói thẳng là ảnh mặt bằng của dự án này chưa được cập nhật, đừng mời xem theo loại "
+                "phòng hay theo tòa vì không có ảnh nào để xem." + listings_note
+            )
+    return parts
+
+
 def build_prompt(
     query: str,
     docs: list[dict],
@@ -664,276 +971,16 @@ def build_prompt(
             "những dự án nào')."
         )
 
-    if docs:
-        bedroom_aliases = _bedroom_aliases_in_context(query, docs)
-        prompt_docs = [_annotate_bedroom_aliases(doc, bedroom_aliases) for doc in docs]
-        context = "\n\n".join(_format_doc(index, doc) for index, doc in enumerate(prompt_docs, start=1))
-        sections.append(f"NGỮ CẢNH TỪ TÀI LIỆU DỰ ÁN:\n{context}")
-        if bedroom_aliases:
-            mappings = ", ".join(f"{pn} = {br}" for br, pn in bedroom_aliases.items())
-            sections.append(
-                f"QUY ƯỚC KÝ HIỆU TRONG NGỮ CẢNH: PN và BR đều chỉ số phòng ngủ; {mappings}. "
-                "Phải dùng các dòng BR tương ứng để trả lời "
-                "câu hỏi PN, không được coi là thiếu dữ liệu chỉ vì khác ký hiệu."
-            )
-        if catalog_offer_context.strip():
-            # NGỮ CẢNH TỪ TÀI LIỆU DỰ ÁN often carries its own price/note table per unit
-            # type too (each project's "..._ThongTinDuAn_Full.pdf" has one), and it is
-            # usually NOT the same number as BẢNG GIÁ CATALOGUE THAM KHẢO above — the
-            # document table is aggregated current secondary-market/listing data ("giá tin
-            # đăng", "Thị trường T8/2026" — i.e. resale prices, naturally higher than launch
-            # price), while the catalogue table is the developer's own published Min-Max.
-            # Without this instruction the model quotes whichever number it reads first as
-            # if it were simply "the price", which reads as a wrong/inconsistent figure to
-            # anyone who has seen the developer's official price sheet (it is not wrong,
-            # it is a different, unlabelled thing).
-            sections.append(
-                "LƯU Ý GIÁ TỪ 2 NGUỒN KHÁC NHAU — ĐỌC KỸ TRƯỚC KHI TRẢ LỜI GIÁ: nếu NGỮ CẢNH "
-                "TỪ TÀI LIỆU DỰ ÁN có một mức giá khác với BẢNG GIÁ CATALOGUE THAM KHẢO cho CÙNG "
-                "loại căn, đó LUÔN LUÔN là giá thị trường thứ cấp/tin đăng hiện tại (bán lại), "
-                "KHÔNG PHẢI giá gốc chủ đầu tư công bố — TUYỆT ĐỐI không tự coi đây là 'giá dự "
-                "phòng/giá thực tế đáng tin hơn' rồi ưu tiên dùng nó. Câu đầu tiên trả lời 'giá "
-                "bao nhiêu' BẮT BUỘC phải là số liệu trong BẢNG GIÁ CATALOGUE THAM KHẢO (giá "
-                "chính thức) — không mở đầu bằng số liệu từ tài liệu dự án dù nó xuất hiện trước "
-                "trong ngữ cảnh. CHỈ nhắc thêm số liệu từ tài liệu SAU KHI đã nêu giá catalogue, "
-                "và PHẢI ghi rõ đó là giá thị trường thứ cấp/tin đăng — không được gộp chung hai "
-                "mức giá thành một khoảng, không được suy diễn hay bịa thêm một mức giá 'khu vực "
-                "lân cận' nào khác không có trong ngữ cảnh."
-            )
+    sections.extend(_document_context_sections(docs=docs, query=query, catalog_offer_context=catalog_offer_context))
 
     if needs_inventory and not inventory_failed:
         sections.append(f"TỒN KHO REAL-TIME:\n{_format_units(units, zero_result)}")
 
-    if is_public:
-        public_inventory_layout = (
-            "- Khi có TỒN KHO REAL-TIME: mỗi mã căn là MỘT thẻ listings riêng, kèm unit_code/status "
-            "(xem mục TRÌNH BÀY KẾT QUẢ TỒN KHO) — KHÔNG viết lại thành gạch đầu dòng trong text, "
-            "KHÔNG giới hạn số lượng thẻ.\n"
-            if units
-            else ""
-        )
-        catalogue_layout = (
-            "- Khi có cả BẢNG GIÁ CATALOGUE THAM KHẢO và TỒN KHO REAL-TIME, phải dùng CẢ HAI nhưng tách rõ: "
-            "tồn kho là mã căn/trạng thái hiện tại; catalogue là khoảng giá tham khảo theo dự án/loại căn. "
-            "BẮT BUỘC nêu số cụ thể cho ĐỦ các khoảng liên quan (tên dự án/phân khu · loại căn · diện "
-            "tích · khoảng giá), không giới hạn số lượng như quy tắc ở mục TƯ VẤN bên dưới — không tự ý "
-            "cắt xuống 1-2 — và không biến khoảng giá thành cam kết còn căn.\n"
-            if catalog_offer_context.strip() and units
-            # TỒN KHO REAL-TIME above reported zero matches — but that check only covers
-            # whichever project(s) the live-inventory mapping resolved for this query, a
-            # narrow scope that must not be read as "no such apartments exist anywhere".
-            # Without this, the model treats an empty live-inventory block as ground
-            # truth and states there are no matching units at all, contradicting the
-            # (often much broader) BẢNG GIÁ CATALOGUE THAM KHẢO context sitting right
-            # above it in the same prompt — a hallucination the Verifier reliably (but
-            # not always, since it is itself a probabilistic judge) catches and rejects,
-            # so fixing it here prevents a 50/50 chance of the whole answer declining.
-            else (
-                "- TỒN KHO REAL-TIME ở trên báo 0 kết quả — điều đó chỉ có nghĩa là hệ thống mã căn "
-                "real-time (đang giới hạn theo dự án/phạm vi được tra) không khớp, KHÔNG có nghĩa là "
-                "không tồn tại căn hộ nào phù hợp. TUYỆT ĐỐI không viết 'không có căn nào', 'hệ thống "
-                "ghi nhận chưa có căn hộ trống' hay các câu tương đương. Phải dùng BẢNG GIÁ CATALOGUE "
-                "THAM KHẢO ở trên để chọn ĐỦ các lựa chọn phù hợp, không giới hạn số lượng (xem mục TƯ VẤN) "
-                "và điền vào listings theo ĐÚNG quy "
-                "tắc ở mục LISTINGS phía trên (project_name/unit_type/area_range/price_range) — KHÔNG "
-                "viết số liệu đó thành gạch đầu dòng hay liệt kê trong text, thẻ listings đã hiển thị "
-                "số liệu này rồi; text chỉ nói ngắn gọn đây là khoảng tham khảo theo catalogue, không "
-                "phải xác nhận còn mã căn trống.\n"
-                if catalog_offer_context.strip() and not units
-                else ""
-            )
-        )
-        sections.append(
-            "Trả lời câu hỏi trên với vai trò chuyên viên tư vấn đang trò chuyện trực tiếp với "
-            "khách, tự nhiên và đúng trọng tâm. Văn bản thuần, không dùng ký tự Markdown nào "
-            "(không dấu sao, không thăng) — NÊN có đúng 1 emoji phù hợp ngữ cảnh cho sinh động.\n"
-            + public_inventory_layout
-            + catalogue_layout
-            + "- Viết thành câu tự nhiên; BẮT BUỘC xuống dòng theo gạch đầu dòng, mỗi lựa chọn một "
-            "dòng, ngay khi nêu số liệu của từ 2 lựa chọn trở lên trong cùng tin nhắn — không "
-            "nhồi nhiều số liệu vào chung một câu văn dài dù câu đó đọc trôi chảy.\n"
-            "- Với các lựa chọn chỉ có trong tài liệu/catalogue (không phải mã căn live), nếu có nhiều "
-            "loại căn cùng khớp NHƯNG cùng nằm trong MỘT phân khu/dự án đã xác định, đưa ĐỦ các lựa "
-            "chọn đó vào listings, không giới hạn số lượng (xem mục LISTINGS/TƯ VẤN) — không tự ý cắt xuống "
-            "1-2, khách hỏi theo tiêu chí rộng (vd một mức ngân sách, một loại hình) là đang muốn "
-            "thấy hết các lựa chọn đang có trong phân khu đó.\n"
-            "- Nếu câu hỏi còn chung chung và có nhiều lựa chọn khớp, hỏi lại MỘT điều về nhu "
-            "cầu trước khi tư vấn cụ thể (không gộp nhiều câu khảo sát vào một tin nhắn); nếu đã "
-            "rõ ràng thì trả lời thẳng.\n"
-            "- Khi khách chỉ nêu MỘT mức ngân sách/khoảng giá ('tư vấn căn từ 3 đến 5 tỷ') mà chưa "
-            "nói rõ loại hình bất động sản, điều cần hỏi lại đầu tiên PHẢI là loại hình — chung cư, "
-            "biệt thự hay shophouse/shop TMDV — vì mỗi loại hình có mức giá và cách tư vấn khác "
-            "hẳn nhau; đừng mặc định là chung cư rồi liệt kê thẳng listings luôn. Chỉ bỏ qua câu "
-            "hỏi này khi khách đã nói rõ loại hình (trong câu hiện tại hoặc lịch sử hội thoại gần "
-            "đây), hoặc khi ngữ cảnh chỉ có đúng một loại hình khớp mức giá đó.\n"
-            "- Khi đã biết loại hình VÀ ngân sách (đủ để tra catalogue) nhưng các căn khớp trải "
-            "trên NHIỀU phân khu/dự án khác nhau, và khách CHƯA chỉ định phân khu nào (không nêu "
-            "tên phân khu trong câu hiện tại lẫn lịch sử hội thoại gần đây), TRẢ VỀ MỘT THẺ TÓM TẮT "
-            "CHO MỖI PHÂN KHU khớp thay vì từng loại căn — mỗi phân khu MỘT phần tử listings với: "
-            "project_name (tên phân khu), unit_type LUÔN ghi đúng nguyên văn 'Nhiều loại căn' (KHÔNG "
-            "được ghi cụ thể '2PN'/'3PN' hay bất kỳ số phòng ngủ nào vào unit_type ở bước này — hệ "
-            "thống sẽ tự động gắn nhầm ảnh mặt bằng của đúng loại căn đó nếu unit_type chứa số phòng "
-            "ngủ, trong khi thẻ ở bước này CẦN ảnh tổng thể/phối cảnh của phân khu, chưa phải ảnh "
-            "mặt bằng của một loại căn cụ thể), area_range và price_range GỘP từ diện tích/mức giá "
-            "THẤP NHẤT đến CAO NHẤT trong số các loại căn của phân khu đó thực sự khớp ngân sách/tiêu "
-            "chí khách vừa nêu (bỏ qua loại căn nào của phân khu đó vượt ngân sách, dù phân khu có "
-            "bán loại đó) — vd phân khu có Studio 1,2-1,3 tỷ và 2PN 3,4-4,5 tỷ đều khớp 'dưới 5 tỷ' "
-            "thì price_range của thẻ phân khu đó ghi '1,2 - 4,5 tỷ đồng'. SAI — khách hỏi 'dưới 5 "
-            "tỷ' mà một phân khu có Studio 1,7 tỷ, 2PN 4,2 tỷ VÀ 3PN 6,5 tỷ (3PN vượt ngân sách), "
-            "price_range KHÔNG được ghi '1,7 - 6,5 tỷ đồng' (đã lẫn cả phần vượt ngân sách vào). "
-            "ĐÚNG — cùng phân khu đó, bỏ hẳn 3PN ra khỏi phép gộp vì vượt ngân sách, price_range chỉ "
-            "ghi '1,7 - 4,2 tỷ đồng' (dừng đúng ở loại căn cao nhất còn nằm trong 'dưới 5 tỷ'). Nếu "
-            "MỌI loại căn của một phân khu đều vượt ngân sách, bỏ hẳn phân khu đó khỏi listings/"
-            "quick_replies, đừng cố đưa vào rồi ghi giá vượt mức khách nêu. listings PHẢI liệt kê "
-            "ĐỦ mọi phân khu khớp, không giới hạn số lượng (như quy tắc ở trên) — dù khớp bao nhiêu "
-            "phân khu cũng đưa hết vào listings, không âm thầm bỏ bớt. quick_replies là lối tắt để "
-            "bấm nhanh — KHÔNG BẮT BUỘC phủ hết số phân khu "
-            "đã có trong listings, chỉ cần chọn TỐI ĐA 4 tên tiêu biểu nhất trong số các phân khu "
-            "đã đưa vào listings (nếu listings có nhiều hơn 4 phân khu, quick_replies vẫn chỉ lấy "
-            "4, phần còn lại khách vẫn thấy đủ trong các thẻ listings, chỉ là không có nút bấm "
-            "nhanh riêng — không vì giới hạn 4 của quick_replies mà cắt bớt số phân khu trong "
-            "listings xuống theo).\n"
-            "  SAI — 8 phân khu khớp tiêu chí nhưng chỉ điền 4 phần tử vào listings (rồi mới điền "
-            "quick_replies từ đúng 4 phân khu đó) vì đang nhầm giới hạn 4 của quick_replies sang "
-            "cho cả listings — khách bị giấu mất 4 phân khu còn lại đang thực sự khớp.\n"
-            "  ĐÚNG — 8 phân khu khớp thì listings có đủ 8 phần tử; quick_replies chỉ chọn ra 4 "
-            "tên tiêu biểu trong 8 phân khu đó, 4 phân khu còn lại khách vẫn thấy qua các thẻ "
-            "listings (lướt/bấm mũi tên), chỉ không có nút bấm nhanh.\n"
-            "  text KHÔNG lặp lại số liệu đã có trong thẻ (theo đúng quy tắc LISTINGS ở trên), chỉ có câu "
-            "dẫn ngắn VÀ BẮT BUỘC một câu mời chọn phân khu để xem mặt bằng/layout chi tiết từng "
-            "loại căn (vd 'Anh chị muốn xem chi tiết mặt bằng phân khu nào ạ?') — đây là gợi ý cho "
-            "lượt tiếp theo, không phải hỏi khảo sát nhu cầu nên KHÔNG cần tuân quy tắc 'chỉ hỏi một "
-            "điều mỗi lượt' của mục TÌM HIỂU NHU CẦU. Ở lượt SAU, khi khách đã chọn đúng một phân "
-            "khu (qua quick_reply hoặc gõ tên), MỚI liệt kê ĐỦ các loại căn cụ thể (mỗi loại một "
-            "phần tử listings, unit_type ghi rõ '2PN'/'3PN'... như bình thường để hệ thống gắn đúng "
-            "ảnh mặt bằng của loại căn đó) khớp ngân sách của riêng phân khu đó, không giới hạn số "
-            "lượng như quy tắc ở trên. Bỏ qua bước thẻ tóm tắt phân khu này khi: chỉ có ĐÚNG MỘT phân "
-            "khu khớp mức giá/tiêu chí đó (không có gì để chọn, liệt kê thẳng từng loại căn của "
-            "phân khu đó), khách đã tự nêu tên phân khu cụ thể, hoặc khách chủ động hỏi muốn xem/so "
-            "sánh chi tiết từng loại căn của tất cả phân khu cùng lúc.\n"
-            "- Bám đúng loại căn / phân khu / tòa mà câu hỏi nhắc tới, đừng trả lời chung chung "
-            "cho cả dự án khi khách đang hỏi một loại căn cụ thể.\n"
-            "- Nếu khách từng nêu một tiêu chí cảm xúc/phong cách sống (yên tĩnh, cây xanh, gần "
-            "trường học...) trong lịch sử hội thoại, câu trả lời gợi ý căn/phân khu PHẢI nhắc lại "
-            "đúng từ khoá đó — dù ngữ cảnh không đủ dữ liệu để khẳng định phân khu nào đáp ứng "
-            "(lúc đó nói thẳng chưa đủ dữ liệu so sánh theo tiêu chí này), tuyệt đối không im "
-            "lặng bỏ qua và chỉ báo giá/diện tích như thể khách chưa từng nói điều đó.\n"
-            "- Chỉ kèm điều kiện VAT, diện tích tính theo hoặc mốc thời gian khi điều kiện đó nằm "
-            "trong cùng bản ghi/khối nguồn với con số đang nêu; thiếu thì không tự bổ sung.\n"
-            "- Không viết tên tài liệu, số trang hay số thứ tự khối ngữ cảnh ([1], [2]) vào câu "
-            "trả lời — giao diện đã hiện phần nguồn riêng bên dưới.\n"
-            "- Nếu ngữ cảnh chưa có dữ liệu cho phần nào, nói thẳng thay vì suy đoán — nêu đúng "
-            "tên chủ đề CÂU HỎI HIỆN TẠI đang thiếu dữ liệu, không sao chép nguyên văn câu 'chưa "
-            "có dữ liệu về [chủ đề khác]' đã dùng ở lượt trước trong lịch sử cho một chủ đề khác.\n"
-            "- Nếu hợp lý, khép lại bằng một gợi ý tự nhiên cho bước tiếp theo về nội dung (so "
-            "sánh thêm, xem thêm hình nếu có, hỏi thêm một điều về nhu cầu) — không lặp lại máy "
-            "móc ở mọi câu trả lời, và không tự mời để lại liên hệ hay gặp chuyên viên.\n"
-            "- Chỉ mời sang chủ đề mà NGỮ CẢNH đang có thật sự chứa thông tin — không đoán chủ đề "
-            "'nghe hợp lý' từ kiến thức nền chung rồi mời khách bấm vào, khách bấm vào không có "
-            "dữ liệu để trả lời là trải nghiệm tệ.\n"
-            "- Nếu câu bạn vừa hỏi có vài lựa chọn ngắn, rõ ràng, điền vào quick_replies đúng "
-            "như khách sẽ gõ (2-4 lựa chọn); nếu không thì để quick_replies trống.\n"
-            + _SUGGESTED_QUESTIONS_RULES.format(asker="khách")
-        )
-    else:
-        internal_layout = (
-            "- Dòng đầu tiên tóm tắt đúng tổng số căn còn trống và khoảng giá, KHÔNG bắt đầu bằng '- '.\n"
-            "- Sau đó liệt kê ĐỦ mọi căn trong TỒN KHO REAL-TIME, mỗi căn một dòng bắt đầu bằng '- '; "
-            "không bỏ bớt căn và không gộp nhiều căn vào một dòng.\n"
-            if units
-            else (
-                "- Dòng đầu tiên trả lời thẳng điều Sale hỏi, kèm con số chính và KHÔNG bắt đầu bằng '- '.\n"
-                "- Nếu còn nội dung liệt kê, mỗi lựa chọn sau đó mới bắt đầu bằng '- '. Tối đa 6 dòng tổng cộng.\n"
-            )
-        )
-        sections.append(
-            "Trả lời câu hỏi trên với tư cách chuyên viên tư vấn dự án, ngắn gọn và đúng trọng "
-            "tâm như đang brief cho đồng nghiệp sắp gặp khách. Văn bản thuần, không dùng ký tự "
-            "Markdown nào (không dấu sao, không thăng).\n"
-            + internal_layout
-            + "- Nếu Sale hỏi nhiều ý trong cùng một câu (ví dụ giá VÀ diện tích), phải trả lời đủ từng ý "
-            "được hỏi. Trước khi nói một ý là chưa có dữ liệu, rà soát toàn bộ các đoạn và bảng trong NGỮ CẢNH; "
-            "không được bỏ sót số liệu chỉ vì nó nằm ở một khối ngữ cảnh phía sau.\n"
-            "- Bám đúng loại căn / phân khu / tòa mà câu hỏi nhắc tới, đừng trả lời chung chung "
-            "cho cả dự án khi Sale đang hỏi một loại căn cụ thể.\n"
-            "- Chỉ kèm điều kiện VAT, diện tích tính theo hoặc mốc thời gian khi cùng bản ghi/khối "
-            "nguồn với con số; thiếu thì không tự bổ sung.\n"
-            "- Không viết tên tài liệu, số trang hay số thứ tự khối ngữ cảnh ([1], [2]) vào câu "
-            "trả lời — giao diện đã hiện phần nguồn riêng bên dưới.\n"
-            "- Nếu ngữ cảnh chưa có dữ liệu cho phần nào, nói thẳng trong một dòng thay vì suy đoán.\n"
-            + _SUGGESTED_QUESTIONS_RULES.format(asker="Sale")
-        )
+    sections.append(_answer_rules(is_public=is_public, units=units, catalog_offer_context=catalog_offer_context))
 
-    if images:
-        # The tool has already run, so this states a fact rather than a promise. Without it
-        # the model reads "no images in the context" off its own prompt and tells the asker
-        # to go find pictures elsewhere — printed directly above a strip of those pictures.
-        project_name = images[0].get("project_name") or "dự án"
-        who = "khách hàng" if is_public else "Sale"
-        shared_rule = (
-            f"ẢNH ĐÃ ĐÍNH KÈM: {len(images)} ảnh {project_name} ĐANG hiển thị trên màn hình của "
-            f"{who}, ngay dưới câu trả lời này. CẤM tuyệt đối mọi câu phủ nhận điều đó — không "
-            "viết 'không có hình ảnh', 'không có tệp ảnh', 'tài liệu không chứa ảnh', 'không "
-            f"hiển thị được ảnh', và không bảo {who} đi hỏi nơi khác xin ảnh. Không mô tả từng ảnh. "
-        )
-        if wants_images_for_prompt(query):
-            # They asked to see something: the photos ARE the answer, and the text is a
-            # short caption for them.
-            sections.append(shared_rule + "Phần chữ chỉ tóm tắt 2-3 câu về hạng mục được hỏi dựa trên ngữ cảnh.")
-        else:
-            # Nobody asked for these — they ride along to illustrate a text answer (see
-            # answer_images_service's automatic route). The question still has to be
-            # answered on its own terms: without this the model reads "images attached" as
-            # an instruction to write about the images and drifts off a question that was
-            # never about them, e.g. answering "giá căn 2PN" with a description of the
-            # amenities pictured.
-            sections.append(
-                shared_rule + "Ảnh chỉ là minh hoạ kèm theo, KHÔNG phải nội dung được hỏi: trả lời "
-                "đúng trọng tâm câu hỏi như khi không có ảnh, không đổi chủ đề sang mô tả ảnh và "
-                "không bắt buộc phải nhắc tới ảnh."
-            )
-    elif wants_images_for_prompt(query):
-        sections.append(
-            "ẢNH: catalogue không có ảnh nào khớp yêu cầu này — KHÔNG có ảnh nào đang hiển thị "
-            "trên màn hình. TUYỆT ĐỐI không viết 'ảnh đang hiển thị', 'đã gửi/đính kèm hình ảnh', "
-            "'xem ngay trên màn hình' hay bất kỳ câu nào ngụ ý có ảnh — khách sẽ thấy tin nhắn "
-            "trống trơn dưới một lời khẳng định sai. Nói ngắn gọn trong một dòng là chưa có ảnh "
-            "cho hạng mục được hỏi."
-        )
+    sections.extend(_image_sections(images=images, is_public=is_public, query=query))
 
-    if floor_plan_towers_only is not None:
-        listings_note = (
-            " Vì lý do NÀY, khi liệt kê các loại căn của phân khu này vào listings (xem mục "
-            "LISTINGS/TƯ VẤN) — nghĩa là khi câu hỏi thực sự muốn biết GIÁ/DIỆN TÍCH theo loại căn "
-            "(vd 'các loại căn hộ gồm những gì', 'giá dưới X tỷ') — KHÔNG tách mỗi loại căn (Studio/"
-            "1PN/2PN...) thành một thẻ riêng như quy tắc thông thường — mọi thẻ sẽ hiện đúng một tấm "
-            "ảnh giống hệt nhau (vì không có ảnh riêng cho từng loại), chỉ khác mỗi số, đọc như hệ "
-            "thống bị lặp/lỗi. Thay vào đó GỘP các loại căn khớp tiêu chí của phân khu này thành "
-            "MỘT thẻ listings duy nhất — unit_type ghi đúng nguyên văn 'Nhiều loại căn', area_range/"
-            "price_range GỘP từ thấp nhất đến cao nhất trong số các loại căn thực sự khớp tiêu chí "
-            "khách nêu (cùng cách gộp đã dùng ở thẻ tóm tắt phân khu tại mục TƯ VẤN, kể cả khi ở đây "
-            "chỉ có một phân khu, không phải nhiều phân khu). NGƯỢC LẠI, khi câu hỏi xin riêng MẶT "
-            "BẰNG/LAYOUT (không hỏi giá/loại căn), đây KHÔNG phải lúc dùng thẻ 'Nhiều loại căn' này "
-            "— để trống listings và trả lời theo đúng câu mời xem mặt bằng tòa đã nêu ở trên, ảnh "
-            "mặt bằng thật hiển thị qua cơ chế ảnh riêng, không qua thẻ giá."
-        )
-        if floor_plan_towers_only:
-            tower_list = ", ".join(floor_plan_towers_only)
-            sections.append(
-                "LƯU Ý MẶT BẰNG: dự án/phân khu đang nhắc tới KHÔNG có ảnh mặt bằng riêng theo "
-                f"từng loại căn (Studio/1PN/2PN/3PN...) — chỉ có bản vẽ mặt bằng TỔNG theo TÒA: "
-                f"{tower_list}. Nếu muốn mời xem thêm mặt bằng/layout, câu mời PHẢI theo tên tòa "
-                f"này (vd 'Anh chị muốn xem mặt bằng tòa {floor_plan_towers_only[0]} không?'), TUYỆT "
-                "ĐỐI không mời xem mặt bằng/layout theo loại phòng (1PN/2PN...) vì không có ảnh "
-                "riêng cho từng loại — mời kiểu đó sẽ dẫn khách tới một câu hỏi không có ảnh trả lời." + listings_note
-            )
-        else:
-            sections.append(
-                "LƯU Ý MẶT BẰNG: dự án/phân khu đang nhắc tới hiện CHƯA có ảnh mặt bằng nào trong hệ "
-                "thống (không theo loại căn, cũng không theo tòa). Nếu được hỏi về mặt bằng/layout, "
-                "nói thẳng là ảnh mặt bằng của dự án này chưa được cập nhật, đừng mời xem theo loại "
-                "phòng hay theo tòa vì không có ảnh nào để xem." + listings_note
-            )
+    sections.extend(_floor_plan_sections(floor_plan_towers_only=floor_plan_towers_only))
 
     if needs_inventory and inventory_failed:
         if catalog_offer_context.strip():
