@@ -61,7 +61,10 @@ export interface AnswerImage {
  * instead of as a bullet line in `content` — see backend/ai/prompts.py::PropertyListing.
  * `image_urls`/`amenities`/`project_id` are resolved server-side, never supplied by the
  * model, and default empty when the project/gallery could not be resolved (the card still
- * renders, with a placeholder instead of photos). */
+ * renders, with a placeholder instead of photos).
+ * `unit_code`/`status` are non-empty only when this card was built from one confirmed
+ * TỒN KHO REAL-TIME record — a catalogue-only project/subdivision summary card leaves
+ * both "". */
 export interface PropertyListing {
   project_name: string;
   unit_type: string;
@@ -70,6 +73,8 @@ export interface PropertyListing {
   image_urls: string[];
   amenities: string[];
   project_id: string | null;
+  unit_code: string;
+  status: string;
 }
 
 export interface MessageResponse {

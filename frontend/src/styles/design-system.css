@@ -3052,7 +3052,14 @@ code {
 }
 
 /* Bubble */
-.chat-bubble-wrap { display: flex; flex-direction: column; gap: 3px; }
+/* min-width: 0 overrides the flexbox default of min-width: auto on a row-direction flex
+   item (.chat-message is display:flex) — without it, a flex item refuses to shrink
+   below its content's intrinsic size, so wide content inside (the listing carousel,
+   whose cards are a percentage of *this* box) pushed .chat-bubble-wrap past
+   .chat-message's own max-width: 78% instead of being capped by it, ballooning the whole
+   bubble to thousands of px. Plain text bubbles are unaffected — they were already
+   narrower than the cap. */
+.chat-bubble-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .chat-message--user .chat-bubble-wrap { align-items: flex-end; }
 
 .chat-bubble {

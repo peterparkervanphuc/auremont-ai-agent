@@ -88,8 +88,9 @@ SYSTEM_INSTRUCTION = (
     "đúng phân khu đó — khi Sale hỏi tiếp đích danh một phân khu, MỚI điền listings theo từng loại "
     "căn cụ thể (unit_type ghi rõ '2PN'/'3PN'...) như quy tắc phía trên. Bỏ qua bước thẻ tóm tắt "
     "này khi chỉ có ĐÚNG MỘT phân khu khớp, hoặc Sale đã nêu tên phân khu cụ thể trong câu hỏi.\n"
-    "- Trần tối đa 8 phần tử trong listings một tin nhắn (phân khu hoặc loại căn); nếu ngữ cảnh "
-    "khớp nhiều hơn, chọn 8 lựa chọn đa dạng nhất và nói rõ trong text còn bao nhiêu lựa chọn khác.\n"
+    "- Liệt kê ĐỦ mọi lựa chọn khớp trong listings một tin nhắn (phân khu hoặc loại căn) — KHÔNG tự "
+    "giới hạn số lượng xuống còn vài phần tử; thẻ có mũi tên lướt nên xem được hết, không cần cắt "
+    "bớt hay chọn ra 'lựa chọn tiêu biểu'.\n"
     "\n"
     "GIỌNG VĂN:\n"
     "- Như nói với đồng nghiệp có nghề: thành câu, tự nhiên, không máy móc.\n"
@@ -207,7 +208,7 @@ SYSTEM_INSTRUCTION_PUBLIC = (
     "\n"
     "LISTINGS — thẻ căn hộ hiển thị riêng ngay dưới tin nhắn, không viết số liệu trùng vào text:\n"
     "- Khi câu trả lời gợi ý các lựa chọn cụ thể có đủ cả 3 số liệu (loại căn, diện tích, giá) — "
-    "theo đúng quy tắc liệt kê ĐỦ lựa chọn khớp (trần tối đa 8) ở mục TƯ VẤN bên dưới — điền MỖI "
+    "theo đúng quy tắc liệt kê ĐỦ lựa chọn khớp, không giới hạn số lượng, ở mục TƯ VẤN bên dưới — điền MỖI "
     "lựa chọn thành một phần tử trong listings: project_name (CHỈ đúng tên riêng phân khu/tòa, vd 'The Sapphire "
     "2' hoặc 'The Zurich'), unit_type (vd '2PN'), area_range (vd '55-64 m²'), price_range (vd "
     "'3,1-4,3 tỷ đồng') — lấy ĐÚNG số liệu có trong ngữ cảnh, không suy diễn hay làm tròn khác đi. "
@@ -271,18 +272,17 @@ SYSTEM_INSTRUCTION_PUBLIC = (
     "ý đã lọc sẵn. Nhưng khi các lựa chọn khớp trải trên NHIỀU phân khu/dự án KHÁC NHAU mà khách "
     "chưa chỉ định phân khu nào, xem quy tắc thẻ tóm tắt phân khu ở phần khảo sát bên dưới — mỗi "
     "phân khu MỘT thẻ gộp số liệu, không liệt kê từng loại căn của mọi phân khu chung một tin nhắn.\n"
-    "- Trần thực tế: tối đa 8 lựa chọn trong listings cho một tin nhắn (đọc số liệu dễ so sánh). "
-    "Nếu ngữ cảnh khớp nhiều hơn 8, chọn 8 lựa chọn đa dạng/dễ so sánh nhất và nói rõ trong text "
-    "còn bao nhiêu lựa chọn khác trong tầm giá/tiêu chí này, mời khách thu hẹp thêm nếu muốn xem "
-    "tiếp (vd theo phân khu, số phòng ngủ) — không âm thầm bỏ bớt mà không nói gì.\n"
+    "- KHÔNG giới hạn số lượng lựa chọn trong listings cho một tin nhắn — ngữ cảnh khớp bao nhiêu, "
+    "liệt kê đủ bấy nhiêu; giao diện đã có mũi tên lướt qua từng thẻ nên không cần cắt bớt hay chỉ "
+    "chọn ra vài lựa chọn 'đa dạng nhất'. Không âm thầm bỏ bớt lựa chọn nào mà không nói gì.\n"
     "- Khi có nhiều lựa chọn, vẫn có thể nhận xét ngắn gọn 1 câu lựa chọn nào nổi bật hơn với "
     "điều khách vừa nêu và vì sao — dựa đúng trên dữ kiện có trong ngữ cảnh, không tự thêm ưu "
     "điểm mà tài liệu không nói tới — nhưng đó là một câu GIỚI THIỆU/gợi ý thêm, không phải lý "
     "do để loại bớt các lựa chọn khác ra khỏi listings.\n"
     "- Khi khách đã chốt đúng MỘT phân khu cụ thể và hỏi có những loại căn nào/bảng giá theo "
     "loại căn của phân khu đó, mỗi loại căn (Studio/1PN/2PN/3PN...) là MỘT lựa chọn khác nhau — "
-    "điền MỖI loại căn thành một phần tử listings riêng (không gộp chung một dòng), vẫn theo "
-    "đúng trần 8 lựa chọn ở trên, và chỉ liệt kê đúng những loại căn NGỮ CẢNH thực sự có đủ số "
+    "điền MỖI loại căn thành một phần tử listings riêng (không gộp chung một dòng), không giới hạn "
+    "số lượng như quy tắc ở trên, và chỉ liệt kê đúng những loại căn NGỮ CẢNH thực sự có đủ số "
     "liệu, không suy đoán thêm loại nào. Câu hỏi kiểu 'các loại căn hộ tại X gồm những gì', 'X có "
     "những loại căn nào' đã LÀ một câu hỏi trực tiếp, TRẢ LỜI THẲNG NGAY bằng ĐỦ các loại căn đó "
     "trong listings — KHÔNG coi đây là câu hỏi còn mơ hồ cần hỏi lại 'muốn xem loại nào trước', và "
@@ -438,18 +438,20 @@ _DOMAIN_SAFETY_RULES = (
 )
 _INVENTORY_PRESENTATION_RULES = (
     "\nTRÌNH BÀY KẾT QUẢ TỒN KHO:\n"
-    "- Khi NGỮ CẢNH có nhiều căn, mở đầu bằng đúng một câu tóm tắt số căn phù hợp và khoảng giá; "
-    "câu này KHÔNG bắt đầu bằng dấu gạch đầu dòng.\n"
-    "- Sau câu tóm tắt, BẮT BUỘC viết MỖI CĂN TRÊN MỘT DÒNG gạch đầu dòng riêng. Tuyệt đối "
-    "không ghép hai hay nhiều mã căn vào cùng một dòng hoặc một câu dài.\n"
-    "- Mỗi dòng dùng mẫu ngắn: Mã căn · Phân khu · Loại căn · Diện tích m² · Giá tỷ đồng · Trạng thái. "
-    "Có thể đặt một dòng tên phân khu trước nhóm căn; không lặp lại câu dẫn dài cho từng căn.\n"
-    "- Viết giá dễ quét như '3,6 tỷ đồng', không viết '3.600.000.000 VNĐ' khi số tiền từ một tỷ đồng trở lên.\n"
-    "- Với yêu cầu tìm/chọn/tư vấn căn chung chung, chỉ liệt kê căn còn trống. Chỉ đưa căn đã đặt chỗ, "
-    "giữ chỗ hoặc đã bán vào kết quả khi người hỏi yêu cầu đúng trạng thái đó, hoặc nêu riêng một câu ngắn "
-    "khi không còn căn trống.\n"
-    "- Nếu có nhiều phân khu, nhóm các dòng theo phân khu để người đọc so sánh; vẫn giữ nguyên quy tắc một căn một dòng."
-    "\n- Không tự gắn điều kiện VAT, phí, diện tích thông thủy/tim tường hoặc thời hạn áp dụng vào một mã căn "
+    "- Khi NGỮ CẢNH có TỒN KHO REAL-TIME (từng mã căn cụ thể), điền MỖI CĂN thành MỘT phần tử "
+    "riêng trong listings (xem mục LISTINGS) — KHÔNG viết thành gạch đầu dòng hay liệt kê trong "
+    "text. project_name lấy đúng tên phân khu (subdivision) của căn đó; unit_type lấy đúng loại "
+    "căn; area_range lấy CHÍNH XÁC diện tích của RIÊNG căn đó (vd '54 m²' — một con số, không "
+    "phải một khoảng); price_range lấy CHÍNH XÁC giá của RIÊNG căn đó (vd '2,88 tỷ đồng', không "
+    "viết '2.880.000.000 VNĐ' khi số tiền từ một tỷ đồng trở lên); unit_code lấy đúng mã căn; "
+    "status dịch ngắn gọn sang tiếng Việt ('còn trống'/'đã giữ chỗ'/'đã bán'). KHÔNG giới hạn số "
+    "lượng thẻ — bao nhiêu căn khớp thì điền đủ bấy nhiêu, giao diện có mũi tên lướt qua từng thẻ.\n"
+    "- text khi đó CHỈ còn đúng MỘT câu tóm tắt (tổng số căn phù hợp + khoảng giá chung), KHÔNG "
+    "lặp lại mã căn/diện tích/giá của từng căn — số liệu đó đã hiển thị đủ trong thẻ listings.\n"
+    "- Với yêu cầu tìm/chọn/tư vấn căn chung chung, chỉ điền vào listings những căn còn trống. "
+    "Chỉ đưa căn đã đặt chỗ, giữ chỗ hoặc đã bán vào khi người hỏi yêu cầu đúng trạng thái đó, "
+    "hoặc nêu riêng một câu ngắn trong text khi không còn căn trống (để trống listings khi đó).\n"
+    "- Không tự gắn điều kiện VAT, phí, diện tích thông thủy/tim tường hoặc thời hạn áp dụng vào một mã căn "
     "nếu chính bản ghi tồn kho của mã căn đó không có trường tương ứng. Điều kiện chung trong tài liệu/catalogue "
     "không tự động áp dụng cho một mã căn live khác nguồn."
 )
@@ -460,15 +462,24 @@ SYSTEM_INSTRUCTION_PUBLIC = f"{SYSTEM_INSTRUCTION_PUBLIC}{_DOMAIN_SAFETY_RULES}{
 class PropertyListing(BaseModel):
     """One recommended unit/subdivision, rendered as its own card (with arrows to page
     between cards) instead of as a bullet line inside `ConsultAnswer.text` — see the
-    LISTINGS block in SYSTEM_INSTRUCTION_PUBLIC. The model fills in the four text fields
+    LISTINGS block in SYSTEM_INSTRUCTION_PUBLIC. The model fills in the text fields
     straight from retrieved context; `agent_pipeline._resolve_listing_images` is what
     attaches a real subdivision photo afterwards — the model never supplies an image URL.
+
+    `unit_code`/`status` are only ever filled from TỒN KHO REAL-TIME (one specific unit
+    the internal API confirmed, e.g. "OCP1-S1-0203" / "còn trống") — see TRÌNH BÀY KẾT QUẢ
+    TỒN KHO. A catalogue-only listing (a project/subdivision summary, or a unit type with
+    no live mã căn behind it) leaves both empty; the frontend only renders the unit-code/
+    status badge when `unit_code` is present, so leaving it empty on a catalogue card is
+    not a degraded case, it is the normal one.
     """
 
     project_name: str
     unit_type: str
     area_range: str
     price_range: str
+    unit_code: str = ""
+    status: str = ""
 
 
 class ConsultAnswer(BaseModel):
@@ -682,9 +693,9 @@ def build_prompt(
 
     if is_public:
         public_inventory_layout = (
-            "- Khi có TỒN KHO REAL-TIME: dòng đầu nêu đúng tổng số căn phù hợp và khoảng giá; sau đó "
-            "mỗi căn một dòng '- '. Hiển thị tối đa 8 căn dễ so sánh nhất; nếu còn thêm, nói rõ số căn còn lại. "
-            "Nhóm theo phân khu, không ghép nhiều mã căn vào một dòng.\n"
+            "- Khi có TỒN KHO REAL-TIME: mỗi mã căn là MỘT thẻ listings riêng, kèm unit_code/status "
+            "(xem mục TRÌNH BÀY KẾT QUẢ TỒN KHO) — KHÔNG viết lại thành gạch đầu dòng trong text, "
+            "KHÔNG giới hạn số lượng thẻ.\n"
             if units
             else ""
         )
@@ -692,7 +703,7 @@ def build_prompt(
             "- Khi có cả BẢNG GIÁ CATALOGUE THAM KHẢO và TỒN KHO REAL-TIME, phải dùng CẢ HAI nhưng tách rõ: "
             "tồn kho là mã căn/trạng thái hiện tại; catalogue là khoảng giá tham khảo theo dự án/loại căn. "
             "BẮT BUỘC nêu số cụ thể cho ĐỦ các khoảng liên quan (tên dự án/phân khu · loại căn · diện "
-            "tích · khoảng giá), theo đúng trần tối đa 8 lựa chọn ở mục TƯ VẤN bên dưới — không tự ý "
+            "tích · khoảng giá), không giới hạn số lượng như quy tắc ở mục TƯ VẤN bên dưới — không tự ý "
             "cắt xuống 1-2 — và không biến khoảng giá thành cam kết còn căn.\n"
             if catalog_offer_context.strip() and units
             else (
@@ -709,7 +720,7 @@ def build_prompt(
                 "real-time (đang giới hạn theo dự án/phạm vi được tra) không khớp, KHÔNG có nghĩa là "
                 "không tồn tại căn hộ nào phù hợp. TUYỆT ĐỐI không viết 'không có căn nào', 'hệ thống "
                 "ghi nhận chưa có căn hộ trống' hay các câu tương đương. Phải dùng BẢNG GIÁ CATALOGUE "
-                "THAM KHẢO ở trên để chọn đủ các lựa chọn phù hợp (theo đúng trần tối đa 8 ở mục TƯ VẤN) "
+                "THAM KHẢO ở trên để chọn ĐỦ các lựa chọn phù hợp, không giới hạn số lượng (xem mục TƯ VẤN) "
                 "và điền vào listings theo ĐÚNG quy "
                 "tắc ở mục LISTINGS phía trên (project_name/unit_type/area_range/price_range) — KHÔNG "
                 "viết số liệu đó thành gạch đầu dòng hay liệt kê trong text, thẻ listings đã hiển thị "
@@ -730,7 +741,7 @@ def build_prompt(
             "nhồi nhiều số liệu vào chung một câu văn dài dù câu đó đọc trôi chảy.\n"
             "- Với các lựa chọn chỉ có trong tài liệu/catalogue (không phải mã căn live), nếu có nhiều "
             "loại căn cùng khớp NHƯNG cùng nằm trong MỘT phân khu/dự án đã xác định, đưa ĐỦ các lựa "
-            "chọn đó vào listings (trần tối đa 8, xem mục LISTINGS/TƯ VẤN) — không tự ý cắt xuống "
+            "chọn đó vào listings, không giới hạn số lượng (xem mục LISTINGS/TƯ VẤN) — không tự ý cắt xuống "
             "1-2, khách hỏi theo tiêu chí rộng (vd một mức ngân sách, một loại hình) là đang muốn "
             "thấy hết các lựa chọn đang có trong phân khu đó.\n"
             "- Nếu câu hỏi còn chung chung và có nhiều lựa chọn khớp, hỏi lại MỘT điều về nhu "
@@ -761,9 +772,9 @@ def build_prompt(
             "ghi '1,7 - 4,2 tỷ đồng' (dừng đúng ở loại căn cao nhất còn nằm trong 'dưới 5 tỷ'). Nếu "
             "MỌI loại căn của một phân khu đều vượt ngân sách, bỏ hẳn phân khu đó khỏi listings/"
             "quick_replies, đừng cố đưa vào rồi ghi giá vượt mức khách nêu. listings PHẢI liệt kê "
-            "ĐỦ mọi phân khu khớp — trần tối đa 8 (như quy tắc trần 8 ở trên); nếu khớp nhiều hơn "
-            "8, chọn 8 phân khu đa dạng nhất và nói rõ trong text còn bao nhiêu phân khu khác chưa "
-            "hiện thẻ. quick_replies là lối tắt để bấm nhanh — KHÔNG BẮT BUỘC phủ hết số phân khu "
+            "ĐỦ mọi phân khu khớp, không giới hạn số lượng (như quy tắc ở trên) — dù khớp bao nhiêu "
+            "phân khu cũng đưa hết vào listings, không âm thầm bỏ bớt. quick_replies là lối tắt để "
+            "bấm nhanh — KHÔNG BẮT BUỘC phủ hết số phân khu "
             "đã có trong listings, chỉ cần chọn TỐI ĐA 4 tên tiêu biểu nhất trong số các phân khu "
             "đã đưa vào listings (nếu listings có nhiều hơn 4 phân khu, quick_replies vẫn chỉ lấy "
             "4, phần còn lại khách vẫn thấy đủ trong các thẻ listings, chỉ là không có nút bấm "
@@ -782,8 +793,8 @@ def build_prompt(
             "điều mỗi lượt' của mục TÌM HIỂU NHU CẦU. Ở lượt SAU, khi khách đã chọn đúng một phân "
             "khu (qua quick_reply hoặc gõ tên), MỚI liệt kê ĐỦ các loại căn cụ thể (mỗi loại một "
             "phần tử listings, unit_type ghi rõ '2PN'/'3PN'... như bình thường để hệ thống gắn đúng "
-            "ảnh mặt bằng của loại căn đó) khớp ngân sách của riêng phân khu đó theo đúng quy tắc "
-            "trần tối đa 8 ở trên. Bỏ qua bước thẻ tóm tắt phân khu này khi: chỉ có ĐÚNG MỘT phân "
+            "ảnh mặt bằng của loại căn đó) khớp ngân sách của riêng phân khu đó, không giới hạn số "
+            "lượng như quy tắc ở trên. Bỏ qua bước thẻ tóm tắt phân khu này khi: chỉ có ĐÚNG MỘT phân "
             "khu khớp mức giá/tiêu chí đó (không có gì để chọn, liệt kê thẳng từng loại căn của "
             "phân khu đó), khách đã tự nêu tên phân khu cụ thể, hoặc khách chủ động hỏi muốn xem/so "
             "sánh chi tiết từng loại căn của tất cả phân khu cùng lúc.\n"
