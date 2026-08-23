@@ -254,7 +254,15 @@ ruff check . && ruff format --check .
 
 ---
 
+## 🤝 Contributing
+
+Setup, the four checks CI runs, and the parts of the pipeline that need care are in
+[CONTRIBUTING.md](CONTRIBUTING.md). Security policy and secret handling are in
+[SECURITY.md](SECURITY.md).
+
+---
+
 ## 📄 License & Acknowledgments
 
-This project is licensed under the **MIT License**. Developed as part of the **AI20K Build Phase (Cohort 3)**. Special thanks to the instructors and mentors for technical guidance on multi-agent architectures and enterprise RAG standards.
+This project is licensed under the [**MIT License**](LICENSE). Developed as part of the **AI20K Build Phase (Cohort 3)**. Special thanks to the instructors and mentors for technical guidance on multi-agent architectures and enterprise RAG standards.
 
