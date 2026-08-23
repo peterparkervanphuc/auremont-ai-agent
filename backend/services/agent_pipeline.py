@@ -435,14 +435,25 @@ def _cache_check(state: PipelineState) -> dict[str, Any]:
         tracing.step("cache_check", hit=False)
         return {"used_cache": False}
 
-    tracing.step("cache_check", hit=True, verifier_score=cached.verifier_score)
+    # RiskCheck is re-run here, on the cached text, rather than trusting a flag stored
+    # alongside it. A cache hit routes straight to END (see `_route_after_cache`), so this
+    # is the ONLY place the HITL gate can still fire for a cached answer — and the gate is
+    # the whole safety story for price and commitment wording. `detect_commitment_risk` is
+    # a deterministic regex over the answer text with no model call behind it, so it costs
+    # nothing here and returns exactly the verdict the original generation got.
+    #
+    # This is what makes caching price answers safe at all: before it, `_store_cache`
+    # refused every `requires_hitl` answer, which in a real-estate corpus is nearly all of
+    # them — the cache collection was never even created in practice.
+    requires_hitl = risk_service.detect_commitment_risk(cached.answer)
+
+    tracing.step("cache_check", hit=True, verifier_score=cached.verifier_score, requires_hitl=requires_hitl)
     return {
         "used_cache": True,
         "draft_answer": cached.answer,
         "citations": cached.citations,
         "verifier_score": cached.verifier_score,
-        # The cache only holds answers that passed RiskCheck and need no HITL (see `_store_cache`).
-        "requires_hitl": False,
+        "requires_hitl": requires_hitl,
         "images": cached.images,
     }
 
@@ -1711,10 +1722,13 @@ def _run_traced(
 
 
 def _store_cache(query: str, result: PipelineResult, project_id: str | None, clearance: DocumentVisibility) -> None:
-    """Cache only clean answers: above the Verifier threshold and free of price/commitment.
+    """Cache only answers that pass the Verifier and carry nothing question-specific.
 
-    Price-touching answers must re-run RiskCheck every time so the Sale always gets the
-    HITL card — serving them from cache would skip that mandatory confirmation step.
+    Price-touching answers ARE cached. They used to be refused outright, on the grounds
+    that RiskCheck had to re-run for the HITL card to appear — but a cache hit routes
+    straight to END, so the fix is to re-run RiskCheck there (see `_cache_check`), not to
+    refuse the entry. Refusing it emptied the cache of nearly every real answer this
+    corpus produces: in practice the cache collection was never created at all.
 
     Answers carrying photos are never cached either. The cache matches on meaning, and
     "cho xem hình ảnh The Palma" and "cho xem mặt bằng The Palma" are close enough to
@@ -1727,10 +1741,17 @@ def _store_cache(query: str, result: PipelineResult, project_id: str | None, cle
     amenity shots attached to "tiện ích có gì" must not be replayed under a cache-matched
     "mặt bằng thế nào".
     """
-    if result.requires_hitl or result.verifier_score < _threshold():
+    if result.verifier_score < _threshold():
         return
 
     if result.images:
+        return
+
+    # Same reasoning as images, one step further: `listings` are the specific units that
+    # matched THIS question, and `CachedAnswer` has no field to carry them. Cached, the
+    # answer would come back saying "em gợi ý lựa chọn sau" above an empty space — and a
+    # near-match ("còn căn 2PN nào" vs "còn căn 3PN nào") would show the wrong units.
+    if result.listings:
         return
 
     cache_service.store_cache(

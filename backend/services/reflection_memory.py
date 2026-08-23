@@ -63,6 +63,10 @@ MAX_LESSONS_PER_PROMPT = 2
 # One shared word is almost always a coincidence in Vietnamese ("của", "là").
 _MIN_TRIGGER_OVERLAP = 2
 
+# Stripped from the edges of each token by `_tokenise`. Vietnamese questions almost always
+# end in "?", and the trailing word is usually the one naming the project.
+_PUNCTUATION = "?!.,;:()[]{}\"'“”‘’…-–—/\\"
+
 # Words too common to carry any signal about what a question is about. "du an" is on the
 # list for the same reason as "la"/"cua": nearly every question in this system is about a
 # project, so matching on it makes an unrelated lesson look relevant.
@@ -269,10 +273,18 @@ def _tokenise(text: str) -> list[str]:
 
     The same fold `sparse_embedding` applies for BM25, and for the same reason: a Sale
     typing in front of a customer drops accents constantly.
+
+    Punctuation is stripped from each word rather than used to reject it. Filtering on
+    `word.isalnum()` dropped any token with punctuation stuck to it, and since a question
+    ends in "?", that silently deleted the LAST word of every single query — "Giá căn 2PN
+    The Palma?" tokenised without "palma", so the one word identifying the project never
+    reached the trigger. Two lessons about different projects then looked identical to
+    `_merge`, and neither could be told apart at recall time.
     """
     from backend.utils.text import strip_diacritics
 
-    return [word for word in strip_diacritics(text).lower().split() if word.isalnum() and len(word) > 1]
+    words = (word.strip(_PUNCTUATION) for word in strip_diacritics(text).lower().split())
+    return [word for word in words if word.isalnum() and len(word) > 1]
 
 
 def _merge(existing: list[Lesson], new: Lesson) -> list[Lesson]:
@@ -280,12 +292,20 @@ def _merge(existing: list[Lesson], new: Lesson) -> list[Lesson]:
 
     Two rejections of the same shape must not become two prompt lines saying the same
     thing — that is exactly how a memory grows long enough to hurt.
+
+    Sameness is judged on the trigger alone, NOT on `failure_mode`. The Verifier labels
+    one and the same defect inconsistently between runs — real stored memory held
+    `gia 2pn con` twice, once as `incomplete-answer` and once as `missing-evidence`, both
+    carrying the identical lesson "Chua tra loi ton kho". With MAX_LESSONS_PER_PROMPT = 2
+    those two entries could take BOTH prompt slots to say one thing, which is precisely
+    the duplication this function exists to prevent. The surviving entry keeps the earlier
+    failure_mode, and with it the `fix` line already reinforced.
     """
     merged = []
     reinforced = False
 
     for lesson in existing:
-        same_shape = lesson.failure_mode == new.failure_mode and _keywords(lesson.trigger) == _keywords(new.trigger)
+        same_shape = _keywords(lesson.trigger) == _keywords(new.trigger)
         if same_shape and not reinforced:
             merged.append(
                 Lesson(

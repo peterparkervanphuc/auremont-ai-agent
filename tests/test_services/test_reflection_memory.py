@@ -250,3 +250,63 @@ def test_sale_session_scopes_are_isolated_and_cleared_independently(fake_redis):
 
     assert reflection_memory.load_lessons(customer_a) == []
     assert len(reflection_memory.load_lessons(customer_b)) == 1
+
+
+# --- Dau cau khong duoc lam mat tu ------------------------------------------------------
+
+
+def test_trailing_question_mark_does_not_swallow_the_last_word():
+    """Cau hoi tieng Viet nao cung ket thuc bang '?', va tu cuoi thuong la ten du an.
+
+    Loc bang `word.isalnum()` tung loai bo moi token dinh dau cau, nen "Palma?" bien mat
+    hoan toan — trigger mat dung tu phan biet du an nay voi du an khac.
+    """
+    assert reflection_memory._tokenise("Gia can 2PN The Palma?") == ["gia", "can", "2pn", "the", "palma"]
+    assert reflection_memory._tokenise("Bang gia the nao!") == ["bang", "gia", "the", "nao"]
+
+
+def test_two_projects_keep_distinct_triggers(fake_redis):
+    """Mat ten du an o trigger khien hai bai hoc khac nhau trong y het nhau."""
+    _record("Gia can 2PN The Palma?", feedback="Bia gia Palma")
+    _record("Gia can 2PN The Beverly?", feedback="Bia gia Beverly")
+
+    triggers = {lesson.trigger for lesson in reflection_memory.load_lessons()}
+    assert triggers == {"gia 2pn palma", "gia 2pn beverly"}
+
+
+def test_the_right_project_lesson_ranks_first(fake_redis):
+    _record("Gia can 2PN The Palma?", feedback="Bia gia Palma")
+    _record("Gia can 2PN The Beverly?", feedback="Bia gia Beverly")
+
+    top = reflection_memory.relevant_lessons("Gia can 2PN The Palma?")
+
+    assert top[0].lesson == "Bia gia Palma"
+
+
+# --- Gop bai hoc bat ke Verifier gan nhan gi -------------------------------------------
+
+
+def test_one_defect_labelled_two_ways_stays_one_lesson(fake_redis):
+    """Du lieu that tung co 'gia 2pn con' luu hai lan — mot lan incomplete-answer, mot lan
+    missing-evidence — cung mot cau chu "Chua tra loi ton kho". Voi
+    MAX_LESSONS_PER_PROMPT = 2, hai dong do chiem ca hai slot de noi dung mot y.
+    """
+    _record("Gia can 2PN con khong?", mode="incomplete-answer", feedback="Chua tra loi ton kho")
+    _record("Gia can 2PN con khong?", mode="missing-evidence", feedback="Chua tra loi ton kho")
+    _record("Gia can 2PN con khong?", mode="incomplete-answer", feedback="Van chua tra loi ton kho")
+
+    lessons = reflection_memory.load_lessons()
+
+    assert len(lessons) == 1
+    assert lessons[0].hits == 3
+    # Giu nhan dau tien, va giu luon dong `fix` da duoc cung co theo no.
+    assert lessons[0].failure_mode == "incomplete-answer"
+
+
+def test_prompt_gets_one_line_not_two_copies(fake_redis):
+    _record("Gia can 2PN con khong?", mode="incomplete-answer", feedback="Chua tra loi ton kho")
+    _record("Gia can 2PN con khong?", mode="missing-evidence", feedback="Chua tra loi ton kho")
+
+    rendered = reflection_memory.format_lessons(reflection_memory.relevant_lessons("Gia can 2PN con khong?"))
+
+    assert rendered.count("Chua tra loi ton kho") == 1

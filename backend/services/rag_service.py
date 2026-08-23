@@ -30,6 +30,7 @@ from collections.abc import Iterable, Sequence
 
 from qdrant_client import models
 
+from backend.core import tracing
 from backend.core.cohere_client import CohereRerankError
 from backend.core.cohere_client import rerank as cohere_rerank
 from backend.core.config import settings
@@ -305,8 +306,17 @@ def _rerank(query: str, hits: list[dict], fused: bool = False) -> list[dict]:
     if settings.rerank_enabled and settings.cohere_api_key:
         reranked = _rerank_cohere(query, hits)
         if reranked is not None:
+            tracing.step("rerank", ranker="cohere", candidate_count=len(hits))
             return reranked
 
+        # Recorded, not just logged. A Cohere Trial key allows 10 calls/minute, so under
+        # any real concurrency this path is taken constantly — and the only outward sign
+        # is that ranking quietly gets worse. Without this step the Admin trace shows a
+        # perfectly normal run and nothing anywhere says the cross-encoder never ran.
+        tracing.step("rerank", ranker="heuristic", candidate_count=len(hits), degraded=True)
+        return _rerank_heuristic(query, hits, fused=fused)
+
+    tracing.step("rerank", ranker="heuristic", candidate_count=len(hits), degraded=False)
     return _rerank_heuristic(query, hits, fused=fused)
 
 
