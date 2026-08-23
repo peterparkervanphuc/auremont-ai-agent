@@ -99,9 +99,7 @@ def get_latest_customer_session(db: Session, customer_id: int) -> ChatSession | 
     )
 
 
-def get_or_create_customer_session(
-    db: Session, customer_id: int, schema: CustomerChatSessionCreate
-) -> ChatSession:
+def get_or_create_customer_session(db: Session, customer_id: int, schema: CustomerChatSessionCreate) -> ChatSession:
     """The customer's one durable conversation, safe against concurrent first sends.
 
     Locking the owner row serialises two browser tabs that both reach the first-message
@@ -124,9 +122,7 @@ def list_sessions_for_customer(db: Session, customer_id: int) -> list[ChatSessio
     return [session] if session is not None else []
 
 
-def claim_or_merge_anonymous_session(
-    db: Session, anonymous: ChatSession, customer_id: int
-) -> ChatSession:
+def claim_or_merge_anonymous_session(db: Session, anonymous: ChatSession, customer_id: int) -> ChatSession:
     """Attach an anonymous conversation to the account's one durable session.
 
     A newly registered account has no existing row, so ownership simply transfers. An

@@ -713,9 +713,7 @@ class TestExternalFieldSanitisation:
         assert len(unit.unit_code) == 120
 
     def test_an_ordinary_record_is_untouched(self):
-        unit = _parse_unit(
-            {"unit_code": "BE1-08", "project_id": "beverly", "unit_type": "2PN", "status": "available"}
-        )
+        unit = _parse_unit({"unit_code": "BE1-08", "project_id": "beverly", "unit_type": "2PN", "status": "available"})
 
         assert unit is not None
         assert (unit.unit_code, unit.unit_type, unit.status) == ("BE1-08", "2PN", "available")

@@ -505,6 +505,7 @@ def test_classification_index_failure_keeps_pending_document_unapproved(
     )
     document.status = DocumentStatus.COMPLETED
     db_session.commit()
+
     def fail_index(*_args, **_kwargs):
         raise documents_router.VectorStoreError("Qdrant unavailable")
 

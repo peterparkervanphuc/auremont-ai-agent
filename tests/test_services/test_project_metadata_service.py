@@ -1,6 +1,5 @@
 from backend.services.project_metadata_service import resolve_classified_project
 
-
 CATALOG = [
     {"id": "hai-au", "name": "Hải Âu - Vinhomes Ocean Park", "location": "Hà Nội"},
     {"id": "the-beverly", "name": "The Beverly - Vinhomes Ocean Park", "location": "Hà Nội"},
@@ -54,4 +53,3 @@ def test_conflicting_project_and_subdivision_are_quarantined():
 
     assert result.project_id is None
     assert result.requires_admin_review is True
-

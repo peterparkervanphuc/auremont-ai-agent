@@ -77,9 +77,7 @@ class TestSubmitFeedback:
     def test_the_owner_can_rate_their_own_answer(self, as_user, users, db_session):
         message = _answer_owned_by(db_session, users["owner"])
 
-        response = as_user(users["owner"]).post(
-            "/api/v1/feedback", json={"message_id": message.id, "type": "wrong"}
-        )
+        response = as_user(users["owner"]).post("/api/v1/feedback", json={"message_id": message.id, "type": "wrong"})
 
         assert response.status_code == 201, response.text
         assert db_session.query(Feedback).count() == 1
@@ -88,9 +86,7 @@ class TestSubmitFeedback:
         """The core IDOR guard: ids are sequential, so guessing one must not be enough."""
         message = _answer_owned_by(db_session, users["owner"])
 
-        response = as_user(users["intruder"]).post(
-            "/api/v1/feedback", json={"message_id": message.id, "type": "wrong"}
-        )
+        response = as_user(users["intruder"]).post("/api/v1/feedback", json={"message_id": message.id, "type": "wrong"})
 
         # 404, not 403 — a 403 would confirm the message id exists.
         assert response.status_code == 404
@@ -101,9 +97,7 @@ class TestSubmitFeedback:
         session, or the endpoint becomes a probe into internal consultation message ids."""
         message = _answer_owned_by(db_session, users["owner"])
 
-        response = as_user(users["customer"]).post(
-            "/api/v1/feedback", json={"message_id": message.id, "type": "wrong"}
-        )
+        response = as_user(users["customer"]).post("/api/v1/feedback", json={"message_id": message.id, "type": "wrong"})
 
         assert response.status_code == 403
         assert db_session.query(Feedback).count() == 0
@@ -134,9 +128,7 @@ class TestReadFeedback:
         assert response.status_code == 200, response.text
         assert len(response.json()) == 1
 
-    def test_admin_may_read_any_answer_because_monitoring_quality_is_their_job(
-        self, as_user, users, db_session
-    ):
+    def test_admin_may_read_any_answer_because_monitoring_quality_is_their_job(self, as_user, users, db_session):
         """Admin Tab 2 reviews answers across the whole team; `/top-failed` already exposes
         this team-wide, so confining Admin here would be inconsistent for no security gain."""
         message = _answer_owned_by(db_session, users["owner"])

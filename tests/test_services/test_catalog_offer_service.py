@@ -53,9 +53,7 @@ def catalogue_db():
 
 
 def _criteria(query: str) -> search_criteria.SearchCriteria:
-    return search_criteria.merge_criteria(
-        search_criteria.SearchCriteria(), search_criteria.parse_criteria(query)
-    )
+    return search_criteria.merge_criteria(search_criteria.SearchCriteria(), search_criteria.parse_criteria(query))
 
 
 def test_every_seeded_project_and_pricing_tier_is_searchable(catalogue_db):
@@ -68,9 +66,7 @@ def test_every_seeded_project_and_pricing_tier_is_searchable(catalogue_db):
     excluded, see `search_offers`."""
     umbrella_id = "vinhomes-ocean-park"
     expected_ids = {row.id for row in catalogue_db.rows} - {umbrella_id}
-    expected = sum(
-        len(row.details.get("pricing") or []) for row in catalogue_db.rows if row.id != umbrella_id
-    )
+    expected = sum(len(row.details.get("pricing") or []) for row in catalogue_db.rows if row.id != umbrella_id)
 
     offers = catalog_offer_service.search_offers(
         catalogue_db, "tư vấn các loại bất động sản", criteria=search_criteria.SearchCriteria(), limit=200
@@ -195,9 +191,7 @@ def test_every_catalogue_subdivision_short_name_resolves(catalogue_db):
     for row in catalogue_db.rows:
         short_name = row.details["project"].get("name")
         assert short_name
-        assert row.id in answer_images_service.resolve_project_ids(
-            catalogue_db, f"cho tôi thông tin {short_name}"
-        )
+        assert row.id in answer_images_service.resolve_project_ids(catalogue_db, f"cho tôi thông tin {short_name}")
 
 
 def test_negative_project_reference_is_not_returned_as_positive_scope(catalogue_db):

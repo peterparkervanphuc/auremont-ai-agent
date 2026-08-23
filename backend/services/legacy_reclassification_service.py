@@ -20,6 +20,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -70,6 +71,7 @@ from backend.services.ingestion_service import (
 )
 from backend.services.parser_service import ParsedSection, parse_document
 from backend.services.project_metadata_service import (
+    ProjectCatalogEntry,
     classification_project_catalog,
     resolve_classified_project,
 )
@@ -125,7 +127,7 @@ class LegacyReclassificationError(RuntimeError):
     """A preview/apply operation could not be completed safely."""
 
 
-class InvalidConfirmationToken(LegacyReclassificationError):
+class InvalidConfirmationTokenError(LegacyReclassificationError):
     """The preview token is invalid, expired or no longer matches the document."""
 
 
@@ -255,15 +257,15 @@ def apply_document_reclassification(
     payload = _decode_confirmation_token(item.confirmation_token)
     document_id = _token_int(payload, "document_id")
     if _token_int(payload, "admin_id") != admin_id:
-        raise InvalidConfirmationToken("The preview belongs to a different Admin account.")
+        raise InvalidConfirmationTokenError("The preview belongs to a different Admin account.")
 
     document = get_document(db, document_id, for_update=True)
     if document is None:
-        raise InvalidConfirmationToken("The previewed document no longer exists.")
+        raise InvalidConfirmationTokenError("The previewed document no longer exists.")
     if _enum_value(document.status) not in _ALLOWED_STATUSES:
-        raise InvalidConfirmationToken("The document lifecycle changed after preview; preview it again.")
+        raise InvalidConfirmationTokenError("The document lifecycle changed after preview; preview it again.")
     if not document.file_path:
-        raise InvalidConfirmationToken("The document no longer has a stored original file.")
+        raise InvalidConfirmationTokenError("The document no longer has a stored original file.")
     _assert_expected_snapshot(
         document,
         str(payload.get("snapshot_sha256", "")),
@@ -273,12 +275,12 @@ def apply_document_reclassification(
     try:
         classification = DocumentClassification.model_validate(payload["classification"])
     except Exception as exc:
-        raise InvalidConfirmationToken("The preview contains invalid classification metadata.") from exc
+        raise InvalidConfirmationTokenError("The preview contains invalid classification metadata.") from exc
 
     target_project_id = _resolve_apply_project_id(db, document, item)
     original = _parse_original(document)
     if not hmac.compare_digest(str(payload.get("source_sha256", "")), original.source_sha256):
-        raise InvalidConfirmationToken("The stored original changed after preview; preview it again.")
+        raise InvalidConfirmationTokenError("The stored original changed after preview; preview it again.")
 
     old_category = _enum_value(document.category)
     old_project_id = document.project_id
@@ -463,7 +465,7 @@ def _finalize_vector_publish(
 
 def _assert_expected_snapshot(document: Document, expected_sha256: str, message: str) -> None:
     if not hmac.compare_digest(expected_sha256, _document_snapshot_sha256(document)):
-        raise InvalidConfirmationToken(message)
+        raise InvalidConfirmationTokenError(message)
 
 
 def resolve_project_candidates(
@@ -471,7 +473,7 @@ def resolve_project_candidates(
     classification: DocumentClassification,
     projects: list[Project],
     *,
-    project_catalog: list[dict[str, object]],
+    project_catalog: list[ProjectCatalogEntry],
 ) -> ProjectResolution:
     """Resolve catalogue IDs from explicit LLM output and canonical project aliases.
 
@@ -523,8 +525,7 @@ def resolve_project_candidates(
         matching_aliases = [
             alias
             for alias in aliases[project.id]
-            if len(alias) >= 5
-            and (f" {alias} " in f" {title_normalised} " or alias.replace(" ", "") in title_compact)
+            if len(alias) >= 5 and (f" {alias} " in f" {title_normalised} " or alias.replace(" ", "") in title_compact)
         ]
         if matching_aliases:
             longest = max(matching_aliases, key=len)
@@ -559,7 +560,7 @@ def resolve_project_candidates(
 def _classify_with_project_catalog(
     filename: str,
     raw_text: str,
-    project_catalog: list[dict[str, object]],
+    project_catalog: Sequence[Mapping[str, object]],
 ) -> DocumentClassification:
     """Use the catalogue-aware classifier when available, remaining test-compatible."""
 
@@ -797,17 +798,17 @@ def _decode_confirmation_token(token: str) -> dict[str, Any]:
             settings.secret_key.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256
         ).digest()
         if not hmac.compare_digest(_b64decode(supplied_signature), expected_signature):
-            raise InvalidConfirmationToken("Invalid reclassification confirmation token.")
+            raise InvalidConfirmationTokenError("Invalid reclassification confirmation token.")
         payload = json.loads(_b64decode(encoded))
-    except InvalidConfirmationToken:
+    except InvalidConfirmationTokenError:
         raise
     except Exception as exc:
-        raise InvalidConfirmationToken("Invalid reclassification confirmation token.") from exc
+        raise InvalidConfirmationTokenError("Invalid reclassification confirmation token.") from exc
 
     if payload.get("version") != _TOKEN_VERSION:
-        raise InvalidConfirmationToken("Unsupported reclassification preview version.")
+        raise InvalidConfirmationTokenError("Unsupported reclassification preview version.")
     if int(payload.get("expires_at", 0)) < int(time.time()):
-        raise InvalidConfirmationToken("The reclassification preview expired; preview it again.")
+        raise InvalidConfirmationTokenError("The reclassification preview expired; preview it again.")
     return payload
 
 
@@ -823,7 +824,7 @@ def _token_int(payload: dict[str, Any], key: str) -> int:
     try:
         return int(payload[key])
     except (KeyError, TypeError, ValueError) as exc:
-        raise InvalidConfirmationToken(f"The preview token has no valid {key}.") from exc
+        raise InvalidConfirmationTokenError(f"The preview token has no valid {key}.") from exc
 
 
 def _json_value(value: Any) -> Any:

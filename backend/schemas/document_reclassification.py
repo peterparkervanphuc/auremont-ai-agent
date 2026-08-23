@@ -7,7 +7,7 @@ whether to apply it.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -18,7 +18,7 @@ class ReclassificationPreviewRequest(BaseModel):
     document_ids: list[int] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
-    def _document_ids_are_unique(self) -> "ReclassificationPreviewRequest":
+    def _document_ids_are_unique(self) -> Self:
         if len(set(self.document_ids)) != len(self.document_ids):
             raise ValueError("document_ids must not contain duplicates")
         return self
@@ -79,7 +79,7 @@ class ReclassificationApplyItem(BaseModel):
     project_id: str | None = None
 
     @model_validator(mode="after")
-    def _project_action_is_consistent(self) -> "ReclassificationApplyItem":
+    def _project_action_is_consistent(self) -> Self:
         if self.project_action == "assign" and not (self.project_id or "").strip():
             raise ValueError("project_id is required when project_action='assign'")
         if self.project_action != "assign" and self.project_id is not None:

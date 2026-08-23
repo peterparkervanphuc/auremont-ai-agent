@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from io import BytesIO
@@ -395,7 +395,7 @@ def ingest_uploaded_document(
 def _classify_document_with_catalog(
     filename: str,
     raw_text: str,
-    project_catalog: list[dict[str, object]],
+    project_catalog: Sequence[Mapping[str, object]],
 ) -> DocumentClassification:
     """Pass live project choices in production while tolerating narrow test doubles."""
 
@@ -532,7 +532,9 @@ def reclassify_document(
     if document is None:
         raise DocumentIngestionError(f"Document {document_id} does not exist.")
     if document.status != DocumentStatus.COMPLETED:
-        raise DocumentIngestionError(f"Document {document_id} is not ready to be reclassified (status={document.status}).")
+        raise DocumentIngestionError(
+            f"Document {document_id} is not ready to be reclassified (status={document.status})."
+        )
     if not document.file_path:
         raise DocumentIngestionError(f"Document {document_id} has no stored original file to re-index.")
 
@@ -575,11 +577,7 @@ def reclassify_document(
 
     category_changed = category != document.category
     project_changed = target_project_id != document.project_id
-    changed_fields = {
-        field_name
-        for field_name, value in updates.items()
-        if value != getattr(document, field_name)
-    }
+    changed_fields = {field_name for field_name, value in updates.items() if value != getattr(document, field_name)}
     if not category_changed and not changed_fields and not was_pending_review:
         raise DocumentIngestionError(
             f"Document {document_id} is already categorised as {category} and has no metadata corrections."
@@ -622,8 +620,7 @@ def reclassify_document(
             if not chunks:
                 raise DocumentIngestionError("No chunks were produced for the corrected classification.")
             section_texts = [
-                section.text if isinstance(section, ParsedSection) else str(section)
-                for section in sections
+                section.text if isinstance(section, ParsedSection) else str(section) for section in sections
             ]
             comparison_text = sanitize_and_scan("\n\n".join(value for value in section_texts if value.strip()))
         elif settings.semantic_conflict_detection_enabled:
@@ -1147,10 +1144,7 @@ def scan_conflicts_for(
         assessment = prepared_pair.assessment
         if assessment is None:
             continue
-        if (
-            assessment.decision == "compatible"
-            and assessment.confidence >= settings.semantic_conflict_min_confidence
-        ):
+        if assessment.decision == "compatible" and assessment.confidence >= settings.semantic_conflict_min_confidence:
             continue
         semantic_candidates.append((sibling, assessment))
 
@@ -1183,8 +1177,7 @@ def scan_conflicts_for(
             assessment.confidence >= settings.semantic_conflict_min_confidence
         )
         description = (
-            f"AI phát hiện mâu thuẫn ngữ nghĩa giữa '{sibling.title}' và '{document.title}': "
-            f"{assessment.summary}"
+            f"AI phát hiện mâu thuẫn ngữ nghĩa giữa '{sibling.title}' và '{document.title}': {assessment.summary}"
             if confirmed
             else (
                 f"AI chưa thể loại trừ mâu thuẫn giữa '{sibling.title}' và '{document.title}': "

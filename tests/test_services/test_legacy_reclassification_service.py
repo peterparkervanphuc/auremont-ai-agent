@@ -28,7 +28,7 @@ from backend.schemas.document_reclassification import (
 from backend.services.document_classification_service import DocumentClassification
 from backend.services.ingestion_service import AI_SERVICE_QUOTA_PUBLIC_MESSAGE, ConflictScanOutcome
 from backend.services.legacy_reclassification_service import (
-    InvalidConfirmationToken,
+    InvalidConfirmationTokenError,
     LegacyReclassificationError,
     apply_document_reclassification,
     list_reclassification_candidates,
@@ -205,7 +205,7 @@ def test_preview_reports_quota_without_leaking_provider_details(db_session, admi
 
 
 def test_tampered_confirmation_token_is_rejected(db_session, admin):
-    with pytest.raises(InvalidConfirmationToken, match="Invalid"):
+    with pytest.raises(InvalidConfirmationTokenError, match="Invalid"):
         apply_document_reclassification(
             db_session,
             item=ReclassificationApplyItem(confirmation_token="x" * 40 + ".bad"),
@@ -222,7 +222,7 @@ def test_apply_rejects_preview_after_metadata_changed(db_session, admin, monkeyp
     document.classification_reason = "Admin changed this after preview"
     db_session.commit()
 
-    with pytest.raises(InvalidConfirmationToken, match="changed after preview"):
+    with pytest.raises(InvalidConfirmationTokenError, match="changed after preview"):
         apply_document_reclassification(
             db_session,
             item=ReclassificationApplyItem(confirmation_token=preview.confirmation_token),
@@ -237,7 +237,9 @@ def test_apply_updates_metadata_and_preserves_active_state(db_session, admin, mo
     classification = _classifier_result(building_codes=["be1"], requires_admin_review=True)
     _mock_source(monkeypatch, service, classification)
     vector_updates = []
-    monkeypatch.setattr(service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs))
+    monkeypatch.setattr(
+        service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs)
+    )
     monkeypatch.setattr(service, "_conflict_scope_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(
         service,
@@ -277,7 +279,9 @@ def test_admin_apply_activates_document_that_only_awaited_review(db_session, adm
     )
     _mock_source(monkeypatch, service)
     vector_updates = []
-    monkeypatch.setattr(service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs))
+    monkeypatch.setattr(
+        service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs)
+    )
     monkeypatch.setattr(service, "_conflict_scope_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(service, "scan_conflicts_for", lambda *_args, **_kwargs: ConflictScanOutcome())
 
@@ -307,7 +311,9 @@ def test_retry_activates_approved_document_left_quarantined_by_partial_apply(db_
     )
     _mock_source(monkeypatch, service)
     vector_updates = []
-    monkeypatch.setattr(service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs))
+    monkeypatch.setattr(
+        service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs)
+    )
     monkeypatch.setattr(service, "_conflict_scope_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(service, "scan_conflicts_for", lambda *_args, **_kwargs: ConflictScanOutcome())
 
@@ -336,7 +342,9 @@ def test_blocked_document_never_becomes_current(db_session, admin, monkeypatch):
     )
     _mock_source(monkeypatch, service)
     vector_updates = []
-    monkeypatch.setattr(service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs))
+    monkeypatch.setattr(
+        service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs)
+    )
     monkeypatch.setattr(
         service,
         "scan_conflicts_for",
@@ -412,7 +420,9 @@ def test_concurrent_metadata_change_after_quarantine_is_not_overwritten(db_sessi
     document = _document(db_session, admin, classification_version=None)
     _mock_source(monkeypatch, service)
     vector_updates = []
-    monkeypatch.setattr(service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs))
+    monkeypatch.setattr(
+        service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs)
+    )
 
     preview = preview_document_reclassification(db_session, document_id=document.id, admin_id=admin.id)
     original_get_document = service.get_document
@@ -430,7 +440,7 @@ def test_concurrent_metadata_change_after_quarantine_is_not_overwritten(db_sessi
 
     monkeypatch.setattr(service, "get_document", racing_get_document)
 
-    with pytest.raises(InvalidConfirmationToken, match="being quarantined"):
+    with pytest.raises(InvalidConfirmationTokenError, match="being quarantined"):
         apply_document_reclassification(
             db_session,
             item=ReclassificationApplyItem(confirmation_token=preview.confirmation_token),
@@ -451,7 +461,9 @@ def test_final_publish_never_overwrites_a_later_quarantine(db_session, admin, mo
     document = _document(db_session, admin, classification_version=None)
     _mock_source(monkeypatch, service)
     vector_updates = []
-    monkeypatch.setattr(service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs))
+    monkeypatch.setattr(
+        service, "update_document_vector_metadata", lambda *args, **kwargs: vector_updates.append(kwargs)
+    )
     monkeypatch.setattr(service, "_conflict_scope_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(service, "scan_conflicts_for", lambda *_args, **_kwargs: ConflictScanOutcome())
 
@@ -471,7 +483,7 @@ def test_final_publish_never_overwrites_a_later_quarantine(db_session, admin, mo
 
     monkeypatch.setattr(service, "get_document", quarantine_before_final_publish)
 
-    with pytest.raises(InvalidConfirmationToken, match="before vector synchronisation"):
+    with pytest.raises(InvalidConfirmationTokenError, match="before vector synchronisation"):
         apply_document_reclassification(
             db_session,
             item=ReclassificationApplyItem(confirmation_token=preview.confirmation_token),

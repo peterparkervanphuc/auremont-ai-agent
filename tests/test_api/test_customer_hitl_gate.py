@@ -143,23 +143,17 @@ class TestLoggedInCustomer:
         assert stored.requires_hitl is False
         assert "3,6 tỷ" in stored.content
 
-    def test_a_price_answer_does_not_enter_the_live_queue(
-        self, as_customer, customer, db_session, monkeypatch
-    ):
+    def test_a_price_answer_does_not_enter_the_live_queue(self, as_customer, customer, db_session, monkeypatch):
         _stub_pipeline(monkeypatch, requires_hitl=True)
         session = _session_for(db_session, customer)
 
-        as_customer(customer).post(
-            f"/api/v1/customer/sessions/{session.id}/messages", json={"content": "Giá căn 2PN?"}
-        )
+        as_customer(customer).post(f"/api/v1/customer/sessions/{session.id}/messages", json={"content": "Giá căn 2PN?"})
 
         db_session.refresh(session)
         assert session.status == SessionStatus.BOT_HANDLING
         assert session.handoff_requested_at is None
 
-    def test_detailed_price_question_reaches_the_pipeline(
-        self, as_customer, customer, db_session, monkeypatch
-    ):
+    def test_detailed_price_question_reaches_the_pipeline(self, as_customer, customer, db_session, monkeypatch):
         _stub_pipeline(monkeypatch, requires_hitl=False)
         session = _session_for(db_session, customer)
 
@@ -172,9 +166,7 @@ class TestLoggedInCustomer:
         assert response.json()["status"] == SessionStatus.BOT_HANDLING
         assert "3,6 tỷ" in response.json()["content"]
 
-    def test_a_safe_answer_still_reaches_the_customer_unchanged(
-        self, as_customer, customer, db_session, monkeypatch
-    ):
+    def test_a_safe_answer_still_reaches_the_customer_unchanged(self, as_customer, customer, db_session, monkeypatch):
         """The gate must not swallow ordinary answers — that would be a regression too."""
         _stub_pipeline(monkeypatch, requires_hitl=False)
         session = _session_for(db_session, customer)
@@ -189,9 +181,7 @@ class TestLoggedInCustomer:
 
 
 class TestAnonymousVisitor:
-    def test_a_risky_answer_is_available_to_anonymous_self_service(
-        self, anonymous_client, db_session, monkeypatch
-    ):
+    def test_a_risky_answer_is_available_to_anonymous_self_service(self, anonymous_client, db_session, monkeypatch):
         _stub_pipeline(monkeypatch, requires_hitl=True)
         created = anonymous_client.post("/api/v1/customer/sessions/anonymous")
         assert created.status_code == 201, created.text
@@ -221,10 +211,7 @@ class TestAnonymousVisitor:
             "Cho mình gặp Sale",
         ],
     )
-
-    def test_anonymous_closing_questions_reach_self_service_pipeline(
-        self, anonymous_client, monkeypatch, question
-    ):
+    def test_anonymous_closing_questions_reach_self_service_pipeline(self, anonymous_client, monkeypatch, question):
         _stub_pipeline(monkeypatch, requires_hitl=False)
         created = anonymous_client.post("/api/v1/customer/sessions/anonymous")
         token = created.json()["visitor_token"]

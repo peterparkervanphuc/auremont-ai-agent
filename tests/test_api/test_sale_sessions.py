@@ -188,15 +188,19 @@ def test_each_sale_session_is_one_customer_memory_boundary(as_sale, sales, monke
     monkeypatch.setattr(memory_service, "remember", _remember)
     monkeypatch.setattr(agent_pipeline, "run_pipeline", _run)
 
-    assert client.post(
-        f"/api/v1/sale/sessions/{customer_a}/messages", json={"content": "Ngân sách dưới 5 tỷ"}
-    ).status_code == 201
-    assert client.post(
-        f"/api/v1/sale/sessions/{customer_b}/messages", json={"content": "Tìm căn 3PN"}
-    ).status_code == 201
-    assert client.post(
-        f"/api/v1/sale/sessions/{customer_a}/messages", json={"content": "Ưu tiên căn còn trống"}
-    ).status_code == 201
+    assert (
+        client.post(f"/api/v1/sale/sessions/{customer_a}/messages", json={"content": "Ngân sách dưới 5 tỷ"}).status_code
+        == 201
+    )
+    assert (
+        client.post(f"/api/v1/sale/sessions/{customer_b}/messages", json={"content": "Tìm căn 3PN"}).status_code == 201
+    )
+    assert (
+        client.post(
+            f"/api/v1/sale/sessions/{customer_a}/messages", json={"content": "Ưu tiên căn còn trống"}
+        ).status_code
+        == 201
+    )
 
     key_a = memory_service.sale_session_key(customer_a)
     key_b = memory_service.sale_session_key(customer_b)

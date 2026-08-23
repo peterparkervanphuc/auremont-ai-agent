@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from backend.core.config import get_settings
 from backend.core.deps import require_role
@@ -83,9 +84,13 @@ def _period_metrics(
     )
     active_sale_ids = {row.sale_id for row in sessions if row.sale_id is not None}
     active_sale_ids.update(
-        sale_by_session[row.session_id]
+        owner
         for row in sale_messages
-        if row.session_id in sale_by_session and sale_by_session[row.session_id] is not None
+        # Both halves are needed: `session_id` is nullable on the message row, and the
+        # owner it maps to is itself nullable. Bound with a walrus so the `is not None`
+        # guard narrows — a repeated `sale_by_session[...]` lookup reads as a fresh
+        # `int | None` every time and never narrows.
+        if row.session_id is not None and (owner := sale_by_session.get(row.session_id)) is not None
     )
 
     return {
@@ -176,7 +181,7 @@ async def get_business_dashboard(
     official_sales = db.query(User).filter(User.role == "sale", ~User.username.like("e2e_sale_%")).all()
     sale_names = {row.id: row.username for row in official_sales}
     official_sale_ids = set(sale_names)
-    session_scope = [ChatSession.sale_id.in_(official_sale_ids)]
+    session_scope: list[ColumnElement[bool]] = [ChatSession.sale_id.in_(official_sale_ids)]
     if project_id:
         session_scope.append(ChatSession.project_id == project_id)
     if sale_id:
@@ -305,9 +310,7 @@ async def get_business_dashboard(
     coverage_projects = [project for project in projects if not project_id or project.id == project_id]
     for project in coverage_projects:
         project_aliases = project_scope_aliases(project)
-        project_documents = [
-            row for row in documents if document_matches_project_scope(row, project, project_aliases)
-        ]
+        project_documents = [row for row in documents if document_matches_project_scope(row, project, project_aliases)]
         categories = {}
         for category in COVERAGE_CATEGORIES:
             matching = [row for row in project_documents if row.category == category]
@@ -332,10 +335,7 @@ async def get_business_dashboard(
         if document.is_current
         and document.status == "completed"
         and document.review_status == "approved"
-        and (
-            selected_coverage_project is None
-            or document.project_id == selected_coverage_project.id
-        )
+        and (selected_coverage_project is None or document.project_id == selected_coverage_project.id)
     )
     summary = current_period["summary"]
     summary["ready_documents"] = ready_documents

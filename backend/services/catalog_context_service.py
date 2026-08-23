@@ -53,9 +53,7 @@ def tower_context(db: Session | None, project_id: str | None, query: str) -> str
     return resolve_tower_context(db, project_id, query).text
 
 
-def resolve_tower_context(
-    db: Session | None, project_id: str | None, query: str
-) -> TowerContextResult:
+def resolve_tower_context(db: Session | None, project_id: str | None, query: str) -> TowerContextResult:
     """Resolve every catalogue tower, with exact facts where the catalogue has them.
 
     `overview.towers` provides complete identifier coverage across subdivisions. It is
@@ -173,9 +171,7 @@ def _known_towers(details: dict) -> list[str]:
     # Preserve catalogue order while adding any detailed record not listed in overview.
     return list(
         dict.fromkeys(
-            tower
-            for tower in [*overview_towers, *tower_details.keys()]
-            if isinstance(tower, str) and tower.strip()
+            tower for tower in [*overview_towers, *tower_details.keys()] if isinstance(tower, str) and tower.strip()
         )
     )
 

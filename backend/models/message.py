@@ -59,7 +59,9 @@ class Message(Base):
     # this column existed.
     suggested_questions: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
-    verifier_score: Mapped[float | None] = mapped_column(Float, nullable=True)  # Overall Verifier score: min of the three below
+    verifier_score: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )  # Overall Verifier score: min of the three below
     # The component scores behind verifier_score, kept apart for the Admin dashboard:
     # low faithfulness means invented figures, low relevancy means retrieval fetched the wrong
     # documents, low completeness means a multi-part question was only half answered.

@@ -136,9 +136,7 @@ def test_parent_scope_can_include_child_project_documents(qdrant):
 
     query_filter = qdrant.query_calls[0]["query_filter"]
     condition = next(
-        item
-        for item in query_filter.should
-        if isinstance(item, models.FieldCondition) and item.key == "project_id"
+        item for item in query_filter.should if isinstance(item, models.FieldCondition) and item.key == "project_id"
     )
     assert list(condition.match.any) == ["parent-project", "child-a", "child-b"]
 
@@ -152,9 +150,7 @@ def test_excluded_project_is_removed_without_hiding_global_documents(qdrant):
 
     query_filter = qdrant.query_calls[0]["query_filter"]
     condition = next(
-        item
-        for item in query_filter.must_not
-        if isinstance(item, models.FieldCondition) and item.key == "project_id"
+        item for item in query_filter.must_not if isinstance(item, models.FieldCondition) and item.key == "project_id"
     )
     assert list(condition.match.any) == ["the-zenpark"]
 
@@ -712,9 +708,7 @@ def test_live_project_scope_also_includes_global_documents(live_qdrant):
         category="internal_guide",
     )
 
-    result = rag_service.retrieve(
-        "Hướng dẫn giao dịch", DocumentVisibility.INTERNAL, project_id="khong-ton-tai"
-    )
+    result = rag_service.retrieve("Hướng dẫn giao dịch", DocumentVisibility.INTERNAL, project_id="khong-ton-tai")
 
     assert [hit["document_id"] for hit in result] == [3]
 

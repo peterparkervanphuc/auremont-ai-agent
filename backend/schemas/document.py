@@ -93,6 +93,8 @@ class DocumentResponse(BaseModel):
     @classmethod
     def _normalise_security_findings(cls, value):
         return value or []
+
+
 class DocumentClassificationUpdate(BaseModel):
     category: DocumentCategory
     subcategory: str | None = None

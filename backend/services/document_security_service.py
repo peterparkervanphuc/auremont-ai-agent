@@ -140,9 +140,7 @@ _RULES: tuple[SecurityRule, ...] = (
 def scan_document_sections(sections: list[ParsedSection]) -> SecurityScanResult:
     """Sanitise parsed sections and return bounded, page-aware security evidence."""
     cleaned_sections = tuple(
-        replace(section, text=cleaned)
-        for section in sections
-        if (cleaned := section.text.replace("\x00", "").strip())
+        replace(section, text=cleaned) for section in sections if (cleaned := section.text.replace("\x00", "").strip())
     )
     if not cleaned_sections:
         return SecurityScanResult(sections=(), findings=())

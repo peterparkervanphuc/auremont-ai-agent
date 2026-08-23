@@ -83,6 +83,7 @@ class ProjectReferences:
     included_ids: tuple[str, ...] = ()
     excluded_ids: tuple[str, ...] = ()
 
+
 # Filename tokens for "a photo of the project overall" — used on the automatic route when
 # the question names no visual topic of its own ("dự án này thế nào?"). These are the
 # establishing shots, the ones that illustrate any answer about the project without
@@ -178,9 +179,7 @@ def wants_images(query: str) -> bool:
     return _contains_phrase(normalized, _LOOK_VERBS) and bool(_subject_tokens(normalized))
 
 
-def collect_images(
-    db: Session, query: str, answer: str, project_id: str | None = None
-) -> list[dict]:
+def collect_images(db: Session, query: str, answer: str, project_id: str | None = None) -> list[dict]:
     """Photos to show under this answer — those asked for, or those that illustrate it.
 
     Takes whichever of the two routes in the module docstring applies. `wants_images`
@@ -248,8 +247,7 @@ def collect_images(
             selected = _auto_attach_images(gallery, normalized_query, known_towers)
 
         return [
-            {"url": public_gallery_url(url), "project_id": project.id, "project_name": project.name}
-            for url in selected
+            {"url": public_gallery_url(url), "project_id": project.id, "project_name": project.name} for url in selected
         ]
     except Exception:
         logger.exception(
@@ -265,9 +263,7 @@ def collect_images(
 _FLOORPLAN_SHEET_TOWER_PATTERN = re.compile(r"toa-([a-z]{1,5}\d+)")
 
 
-def floor_plan_only_towers(
-    db: Session, query: str, answer: str, project_id: str | None = None
-) -> list[str] | None:
+def floor_plan_only_towers(db: Session, query: str, answer: str, project_id: str | None = None) -> list[str] | None:
     """None when the resolved project's gallery has real per-unit-type floor-plan photos —
     nothing extra to tell the model. Otherwise, the tower codes of whatever tower-wide
     floor-plan SHEETS exist in the gallery (e.g. ["LD1", "LD2", "LD3"]), possibly an empty
@@ -367,7 +363,11 @@ def _images_from_category(db: Session, normalized_query: str) -> list[dict]:
             continue
 
         gallery = _drop_shared_nondistinguishing_photos(
-            [url for url in ((project.details or {}).get("images") or {}).get("gallery") or [] if isinstance(url, str) and url]
+            [
+                url
+                for url in ((project.details or {}).get("images") or {}).get("gallery") or []
+                if isinstance(url, str) and url
+            ]
         )
         if not gallery:
             continue
@@ -481,11 +481,7 @@ def _project_matches(db: Session, haystack: str) -> list[tuple[int, int, str]]:
     grouped: dict[tuple[int, int], list[str]] = {}
     for position, negative_length, project_id in matches:
         grouped.setdefault((position, negative_length), []).append(project_id)
-    matches = [
-        item
-        for item in matches
-        if -item[1] >= _MIN_NAME_LENGTH or len(grouped[(item[0], item[1])]) == 1
-    ]
+    matches = [item for item in matches if -item[1] >= _MIN_NAME_LENGTH or len(grouped[(item[0], item[1])]) == 1]
     matches.sort()
     return matches
 
@@ -574,7 +570,9 @@ def select_listing_images(gallery: list[str], unit_type: str, project_name: str 
 
     normalized_unit_type = _normalize(unit_type)
     unit_tokens = _unit_type_tokens(normalized_unit_type)
-    type_matches = list(dict.fromkeys(url for url in gallery if any(token in _normalize_filename(url) for token in unit_tokens)))
+    type_matches = list(
+        dict.fromkeys(url for url in gallery if any(token in _normalize_filename(url) for token in unit_tokens))
+    )
     if type_matches:
         return type_matches
 
@@ -586,7 +584,11 @@ def select_listing_images(gallery: list[str], unit_type: str, project_name: str 
     # real photos for no good reason. The one thing still excluded, deliberately, is
     # anything reading as a floor plan ("mat-bang") — the one photo category proven
     # misleading when shown for the wrong unit type.
-    fallback = [url for url in gallery if "mat-bang" not in _normalize_filename(url) and "matbang" not in _normalize_filename(url)]
+    fallback = [
+        url
+        for url in gallery
+        if "mat-bang" not in _normalize_filename(url) and "matbang" not in _normalize_filename(url)
+    ]
 
     # The zone-summary card (prompts.py's "Nhiều loại căn" listing, shown before the
     # customer has picked a unit type) additionally excludes every per-unit-type render —
@@ -604,7 +606,9 @@ def select_listing_images(gallery: list[str], unit_type: str, project_name: str 
     # sub-zone apart from its siblings sharing the same gallery — put it first.
     sub_zone_tokens = _sub_zone_tokens(project_name)
     if sub_zone_tokens:
-        sub_zone_matches = [url for url in gallery if any(token in _normalize_filename(url) for token in sub_zone_tokens)]
+        sub_zone_matches = [
+            url for url in gallery if any(token in _normalize_filename(url) for token in sub_zone_tokens)
+        ]
         if sub_zone_matches:
             return list(dict.fromkeys([*sub_zone_matches, *fallback]))
 
@@ -622,9 +626,7 @@ def select_listing_amenities(project: Project, max_amenities: int = 4) -> list[s
     return names[:max_amenities]
 
 
-def _filter_by_topic(
-    gallery: list[str], normalized_query: str, known_towers: list[str] | None = None
-) -> list[str]:
+def _filter_by_topic(gallery: list[str], normalized_query: str, known_towers: list[str] | None = None) -> list[str]:
     """Narrow the gallery to the topic the question named.
 
     Falls back to the whole gallery in two cases, both deliberate: the question named no
@@ -654,9 +656,7 @@ def _filter_by_topic(
     return matched or gallery
 
 
-def _auto_attach_images(
-    gallery: list[str], normalized_query: str, known_towers: list[str] | None = None
-) -> list[str]:
+def _auto_attach_images(gallery: list[str], normalized_query: str, known_towers: list[str] | None = None) -> list[str]:
     """The automatic route's selection: matching photos only, capped.
 
     Two deliberate differences from `_filter_by_topic`, both following from nobody having
@@ -708,20 +708,12 @@ def _filter_view_images(gallery: list[str], normalized_query: str) -> list[str] 
         return None
 
     explicit_view_images = [
-        url
-        for url in gallery
-        if any(token in _normalize_filename(url) for token in view_filename_tokens)
+        url for url in gallery if any(token in _normalize_filename(url) for token in view_filename_tokens)
     ]
-    subject_tokens = [
-        token for token in _subject_tokens(normalized_query) if token not in view_filename_tokens
-    ]
+    subject_tokens = [token for token in _subject_tokens(normalized_query) if token not in view_filename_tokens]
     if not subject_tokens:
         return explicit_view_images
-    return [
-        url
-        for url in explicit_view_images
-        if any(token in _normalize_filename(url) for token in subject_tokens)
-    ]
+    return [url for url in explicit_view_images if any(token in _normalize_filename(url) for token in subject_tokens)]
 
 
 def _subject_tokens(normalized_query: str) -> list[str]:
@@ -781,8 +773,7 @@ def _tower_tokens(normalized_query: str, known_towers: list[str] | None = None) 
     matched_names = [
         tower
         for tower in known_towers or []
-        if isinstance(tower, str)
-        and re.search(rf"(?<!\w){re.escape(_normalize(tower))}(?!\w)", normalized_query)
+        if isinstance(tower, str) and re.search(rf"(?<!\w){re.escape(_normalize(tower))}(?!\w)", normalized_query)
     ]
     if not matched_names:
         matched_names = re.findall(r"\b(?:toa|tower)\s*([a-z]{1,5}\d+(?:\.\d+)?)\b", normalized_query)

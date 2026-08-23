@@ -25,6 +25,9 @@ jobs:
       - name: Lint with ruff
         run: ruff check backend/ tests/
 
+      - name: Check formatting
+        run: ruff format --check backend/ tests/
+
       - name: Type-check with mypy
         run: mypy backend/
 

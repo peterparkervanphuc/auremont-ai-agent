@@ -62,14 +62,10 @@ def test_customer_session_creation_is_idempotent(customer_client, db_session, cu
     assert second.status_code == 201
     assert first.json()["id"] == second.json()["id"]
     assert db_session.query(ChatSession).filter(ChatSession.customer_id == customer.id).count() == 1
-    assert [row["id"] for row in customer_client.get("/api/v1/customer/sessions").json()] == [
-        first.json()["id"]
-    ]
+    assert [row["id"] for row in customer_client.get("/api/v1/customer/sessions").json()] == [first.json()["id"]]
 
 
-def test_customer_pipeline_receives_short_and_long_term_memory(
-    customer_client, db_session, customer, monkeypatch
-):
+def test_customer_pipeline_receives_short_and_long_term_memory(customer_client, db_session, customer, monkeypatch):
     session_id = customer_client.post("/api/v1/customer/sessions", json={}).json()["id"]
     create_message(db_session, session_id, MessageSender.CUSTOMER, "Tôi muốn mua để ở")
     create_message(db_session, session_id, MessageSender.AGENT, "Anh chị dự kiến ngân sách bao nhiêu?")

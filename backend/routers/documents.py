@@ -72,13 +72,13 @@ from backend.services.ingestion_service import (
     sanitize_and_scan,
 )
 from backend.services.legacy_reclassification_service import (
-    InvalidConfirmationToken,
+    InvalidConfirmationTokenError,
     LegacyReclassificationError,
     apply_document_reclassification,
     list_reclassification_candidates,
     preview_document_reclassification,
 )
-from backend.services.project_metadata_service import classification_project_catalog
+from backend.services.project_metadata_service import ProjectCatalogEntry, classification_project_catalog
 from backend.services.vector_store_service import (
     VectorStoreError,
     delete_document_vectors,
@@ -172,7 +172,7 @@ class ProjectCatalogItem(BaseModel):
 
 
 @router.get("/project-catalog", response_model=list[ProjectCatalogItem])
-def get_document_project_catalog(db: Session = Depends(get_db)) -> list[dict[str, str | None]]:
+def get_document_project_catalog(db: Session = Depends(get_db)) -> list[ProjectCatalogEntry]:
     """Complete live catalogue used by both LLM resolution and Admin correction.
 
     The public ``/projects`` catalogue intentionally hides rows without marketing
@@ -250,7 +250,7 @@ def apply_llm_reclassification(
         _clear_answer_cache()
         try:
             result = apply_document_reclassification(db, item=item, admin_id=admin.id)
-        except (InvalidConfirmationToken, LegacyReclassificationError, DocumentIngestionError) as exc:
+        except (InvalidConfirmationTokenError, LegacyReclassificationError, DocumentIngestionError) as exc:
             db.rollback()
             result = ReclassificationApplyResult(status="failed", error=str(exc))
         except Exception:
@@ -542,18 +542,16 @@ async def reclassify_document_endpoint(
     # so a semantic-cache hit cannot continue serving an answer from its old scope.
     _clear_answer_cache()
     try:
-        reclassification_kwargs: dict[str, object] = {
-            "document_id": document_id,
-            "category": category,
-            "reviewed_by": admin.id,
-        }
-        # Keep the original category-only call contract for existing integrations;
-        # controlled metadata is passed only when the Admin actually supplied it.
-        if updates:
-            reclassification_kwargs["metadata_updates"] = updates
+        # Passed positionally rather than through a `**kwargs` dict: unpacking a
+        # `dict[str, object]` erases every argument type, so a wrong key or value would
+        # only surface at runtime. `None` is what `reclassify_document` already defaults
+        # to, so an empty `updates` keeps the original category-only contract.
         document = reclassify_document(
             db,
-            **reclassification_kwargs,
+            document_id=document_id,
+            category=category,
+            reviewed_by=admin.id,
+            metadata_updates=updates or None,
         )
     except DocumentAIQuotaExceededError as exc:
         log_event(
@@ -611,11 +609,7 @@ async def get_documents(
             detail="Coverage project not found.",
         )
     aliases = project_scope_aliases(project)
-    return [
-        document
-        for document in documents
-        if document_matches_project_scope(document, project, aliases)
-    ]
+    return [document for document in documents if document_matches_project_scope(document, project, aliases)]
 
 
 @router.get("/{document_id}/view-url")
@@ -965,8 +959,7 @@ async def update_document_metadata(
                 raise ValueError(f"Document with id={document_id} not found.")
             document = refreshed
             publication_current = bool(
-                _safe_vector_current(document)
-                and is_document_eligible_after_classification_approval(db, document)
+                _safe_vector_current(document) and is_document_eligible_after_classification_approval(db, document)
             )
             if document.is_current != publication_current:
                 document.is_current = publication_current

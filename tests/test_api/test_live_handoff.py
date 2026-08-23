@@ -190,9 +190,7 @@ def test_full_handoff_flow(as_customer, as_sale, sale, other_sale, customer, stu
     assert body["sender"] == "agent"
 
     # The AI must not answer again once handed off — the endpoint returns null.
-    silent = customer_client.post(
-        f"/api/v1/customer/sessions/{session_id}/messages", json={"content": "còn không ạ?"}
-    )
+    silent = customer_client.post(f"/api/v1/customer/sessions/{session_id}/messages", json={"content": "còn không ạ?"})
     assert silent.status_code == 201
     assert silent.json() is None
 
@@ -317,7 +315,7 @@ def test_suggest_reports_whether_the_draft_carries_commitment_risk(
     monkeypatch.setattr(
         agent_pipeline,
         "run_pipeline",
-            lambda query, project_id=None, db=None, clearance=None, history=None, **_kwargs: PipelineResult(
+        lambda query, project_id=None, db=None, clearance=None, history=None, **_kwargs: PipelineResult(
             draft_answer="Giá căn 2PN là 3,6 tỷ đồng.",
             citations=[],
             verifier_score=0.9,

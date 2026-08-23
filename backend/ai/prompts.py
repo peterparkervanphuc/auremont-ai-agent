@@ -468,8 +468,7 @@ SYSTEM_INSTRUCTION = (
     f"{SYSTEM_INSTRUCTION}{_UNTRUSTED_RETRIEVAL_RULES}{_DOMAIN_SAFETY_RULES}{_INVENTORY_PRESENTATION_RULES}"
 )
 SYSTEM_INSTRUCTION_PUBLIC = (
-    f"{SYSTEM_INSTRUCTION_PUBLIC}{_UNTRUSTED_RETRIEVAL_RULES}{_DOMAIN_SAFETY_RULES}"
-    f"{_INVENTORY_PRESENTATION_RULES}"
+    f"{SYSTEM_INSTRUCTION_PUBLIC}{_UNTRUSTED_RETRIEVAL_RULES}{_DOMAIN_SAFETY_RULES}{_INVENTORY_PRESENTATION_RULES}"
 )
 
 
@@ -720,16 +719,16 @@ def build_prompt(
             "tích · khoảng giá), không giới hạn số lượng như quy tắc ở mục TƯ VẤN bên dưới — không tự ý "
             "cắt xuống 1-2 — và không biến khoảng giá thành cam kết còn căn.\n"
             if catalog_offer_context.strip() and units
+            # TỒN KHO REAL-TIME above reported zero matches — but that check only covers
+            # whichever project(s) the live-inventory mapping resolved for this query, a
+            # narrow scope that must not be read as "no such apartments exist anywhere".
+            # Without this, the model treats an empty live-inventory block as ground
+            # truth and states there are no matching units at all, contradicting the
+            # (often much broader) BẢNG GIÁ CATALOGUE THAM KHẢO context sitting right
+            # above it in the same prompt — a hallucination the Verifier reliably (but
+            # not always, since it is itself a probabilistic judge) catches and rejects,
+            # so fixing it here prevents a 50/50 chance of the whole answer declining.
             else (
-                # TỒN KHO REAL-TIME above reported zero matches — but that check only covers
-                # whichever project(s) the live-inventory mapping resolved for this query, a
-                # narrow scope that must not be read as "no such apartments exist anywhere".
-                # Without this, the model treats an empty live-inventory block as ground
-                # truth and states there are no matching units at all, contradicting the
-                # (often much broader) BẢNG GIÁ CATALOGUE THAM KHẢO context sitting right
-                # above it in the same prompt — a hallucination the Verifier reliably (but
-                # not always, since it is itself a probabilistic judge) catches and rejects,
-                # so fixing it here prevents a 50/50 chance of the whole answer declining.
                 "- TỒN KHO REAL-TIME ở trên báo 0 kết quả — điều đó chỉ có nghĩa là hệ thống mã căn "
                 "real-time (đang giới hạn theo dự án/phạm vi được tra) không khớp, KHÔNG có nghĩa là "
                 "không tồn tại căn hộ nào phù hợp. TUYỆT ĐỐI không viết 'không có căn nào', 'hệ thống "
@@ -926,8 +925,7 @@ def build_prompt(
                 f"{tower_list}. Nếu muốn mời xem thêm mặt bằng/layout, câu mời PHẢI theo tên tòa "
                 f"này (vd 'Anh chị muốn xem mặt bằng tòa {floor_plan_towers_only[0]} không?'), TUYỆT "
                 "ĐỐI không mời xem mặt bằng/layout theo loại phòng (1PN/2PN...) vì không có ảnh "
-                "riêng cho từng loại — mời kiểu đó sẽ dẫn khách tới một câu hỏi không có ảnh trả lời."
-                + listings_note
+                "riêng cho từng loại — mời kiểu đó sẽ dẫn khách tới một câu hỏi không có ảnh trả lời." + listings_note
             )
         else:
             sections.append(
@@ -984,9 +982,7 @@ def _bedroom_aliases_in_context(query: str, docs: list[dict]) -> dict[str, str]:
         for match in _BEDROOM_PN_PATTERN.finditer(query)
     }
     available = {
-        match.group(0).upper()
-        for doc in docs
-        for match in _BEDROOM_BR_PATTERN.finditer(str(doc.get("content") or ""))
+        match.group(0).upper() for doc in docs for match in _BEDROOM_BR_PATTERN.finditer(str(doc.get("content") or ""))
     }
     return {br: pn for br, pn in requested.items() if br in available}
 

@@ -71,7 +71,9 @@ def test_golden_case(monkeypatch, case: GoldenCase):
         )
 
     for phrase in case.expect_answer_contains:
-        assert phrase in result.draft_answer, f"{case.case_id}: expected {phrase!r} in answer, got {result.draft_answer!r}"
+        assert phrase in result.draft_answer, (
+            f"{case.case_id}: expected {phrase!r} in answer, got {result.draft_answer!r}"
+        )
 
 
 @pytest.mark.parametrize("case", [c for c in GOLDEN_CASES if c.expect_inventory_called], ids=lambda c: c.case_id)

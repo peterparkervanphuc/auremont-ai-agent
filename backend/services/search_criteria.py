@@ -315,12 +315,13 @@ _VAGUE_CHEAPER_PATTERN = re.compile(r"\b(giá mềm|gia mem|rẻ hơn|re hon|r�
 _VAGUE_BIGGER_PATTERN = re.compile(r"\b(rộng hơn|rong hon|rộng chút|rộng một chút|to hơn|lớn hơn)\b", re.IGNORECASE)
 _VAGUE_SMALLER_PATTERN = re.compile(r"\b(nhỏ hơn|nho hon|gọn hơn|nhỏ chút)\b", re.IGNORECASE)
 _MOVE_IN_NOW_PATTERN = re.compile(r"\b(ở được ngay|o duoc ngay|vào ở ngay|vao o ngay|nhận nhà ngay)\b", re.IGNORECASE)
-_HOUSEHOLD_PATTERN = re.compile(
-    r"\b(?:gia đình|nhà|hộ|cho)\s*(\d+)\s*(?:người|nguoi|thành viên)\b", re.IGNORECASE
-)
+_HOUSEHOLD_PATTERN = re.compile(r"\b(?:gia đình|nhà|hộ|cho)\s*(\d+)\s*(?:người|nguoi|thành viên)\b", re.IGNORECASE)
 
 _PURPOSE_PATTERNS = (
-    (re.compile(r"\b(để ở|mua ở|vừa ở|an cư|dinh cư|định cư|de o|mua o|vua o|an cu|dinh cu)\b", re.IGNORECASE), "living"),
+    (
+        re.compile(r"\b(để ở|mua ở|vừa ở|an cư|dinh cư|định cư|de o|mua o|vua o|an cu|dinh cu)\b", re.IGNORECASE),
+        "living",
+    ),
     (re.compile(r"\b(đầu tư|dau tu|cho thuê lại|cho thue lai|tăng giá|tang gia)\b", re.IGNORECASE), "investment"),
     (re.compile(r"\b(kinh doanh|văn phòng|van phong|mở cửa hàng|mo cua hang)\b", re.IGNORECASE), "business"),
 )
@@ -330,7 +331,10 @@ _SORT_PATTERNS = (
     (re.compile(r"\b(giá cao đến thấp|đắt nhất|gia cao den thap|dat nhat)\b", re.IGNORECASE), "price_desc"),
     (re.compile(r"\b(diện tích lớn nhất|rộng nhất|dien tich lon nhat|rong nhat)\b", re.IGNORECASE), "area_desc"),
     (
-        re.compile(r"\b(giá trên m(?:2|²) thấp nhất|đơn giá thấp nhất|gia tren m(?:2|2) thap nhat|don gia thap nhat)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(giá trên m(?:2|²) thấp nhất|đơn giá thấp nhất|gia tren m(?:2|2) thap nhat|don gia thap nhat)\b",
+            re.IGNORECASE,
+        ),
         "price_per_m2_asc",
     ),
     (re.compile(r"\b(mới đăng|moi dang)\b", re.IGNORECASE), "listed_at_desc"),
@@ -545,9 +549,7 @@ def parse_criteria(query: str, known_subdivisions: list[str] | None = None) -> C
         # Unit types already carry a local include/exclude decision, so a phrase such as
         # "chỉ nhà phố, không lấy chung cư" does not turn BOTH types into exclusions.
         constraints = [
-            item
-            if item.field == FIELD_UNIT_TYPES
-            else replace(item, strength=Strength.EXCLUDED)
+            item if item.field == FIELD_UNIT_TYPES else replace(item, strength=Strength.EXCLUDED)
             for item in constraints
         ]
 
@@ -565,7 +567,7 @@ def parse_criteria(query: str, known_subdivisions: list[str] | None = None) -> C
 
 
 def _parse_price_adjustment(query: str) -> tuple[float, float] | None:
-    """"tăng giá lên 5 tỷ" / "giảm xuống 3 tỷ" -> a new ceiling of 5 tỷ / 3 tỷ.
+    """ "tăng giá lên 5 tỷ" / "giảm xuống 3 tỷ" -> a new ceiling of 5 tỷ / 3 tỷ.
 
     Both directions produce a ceiling, not a floor. "Tăng giá lên 5 tỷ" does not mean the
     person now wants units costing at least 5 tỷ — it means their limit moved up to 5 tỷ,
@@ -580,7 +582,7 @@ def _parse_price_adjustment(query: str) -> tuple[float, float] | None:
 
 
 def _parse_area_adjustment(query: str) -> tuple[float, float] | None:
-    """"tăng diện tích lên 80m2" -> a floor of 80m².
+    """ "tăng diện tích lên 80m2" -> a floor of 80m².
 
     The mirror image of price: raising an area target means "at least this big", because
     area is something a person wants more of while price is something they want less of.
@@ -592,7 +594,7 @@ def _parse_area_adjustment(query: str) -> tuple[float, float] | None:
 
 
 def _parse_vague_price(query: str) -> tuple[float, float] | None:
-    """"tầm 3 tỷ" -> a band around 3 tỷ. None when no such phrase appears."""
+    """ "tầm 3 tỷ" -> a band around 3 tỷ. None when no such phrase appears."""
     match = _VAGUE_AROUND_PATTERN.search(query)
     if match is None:
         return None
@@ -607,10 +609,7 @@ def _match_subdivision(query: str, known: list[str]) -> str | None:
     """Longest known subdivision name/short alias appearing in the question."""
     normalized_query = _inv._normalize_text(query)
     matches = [
-        name
-        for name in known
-        if name
-        and any(alias in normalized_query for alias in _subdivision_aliases(name))
+        name for name in known if name and any(alias in normalized_query for alias in _subdivision_aliases(name))
     ]
     return max(matches, key=len) if matches else None
 
@@ -624,11 +623,7 @@ def _subdivision_aliases(name: str) -> tuple[str, ...]:
 def _is_excluded_subdivision(query: str, name: str) -> bool:
     """Whether the local phrase rejects this subdivision rather than selecting it."""
     normalized_query = _inv._normalize_text(query)
-    occurrences = [
-        normalized_query.find(alias)
-        for alias in _subdivision_aliases(name)
-        if alias in normalized_query
-    ]
+    occurrences = [normalized_query.find(alias) for alias in _subdivision_aliases(name) if alias in normalized_query]
     if not occurrences:
         return False
     position = min(occurrences)
@@ -754,7 +749,9 @@ def _resolve_relative(constraints: list[Constraint], delta: CriteriaDelta) -> li
             minimum, maximum = existing.value
             constraints = [c for c in constraints if c.field != FIELD_AREA]
             constraints.append(
-                Constraint(FIELD_AREA, (round(minimum * _BIGGER_FACTOR, 1), maximum), existing.strength, Source.INFERRED)
+                Constraint(
+                    FIELD_AREA, (round(minimum * _BIGGER_FACTOR, 1), maximum), existing.strength, Source.INFERRED
+                )
             )
 
     return constraints

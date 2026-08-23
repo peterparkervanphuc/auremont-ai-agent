@@ -29,9 +29,7 @@ class SaleAccountCreate(BaseModel):
         # silently creating a credential that behaves differently at login.
         if len(value.encode("utf-8")) > 72:
             raise ValueError("Mật khẩu không được vượt quá 72 byte.")
-        if not any(character.isalpha() for character in value) or not any(
-            character.isdigit() for character in value
-        ):
+        if not any(character.isalpha() for character in value) or not any(character.isdigit() for character in value):
             raise ValueError("Mật khẩu phải có ít nhất một chữ cái và một chữ số.")
         return value
 

@@ -66,9 +66,7 @@ def test_risk_check_stays_false_with_no_listings_and_a_price_free_answer():
 
 
 def test_resolve_listing_images_attaches_real_gallery_photos_and_amenities(monkeypatch):
-    monkeypatch.setattr(
-        agent_pipeline.answer_images_service, "resolve_project_id", lambda _db, text: "the-sapphire-2"
-    )
+    monkeypatch.setattr(agent_pipeline.answer_images_service, "resolve_project_id", lambda _db, text: "the-sapphire-2")
     db = _FakeDb(
         {
             "the-sapphire-2": Project(

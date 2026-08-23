@@ -95,9 +95,7 @@ _VIEW_QUERY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _VAGUE_VIEW_TERMS = {"dep", "thoang", "rong", "tot", "xin"}
-_MANDATORY_QUERY_PATTERN = re.compile(
-    r"\b(?:phai|bat buoc|nhat dinh|chi lay|chi xem|chi muon)\b", re.IGNORECASE
-)
+_MANDATORY_QUERY_PATTERN = re.compile(r"\b(?:phai|bat buoc|nhat dinh|chi lay|chi xem|chi muon)\b", re.IGNORECASE)
 
 
 class InventoryApiError(Exception):
@@ -343,11 +341,7 @@ def _parse_view_field(value: object) -> tuple[str, ...]:
         # APIs commonly serialise multi-select values with commas, pipes or slashes.
         raw_values = re.split(r"\s*[,|/]\s*", str(value))
     return tuple(
-        dict.fromkeys(
-            cleaned
-            for item in raw_values
-            if (cleaned := sanitize_external_field(str(item)).strip())
-        )
+        dict.fromkeys(cleaned for item in raw_values if (cleaned := sanitize_external_field(str(item)).strip()))
     )
 
 
@@ -668,11 +662,7 @@ def _apply_query_filters(
         units = [unit for unit in units if unit.unit_code in wanted_codes]
 
     wanted_subdivisions = next(
-        (
-            subdivisions
-            for value in filter_queries
-            if (subdivisions := _extract_subdivisions(value, source_units))
-        ),
+        (subdivisions for value in filter_queries if (subdivisions := _extract_subdivisions(value, source_units))),
         set(),
     )
     if wanted_subdivisions:
@@ -687,12 +677,10 @@ def _apply_query_filters(
     if wanted_types:
         units = [unit for unit in units if any(unit_type_matches(unit.unit_type, item) for item in wanted_types)]
     if excluded_types:
-        units = [
-            unit for unit in units if not any(unit_type_matches(unit.unit_type, item) for item in excluded_types)
-        ]
+        units = [unit for unit in units if not any(unit_type_matches(unit.unit_type, item) for item in excluded_types)]
 
     area_range = next(
-        (value for filter_query in filter_queries if (value := _extract_area_range(filter_query)) is not None),
+        (area for filter_query in filter_queries if (area := _extract_area_range(filter_query)) is not None),
         None,
     )
     if area_range is not None:
@@ -700,7 +688,7 @@ def _apply_query_filters(
         units = [unit for unit in units if unit.area_m2 is not None and minimum <= unit.area_m2 <= maximum]
 
     price_range = next(
-        (value for filter_query in filter_queries if (value := _extract_price_range(filter_query)) is not None),
+        (price for filter_query in filter_queries if (price := _extract_price_range(filter_query)) is not None),
         None,
     )
     if price_range is not None:
@@ -708,7 +696,7 @@ def _apply_query_filters(
         units = [unit for unit in units if unit.price is not None and minimum <= unit.price <= maximum]
 
     wanted_status = next(
-        (value for filter_query in filter_queries if (value := _extract_status(filter_query)) is not None),
+        (status for filter_query in filter_queries if (status := _extract_status(filter_query)) is not None),
         None,
     )
     if wanted_status is not None:
@@ -735,10 +723,7 @@ def _apply_query_filters(
         else:
             units = sorted(
                 units,
-                key=lambda unit: sum(
-                    _soft_match_score(unit, field_name, value)
-                    for field_name, value in preferences
-                ),
+                key=lambda unit: sum(_soft_match_score(unit, field_name, value) for field_name, value in preferences),
                 reverse=True,
             )
     return units

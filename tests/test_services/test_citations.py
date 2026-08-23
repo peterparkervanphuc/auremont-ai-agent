@@ -16,9 +16,7 @@ def test_dedupes_chunks_of_one_file_and_keeps_first_page():
 
     result = build_citations(docs)
 
-    assert result == [
-        {"document_id": 1, "title": "bang-gia.pdf", "qualifier": None, "page": 3, "y_position": 120.5}
-    ]
+    assert result == [{"document_id": 1, "title": "bang-gia.pdf", "qualifier": None, "page": 3, "y_position": 120.5}]
 
 
 def test_drops_hits_with_no_document_id():
@@ -32,9 +30,7 @@ def test_missing_page_and_y_position_stay_none():
 
     result = build_citations(docs)
 
-    assert result == [
-        {"document_id": 2, "title": "policy.docx", "qualifier": None, "page": None, "y_position": None}
-    ]
+    assert result == [{"document_id": 2, "title": "policy.docx", "qualifier": None, "page": None, "y_position": None}]
 
 
 class TestSameTitledDocuments:

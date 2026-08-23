@@ -558,9 +558,7 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
     catalog_overview_context = (
         catalog_offer_service.build_catalog_overview(state.get("db")) if is_catalog_overview_query(query) else ""
     )
-    catalog = catalog_context_service.resolve_tower_context(
-        state.get("db"), state.get("project_id"), query
-    )
+    catalog = catalog_context_service.resolve_tower_context(state.get("db"), state.get("project_id"), query)
     catalog_context = catalog.text
     hits: list[dict] = []
 
@@ -753,9 +751,7 @@ def _criteria_resolve(state: PipelineState) -> dict[str, Any]:
     }
 
 
-def _catalog_search_result(
-    state: PipelineState, criteria: search_criteria.SearchCriteria
-) -> dict[str, Any]:
+def _catalog_search_result(state: PipelineState, criteria: search_criteria.SearchCriteria) -> dict[str, Any]:
     """Attach structured catalogue tiers for property-search questions."""
     if not state.get("needs_inventory") and criteria.is_empty():
         return {}
@@ -809,9 +805,7 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
             # the raw inventory arrives. Enrich the already-resolved logical turn without
             # adding a second undo snapshot.
             known = sorted({unit.subdivision for unit in all_units if unit.subdivision})
-            enriched = search_criteria.merge_criteria(
-                criteria, search_criteria.parse_criteria(state["query"], known)
-            )
+            enriched = search_criteria.merge_criteria(criteria, search_criteria.parse_criteria(state["query"], known))
             conflict = search_criteria.detect_conflict(enriched)
             if conflict:
                 return {
@@ -947,9 +941,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     is_public = state.get("clearance", DocumentVisibility.INTERNAL) == DocumentVisibility.PUBLIC
     criteria = state.get("criteria") or search_criteria.SearchCriteria()
     inventory_coverage = format_preference_coverage(units, criteria)
-    structured_context = "\n\n".join(
-        part for part in (state.get("catalog_context") or "", inventory_coverage) if part
-    )
+    structured_context = "\n\n".join(part for part in (state.get("catalog_context") or "", inventory_coverage) if part)
 
     prompt = prompts.build_prompt(
         state["query"],
@@ -1325,9 +1317,7 @@ def _image_tool(state: PipelineState) -> dict[str, Any]:
     # so an on-topic question ("giá The Beverly bao nhiêu") is unaffected either way.
     wants_explicit_images = answer_images_service.wants_images(state["query"])
     effective_project_id = state.get("project_id") if wants_explicit_images or context.strip() else None
-    images = answer_images_service.collect_images(
-        db, state["query"], context, project_id=effective_project_id
-    )
+    images = answer_images_service.collect_images(db, state["query"], context, project_id=effective_project_id)
     # None when the resolved project has real per-unit-type photos (nothing extra to say);
     # otherwise the tower codes of whatever tower-wide floor-plan sheet exists, so a
     # bedroom-count follow-up is not suggested where only a per-tower one has a photo —
@@ -1485,7 +1475,9 @@ def _build_graph():
     )
     graph.add_edge("scope_resolve", "cache_check")
     graph.add_conditional_edges("cache_check", _route_after_cache, {"hit": END, "miss": "retrieve"})
-    graph.add_conditional_edges("retrieve", _route_after_retrieve, {"stop": END, "criteria_resolve": "criteria_resolve"})
+    graph.add_conditional_edges(
+        "retrieve", _route_after_retrieve, {"stop": END, "criteria_resolve": "criteria_resolve"}
+    )
     graph.add_conditional_edges(
         "criteria_resolve", _route_after_criteria, {"stop": END, "tool_call": "tool_call", "generate": "image_tool"}
     )
@@ -1591,9 +1583,7 @@ def _run_traced(
     # Preserve the legacy one-argument call when no namespace is requested. Besides
     # keeping older callers/mocks compatible, it makes the default global behaviour
     # explicit; Sale consultation sessions take the scoped branch.
-    reflection_lessons = (
-        _lessons_for(query, reflection_scope) if reflection_scope is not None else _lessons_for(query)
-    )
+    reflection_lessons = _lessons_for(query, reflection_scope) if reflection_scope is not None else _lessons_for(query)
     initial: PipelineState = {
         "query": query.strip(),
         "session_id": session_id,

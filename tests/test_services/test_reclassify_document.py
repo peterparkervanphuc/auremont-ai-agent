@@ -105,34 +105,24 @@ class TestHappyPath:
     def test_it_quarantines_before_touching_anything_else(self, db_session, document, recorder):
         """A document answering from stale chunks mid-change is the failure this ordering
         exists to prevent."""
-        reclassify_document(
-            db_session, document_id=document.id, category=DocumentCategory.PRICE_LIST, reviewed_by=1
-        )
+        reclassify_document(db_session, document_id=document.id, category=DocumentCategory.PRICE_LIST, reviewed_by=1)
 
         assert recorder[0] == ("sync", DocumentCategory.OTHER, False)
 
     def test_the_new_chunks_are_built_for_the_new_category(self, db_session, document, recorder):
         """The whole reason a plain UPDATE is refused: price-list chunking differs."""
-        reclassify_document(
-            db_session, document_id=document.id, category=DocumentCategory.PRICE_LIST, reviewed_by=1
-        )
+        reclassify_document(db_session, document_id=document.id, category=DocumentCategory.PRICE_LIST, reviewed_by=1)
 
         assert ("chunk", DocumentCategory.PRICE_LIST) in recorder
 
     def test_old_vectors_go_before_the_new_ones_arrive(self, db_session, document, recorder):
-        reclassify_document(
-            db_session, document_id=document.id, category=DocumentCategory.PRICE_LIST, reviewed_by=1
-        )
+        reclassify_document(db_session, document_id=document.id, category=DocumentCategory.PRICE_LIST, reviewed_by=1)
         kinds = [event[0] for event in recorder]
 
         assert kinds.index("delete_vectors") < kinds.index("index")
 
-    def test_new_vectors_arrive_quarantined_and_are_published_only_after_the_scan(
-        self, db_session, document, recorder
-    ):
-        reclassify_document(
-            db_session, document_id=document.id, category=DocumentCategory.PRICE_LIST, reviewed_by=1
-        )
+    def test_new_vectors_arrive_quarantined_and_are_published_only_after_the_scan(self, db_session, document, recorder):
+        reclassify_document(db_session, document_id=document.id, category=DocumentCategory.PRICE_LIST, reviewed_by=1)
         kinds = [event[0] for event in recorder]
 
         assert ("index", False) in recorder
@@ -163,15 +153,11 @@ class TestHappyPath:
 
     def test_conflicts_are_rescanned_under_the_new_category(self, db_session, document, recorder):
         """The comparison set changed, so the previous scan's verdict no longer applies."""
-        reclassify_document(
-            db_session, document_id=document.id, category=DocumentCategory.PRICE_LIST, reviewed_by=1
-        )
+        reclassify_document(db_session, document_id=document.id, category=DocumentCategory.PRICE_LIST, reviewed_by=1)
 
         assert ("scan", DocumentCategory.PRICE_LIST) in recorder
 
-    def test_scope_correction_is_quarantined_and_rescanned_without_reembedding(
-        self, db_session, document, recorder
-    ):
+    def test_scope_correction_is_quarantined_and_rescanned_without_reembedding(self, db_session, document, recorder):
         result = reclassify_document(
             db_session,
             document_id=document.id,
@@ -193,9 +179,7 @@ class TestHappyPath:
         assert not any(event[0] in {"chunk", "delete_vectors", "index"} for event in recorder)
         assert recorder[-1] == ("sync", DocumentCategory.OTHER, False)
 
-    def test_project_correction_reindexes_vectors_with_the_catalogue_project(
-        self, db_session, document, recorder
-    ):
+    def test_project_correction_reindexes_vectors_with_the_catalogue_project(self, db_session, document, recorder):
         db_session.add(Project(id="the-beverly", name="The Beverly"))
         db_session.commit()
 
@@ -214,9 +198,7 @@ class TestHappyPath:
 
 
 class TestConflictOutcome:
-    def test_a_conflict_found_after_the_change_keeps_it_quarantined(
-        self, db_session, document, recorder, monkeypatch
-    ):
+    def test_a_conflict_found_after_the_change_keeps_it_quarantined(self, db_session, document, recorder, monkeypatch):
         monkeypatch.setattr(
             ingestion_service,
             "scan_conflicts_for",
@@ -231,9 +213,7 @@ class TestConflictOutcome:
 
 
 class TestFailuresStayQuarantined:
-    def test_a_parse_failure_rolls_back_metadata_and_can_be_retried(
-        self, db_session, document, recorder, monkeypatch
-    ):
+    def test_a_parse_failure_rolls_back_metadata_and_can_be_retried(self, db_session, document, recorder, monkeypatch):
         def _boom(_title, _bytes):
             raise RuntimeError("corrupt file")
 
@@ -262,9 +242,7 @@ class TestFailuresStayQuarantined:
         assert retried.category == DocumentCategory.PRICE_LIST
         assert retried.is_current is True
 
-    def test_producing_no_chunks_is_a_failure_not_an_empty_document(
-        self, db_session, document, recorder, monkeypatch
-    ):
+    def test_producing_no_chunks_is_a_failure_not_an_empty_document(self, db_session, document, recorder, monkeypatch):
         monkeypatch.setattr(ingestion_service, "chunk_sections", lambda sections, document_category=None: [])
 
         with pytest.raises(DocumentIngestionError):
@@ -276,13 +254,9 @@ class TestFailuresStayQuarantined:
 class TestRejectedRequests:
     def test_the_same_category_is_refused(self, db_session, document, recorder):
         with pytest.raises(DocumentIngestionError, match="already categorised"):
-            reclassify_document(
-                db_session, document_id=document.id, category=DocumentCategory.OTHER, reviewed_by=1
-            )
+            reclassify_document(db_session, document_id=document.id, category=DocumentCategory.OTHER, reviewed_by=1)
 
-    def test_unknown_project_is_rejected_before_the_document_is_quarantined(
-        self, db_session, document, recorder
-    ):
+    def test_unknown_project_is_rejected_before_the_document_is_quarantined(self, db_session, document, recorder):
         with pytest.raises(DocumentIngestionError, match="does not exist in the project catalogue"):
             reclassify_document(
                 db_session,
@@ -296,9 +270,7 @@ class TestRejectedRequests:
         assert db_session.get(Document, document.id).is_current is True
         assert recorder == []
 
-    def test_pending_other_document_requires_a_supported_category(
-        self, db_session, document, recorder
-    ):
+    def test_pending_other_document_requires_a_supported_category(self, db_session, document, recorder):
         document.review_status = DocumentReviewStatus.PENDING
         document.is_current = False
         db_session.commit()
@@ -334,6 +306,4 @@ class TestRejectedRequests:
 
     def test_an_unknown_document_is_refused(self, db_session, recorder):
         with pytest.raises(DocumentIngestionError, match="does not exist"):
-            reclassify_document(
-                db_session, document_id=999999, category=DocumentCategory.PRICE_LIST, reviewed_by=1
-            )
+            reclassify_document(db_session, document_id=999999, category=DocumentCategory.PRICE_LIST, reviewed_by=1)

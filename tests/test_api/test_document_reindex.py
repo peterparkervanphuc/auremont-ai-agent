@@ -129,7 +129,9 @@ def test_admin_can_reclassify_a_document(client, monkeypatch, document):
     monkeypatch.setattr(
         documents_router,
         "reclassify_document",
-        lambda db, *, document_id, category, reviewed_by: calls.append((document_id, category)) or document,
+        lambda db, *, document_id, category, reviewed_by, metadata_updates=None: (
+            calls.append((document_id, category)) or document
+        ),
     )
     monkeypatch.setattr(documents_router, "clear_cache", lambda: None)
 
@@ -146,7 +148,7 @@ def test_reclassifying_clears_the_answer_cache(client, monkeypatch, document):
     monkeypatch.setattr(
         documents_router,
         "reclassify_document",
-        lambda db, *, document_id, category, reviewed_by: document,
+        lambda db, *, document_id, category, reviewed_by, metadata_updates=None: document,
     )
     monkeypatch.setattr(documents_router, "clear_cache", lambda: cleared.append(True))
 
@@ -207,9 +209,7 @@ def test_a_sale_cannot_reclassify(db_session, sale, document):
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_current_user] = lambda: sale
     try:
-        response = TestClient(app).post(
-            f"/api/v1/documents/{document.id}/reclassify", json={"category": "price_list"}
-        )
+        response = TestClient(app).post(f"/api/v1/documents/{document.id}/reclassify", json={"category": "price_list"})
         assert response.status_code == 403
     finally:
         app.dependency_overrides.clear()

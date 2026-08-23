@@ -116,7 +116,9 @@ def test_all_three_scores_travel_out_of_the_pipeline(monkeypatch):
     monkeypatch.setattr(agent_pipeline, "_store_cache", lambda *a, **k: None)
     monkeypatch.setattr(agent_pipeline, "query_needs_inventory", lambda query: False)
     monkeypatch.setattr(agent_pipeline.risk_service, "detect_commitment_risk", lambda answer: False)
-    monkeypatch.setattr(agent_pipeline, "generate_json", lambda _p, schema, **k: schema(text="- Can 2PN tu 3,6 ty dong."))
+    monkeypatch.setattr(
+        agent_pipeline, "generate_json", lambda _p, schema, **k: schema(text="- Can 2PN tu 3,6 ty dong.")
+    )
     monkeypatch.setattr(
         agent_pipeline.verifier_service,
         "score_answer",
@@ -152,7 +154,9 @@ def test_declined_answer_still_reports_why(monkeypatch):
     monkeypatch.setattr(agent_pipeline, "_store_cache", lambda *a, **k: None)
     monkeypatch.setattr(agent_pipeline, "query_needs_inventory", lambda query: False)
     monkeypatch.setattr(agent_pipeline.risk_service, "detect_commitment_risk", lambda answer: False)
-    monkeypatch.setattr(agent_pipeline, "generate_json", lambda _p, schema, **k: schema(text="- Can 2PN tu 3,6 ty dong."))
+    monkeypatch.setattr(
+        agent_pipeline, "generate_json", lambda _p, schema, **k: schema(text="- Can 2PN tu 3,6 ty dong.")
+    )
     monkeypatch.setattr(
         agent_pipeline.verifier_service,
         "score_answer",

@@ -18,7 +18,9 @@ class HitlLog(Base):
     sale_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
     status: Mapped[str] = mapped_column(String(20), default=HitlStatus.PENDING, nullable=False)
-    confirmed_content: Mapped[str | None] = mapped_column(Text, nullable=True)  # snapshot of what was actually confirmed/sent
+    confirmed_content: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # snapshot of what was actually confirmed/sent
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

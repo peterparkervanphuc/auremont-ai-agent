@@ -1,4 +1,5 @@
 import logging
+from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,6 +16,7 @@ from backend.repositories.conflict_flag import list_open_conflicts, resolve_conf
 from backend.repositories.document import get_document
 from backend.schemas.conflict_flag import (
     ConflictDetailResponse,
+    ConflictDetectionMethod,
     ConflictDocumentSummary,
     ConflictFlagResponse,
     ConflictResolveRequest,
@@ -92,7 +94,10 @@ async def get_conflicts(db: Session = Depends(get_db)) -> list[ConflictDetailRes
                 document_id_a=flag.document_id_a,
                 document_id_b=flag.document_id_b,
                 description=flag.description,
-                detection_method=flag.detection_method,
+                # The column is `Mapped[str]` but only ever holds the three documented
+                # values (see models/conflict_flag.py). Pydantic re-validates the Literal
+                # when this response is constructed, so an unexpected row still fails loudly.
+                detection_method=cast(ConflictDetectionMethod, flag.detection_method),
                 confidence=flag.confidence,
                 similarity_score=flag.similarity_score,
                 conflict_type=flag.conflict_type,

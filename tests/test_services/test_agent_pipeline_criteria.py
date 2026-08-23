@@ -170,9 +170,11 @@ def test_session_none_uses_the_legacy_stateless_lookup(monkeypatch):
 
 def test_cache_is_skipped_when_the_session_already_has_criteria(monkeypatch):
     redis, _, _ = _prepare(monkeypatch, [])
-    search_criteria.save(9, search_criteria.merge_criteria(
-        search_criteria.SearchCriteria(), search_criteria.parse_criteria("căn 3PN")
-    ), [])
+    search_criteria.save(
+        9,
+        search_criteria.merge_criteria(search_criteria.SearchCriteria(), search_criteria.parse_criteria("căn 3PN")),
+        [],
+    )
     monkeypatch.setattr(
         agent_pipeline.cache_service,
         "lookup_cache",

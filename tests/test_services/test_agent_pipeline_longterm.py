@@ -57,9 +57,7 @@ def test_cache_is_skipped_for_a_personalised_question(monkeypatch):
 
     monkeypatch.setattr(agent_pipeline.cache_service, "lookup_cache", fail)
 
-    assert agent_pipeline._cache_check({"query": "Gia can 2PN?", "memory_profile": PROFILE}) == {
-        "used_cache": False
-    }
+    assert agent_pipeline._cache_check({"query": "Gia can 2PN?", "memory_profile": PROFILE}) == {"used_cache": False}
 
 
 def test_cache_still_serves_a_question_from_someone_with_no_profile(monkeypatch):

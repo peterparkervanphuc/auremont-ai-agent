@@ -164,9 +164,7 @@ def test_cheaper_with_no_anchor_is_left_unresolved():
 
 
 def test_inverted_price_bounds_are_reported():
-    criteria = sc.SearchCriteria(
-        constraints=(sc.Constraint(sc.FIELD_PRICE, (5_000_000_000.0, 3_000_000_000.0)),)
-    )
+    criteria = sc.SearchCriteria(constraints=(sc.Constraint(sc.FIELD_PRICE, (5_000_000_000.0, 3_000_000_000.0)),))
 
     assert sc.detect_conflict(criteria) is not None
 
@@ -285,9 +283,7 @@ def test_soft_constraints_never_exclude_a_unit():
     from backend.services.inventory_service import apply_criteria
 
     units = [_unit("A-01", "2PN", 60.0, 3_000_000_000.0)]
-    criteria = sc.SearchCriteria(
-        constraints=(sc.Constraint(sc.FIELD_AREA, (100.0, 200.0), sc.Strength.SOFT),)
-    )
+    criteria = sc.SearchCriteria(constraints=(sc.Constraint(sc.FIELD_AREA, (100.0, 200.0), sc.Strength.SOFT),))
 
     assert apply_criteria(units, criteria) == units
 
@@ -371,13 +367,27 @@ def test_structured_direction_and_view_preferences_rank_confirmed_then_unknown()
 
     units = [
         InventoryUnit(
-            "A", "p", "Zone", "2PN", 65, 3_000_000_000, "available",
-            direction="Đông Nam", view_type=("hồ",),
+            "A",
+            "p",
+            "Zone",
+            "2PN",
+            65,
+            3_000_000_000,
+            "available",
+            direction="Đông Nam",
+            view_type=("hồ",),
         ),
         InventoryUnit("B", "p", "Zone", "2PN", 66, 3_100_000_000, "available"),
         InventoryUnit(
-            "C", "p", "Zone", "2PN", 67, 3_200_000_000, "available",
-            direction="Tây Bắc", view_type=("thành phố",),
+            "C",
+            "p",
+            "Zone",
+            "2PN",
+            67,
+            3_200_000_000,
+            "available",
+            direction="Tây Bắc",
+            view_type=("thành phố",),
         ),
     ]
     criteria = _criteria("căn 2PN ưu tiên hướng Đông Nam và view hồ")
@@ -394,8 +404,15 @@ def test_mandatory_direction_and_view_filter_exact_inventory_fields():
 
     units = [
         InventoryUnit(
-            "A", "p", "Zone", "2PN", 65, 3_000_000_000, "available",
-            direction="Đông Nam", view_type=("hồ",),
+            "A",
+            "p",
+            "Zone",
+            "2PN",
+            65,
+            3_000_000_000,
+            "available",
+            direction="Đông Nam",
+            view_type=("hồ",),
         ),
         InventoryUnit("B", "p", "Zone", "2PN", 66, 3_100_000_000, "available"),
     ]
@@ -489,17 +506,13 @@ def test_diagnosis_is_grounding_for_prompt_and_verifier():
 
 def test_mixed_included_and_excluded_property_types_remain_separate():
     criteria = _criteria("Chỉ tìm nhà phố, không lấy chung cư")
-    type_constraints = [
-        constraint for constraint in criteria.constraints if constraint.field == sc.FIELD_UNIT_TYPES
-    ]
+    type_constraints = [constraint for constraint in criteria.constraints if constraint.field == sc.FIELD_UNIT_TYPES]
 
     assert any(
-        constraint.value == ["LK"] and constraint.strength == sc.Strength.HARD
-        for constraint in type_constraints
+        constraint.value == ["LK"] and constraint.strength == sc.Strength.HARD for constraint in type_constraints
     )
     assert any(
-        constraint.value == ["CANHO"] and constraint.strength == sc.Strength.EXCLUDED
-        for constraint in type_constraints
+        constraint.value == ["CANHO"] and constraint.strength == sc.Strength.EXCLUDED for constraint in type_constraints
     )
 
 

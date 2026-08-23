@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import unicodedata
+from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Literal
 
@@ -420,7 +421,7 @@ def classify_document(
     filename: str,
     raw_text: str,
     *,
-    project_catalog: list[dict[str, object]] | None = None,
+    project_catalog: Sequence[Mapping[str, object]] | None = None,
 ) -> DocumentClassification:
     """Classify a document exclusively through the configured LLM API."""
 
@@ -487,8 +488,7 @@ def classify_document(
                 "project_id": None,
                 "requires_admin_review": True,
                 "reason": (
-                    f"{classification.reason} Project LLM gợi ý không tồn tại trong catalogue; "
-                    "cần Admin xác nhận."
+                    f"{classification.reason} Project LLM gợi ý không tồn tại trong catalogue; cần Admin xác nhận."
                 ),
             }
         )
@@ -522,7 +522,7 @@ def _evidence_occurs_in_source(evidence: str, source: str) -> bool:
     return len(evidence_key) >= 8 and len(evidence_tokens) >= 2 and evidence_key in normalise(source)
 
 
-def _normalise_project_catalog(project_catalog: list[dict[str, object]]) -> list[dict[str, object]]:
+def _normalise_project_catalog(project_catalog: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
     """Keep only safe, unique catalogue fields before adding them to the prompt."""
 
     normalised: list[dict[str, object]] = []

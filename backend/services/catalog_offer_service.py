@@ -112,9 +112,7 @@ def search_offers(
     return _diversify(offers, limit)
 
 
-def format_offers(
-    offers: list[CatalogOffer], criteria: search_criteria.SearchCriteria | None = None
-) -> str:
+def format_offers(offers: list[CatalogOffer], criteria: search_criteria.SearchCriteria | None = None) -> str:
     """Grounding block shared by Generate and Verify."""
     if not offers:
         return ""
@@ -251,9 +249,7 @@ def _to_offer(project: Project, info: dict, tier: dict) -> CatalogOffer:
 
 def _matches(offer: CatalogOffer, criteria: search_criteria.SearchCriteria) -> bool:
     type_constraints = [
-        constraint
-        for constraint in criteria.filtering()
-        if constraint.field == search_criteria.FIELD_UNIT_TYPES
+        constraint for constraint in criteria.filtering() if constraint.field == search_criteria.FIELD_UNIT_TYPES
     ]
     if type_constraints:
         actual_candidates = inventory_service._extract_unit_types(f"{offer.unit_type} {offer.category}")
@@ -272,9 +268,7 @@ def _matches(offer: CatalogOffer, criteria: search_criteria.SearchCriteria) -> b
                 return False
 
     subdivision_constraints = [
-        constraint
-        for constraint in criteria.filtering()
-        if constraint.field == search_criteria.FIELD_SUBDIVISIONS
+        constraint for constraint in criteria.filtering() if constraint.field == search_criteria.FIELD_SUBDIVISIONS
     ]
     if subdivision_constraints:
         actual = {
@@ -283,10 +277,7 @@ def _matches(offer: CatalogOffer, criteria: search_criteria.SearchCriteria) -> b
             if value
         }
         for constraint in subdivision_constraints:
-            wanted = {
-                inventory_service._normalize_text(value).removeprefix("the ")
-                for value in constraint.value
-            }
+            wanted = {inventory_service._normalize_text(value).removeprefix("the ") for value in constraint.value}
             matches = bool(actual & wanted)
             if constraint.strength == search_criteria.Strength.EXCLUDED and matches:
                 return False

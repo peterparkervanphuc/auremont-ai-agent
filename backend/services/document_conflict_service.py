@@ -55,9 +55,7 @@ class SemanticConflictEvidence(BaseModel):
     effective_periods_overlap: bool = Field(
         description="True when the stated periods overlap, or both claims are unrestricted in time."
     )
-    claims_mutually_exclusive: bool = Field(
-        description="True only when the two grounded claims cannot both be true."
-    )
+    claims_mutually_exclusive: bool = Field(description="True only when the two grounded claims cannot both be true.")
     explanation: str = Field(
         min_length=8,
         max_length=1_000,
@@ -248,8 +246,7 @@ def assess_semantic_conflict(
     grounded_evidence = [
         item
         for item in assessment.evidence
-        if _quote_is_grounded(item.quote_a, text_a)
-        and _quote_is_grounded(item.quote_b, text_b)
+        if _quote_is_grounded(item.quote_a, text_a) and _quote_is_grounded(item.quote_b, text_b)
     ]
     confirmed_evidence = [item for item in grounded_evidence if _evidence_supports_confirmed_conflict(item)]
 
@@ -308,9 +305,7 @@ def _quote_is_grounded(quote: str, source: str) -> bool:
     normalised_quote = _normalise_for_grounding(quote)
     tokens = re.findall(r"\w+", normalised_quote, flags=re.UNICODE)
     return bool(
-        len(normalised_quote) >= 12
-        and len(tokens) >= 3
-        and normalised_quote in _normalise_for_grounding(source)
+        len(normalised_quote) >= 12 and len(tokens) >= 3 and normalised_quote in _normalise_for_grounding(source)
     )
 
 
@@ -455,11 +450,7 @@ def _compact_facts(facts: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
 
 
 def _safe_fact_mapping(value: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: _safe_fact_value(value[key], depth=0)
-        for key in _CONFLICT_FACT_FIELDS
-        if key in value
-    }
+    return {key: _safe_fact_value(value[key], depth=0) for key in _CONFLICT_FACT_FIELDS if key in value}
 
 
 def _safe_fact_value(value: Any, *, depth: int) -> Any:
@@ -472,10 +463,7 @@ def _safe_fact_value(value: Any, *, depth: int) -> Any:
     if depth >= 2:
         return str(value)[:500]
     if isinstance(value, dict):
-        return {
-            str(key)[:100]: _safe_fact_value(item, depth=depth + 1)
-            for key, item in list(value.items())[:30]
-        }
+        return {str(key)[:100]: _safe_fact_value(item, depth=depth + 1) for key, item in list(value.items())[:30]}
     if isinstance(value, (list, tuple, set)):
         return [_safe_fact_value(item, depth=depth + 1) for item in list(value)[:50]]
     return str(value)[:1_000]

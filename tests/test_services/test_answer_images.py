@@ -166,7 +166,7 @@ def test_amenity_question_matches_room_named_photos():
 
 
 def test_bedroom_count_is_not_read_as_an_amenity_question():
-    """"phòng" is a filename token, never a question phrase. Reading it as one turns
+    """ "phòng" is a filename token, never a question phrase. Reading it as one turns
     "giá căn 2 phòng ngủ" into an amenity question and hangs gym and pool photos off a
     price answer."""
     db = _FakeDb(_FakeLondonProject())
@@ -232,9 +232,7 @@ def test_generic_view_question_only_attaches_explicitly_labelled_view_photos():
             }
         }
 
-    images = answer_images_service.collect_images(
-        _FakeDb(_ViewProject()), "The Palma co view the nao?", ""
-    )
+    images = answer_images_service.collect_images(_FakeDb(_ViewProject()), "The Palma co view the nao?", "")
 
     assert _urls(images) == ["https://cdn/p/the-palma/view-tu-can-ho.jpg"]
 

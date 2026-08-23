@@ -99,11 +99,7 @@ def list_completed_siblings(db: Session, project_id: str | None, exclude_id: int
         # include global policies in their semantic comparison set.
         query = query.filter(or_(Document.project_id == project_id, Document.project_id.is_(None)))
 
-    return (
-        query
-        .order_by(Document.created_at.desc())
-        .all()
-    )
+    return query.order_by(Document.created_at.desc()).all()
 
 
 def delete_document(db: Session, doc_id: int) -> None:
@@ -319,7 +315,10 @@ def update_document_classification_suggestion(
     document.project_id = classification.project_id
     document.subdivision_names = classification.subdivision_names
     document.building_codes = classification.building_codes
-    document.unit_types = classification.unit_types
+    # Rebuilt as plain `str` rather than assigned through: the classifier types this as
+    # `list[Literal[...]]`, and `list` is invariant, so it is not a `list[str]` the column
+    # can take. The values are identical; only the static type differs.
+    document.unit_types = [str(unit) for unit in classification.unit_types] if classification.unit_types else None
     document.applicable_area = classification.applicable_area
 
     document.document_summary = classification.document_summary

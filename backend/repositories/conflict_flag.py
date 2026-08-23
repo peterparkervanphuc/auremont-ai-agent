@@ -75,10 +75,7 @@ def create_conflict(
 
     existing = latest
     if existing is not None:
-        incoming_is_reversed = (
-            existing.document_id_a == document_id_b
-            and existing.document_id_b == document_id_a
-        )
+        incoming_is_reversed = existing.document_id_a == document_id_b and existing.document_id_b == document_id_a
         if incoming_is_reversed:
             evidence = _swap_evidence_sides(evidence)
         changed = _enrich_conflict(

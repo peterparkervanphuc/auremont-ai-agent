@@ -177,11 +177,7 @@ async def claim_anonymous_chat_session(
     merged into that canonical row.
     """
     anonymous = get_session(db, payload.session_id)
-    if (
-        anonymous is None
-        or anonymous.customer_id is not None
-        or anonymous.visitor_token != payload.visitor_token
-    ):
+    if anonymous is None or anonymous.customer_id is not None or anonymous.visitor_token != payload.visitor_token:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     canonical = claim_or_merge_anonymous_session(db, anonymous, user.id)
@@ -310,9 +306,7 @@ async def ask_in_customer_session(
     elif not is_anonymous and needs_human_handoff(payload.content):
         new_status = SessionStatus.WAITING_SALE
         enter_waiting_queue(db, session)
-        answer_text = (
-            _HANDOFF_DIRECT_REQUEST_MESSAGE if wants_human_agent(payload.content) else _HANDOFF_NOTICE_MESSAGE
-        )
+        answer_text = _HANDOFF_DIRECT_REQUEST_MESSAGE if wants_human_agent(payload.content) else _HANDOFF_NOTICE_MESSAGE
         verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
     else:
         started = time.perf_counter()

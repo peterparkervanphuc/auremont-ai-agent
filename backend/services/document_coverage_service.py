@@ -58,9 +58,7 @@ def document_matches_project_scope(
 
     aliases = project_aliases if project_aliases is not None else project_scope_aliases(project)
     document_scopes = {
-        canonical_scope_name(value)
-        for value in document.subdivision_names
-        if isinstance(value, str) and value.strip()
+        canonical_scope_name(value) for value in document.subdivision_names if isinstance(value, str) and value.strip()
     }
     return bool(document_scopes & aliases)
 
@@ -101,17 +99,13 @@ def document_coverage_state(
     )
 
     if any(
-        row.is_current
-        and row.status == DocumentStatus.COMPLETED
-        and row.review_status == DocumentReviewStatus.APPROVED
+        row.is_current and row.status == DocumentStatus.COMPLETED and row.review_status == DocumentReviewStatus.APPROVED
         for row in retrieval_rows
     ):
         return "ready"
 
     if any(
-        row.is_current
-        and row.status == DocumentStatus.COMPLETED
-        and row.review_status == DocumentReviewStatus.PENDING
+        row.is_current and row.status == DocumentStatus.COMPLETED and row.review_status == DocumentReviewStatus.PENDING
         for row in retrieval_rows
     ):
         return "pending_review"
