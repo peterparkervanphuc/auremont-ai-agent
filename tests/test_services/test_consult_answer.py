@@ -87,6 +87,9 @@ def test_public_clearance_carries_listings_through(monkeypatch):
             "image_urls": [],
             "amenities": [],
             "project_id": None,
+            # Catalogue recommendation, not a live inventory row -> both stay "".
+            "unit_code": "",
+            "status": "",
         }
     ]
 

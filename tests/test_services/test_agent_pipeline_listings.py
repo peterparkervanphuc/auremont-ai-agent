@@ -101,6 +101,9 @@ def test_resolve_listing_images_attaches_real_gallery_photos_and_amenities(monke
             "image_urls": ["http://minio/sapphire-2/can-ho-2pn-a.jpg", "http://minio/sapphire-2/can-ho-2pn-b.jpg"],
             "amenities": ["Hồ bơi", "Sân tennis"],
             "project_id": "the-sapphire-2",
+            # Catalogue-only card: no live inventory record behind it, so both stay "".
+            "unit_code": "",
+            "status": "",
         }
     ]
 
@@ -119,6 +122,8 @@ def test_resolve_listing_images_keeps_the_listing_when_nothing_resolves(monkeypa
             "image_urls": [],
             "amenities": [],
             "project_id": None,
+            "unit_code": "",
+            "status": "",
         }
     ]
 

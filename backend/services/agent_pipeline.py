@@ -1113,6 +1113,8 @@ def _resolve_listing_images(db: Session | None, listings: list["prompts.Property
                 "image_urls": image_urls,
                 "amenities": amenities,
                 "project_id": project_id,
+                "unit_code": listing.unit_code,
+                "status": listing.status,
             }
         )
     return resolved

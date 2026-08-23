@@ -4,6 +4,7 @@ import type { PropertyListing } from "../types";
 import { ChevronLeftIcon, ChevronRightIcon, HomeIcon } from "../components/Icons";
 import { ZONES } from "./sale/inventory/registry";
 import { markCameFromChat } from "../components/BackToChatButton";
+import { useCarouselActiveIndex } from "../hooks/useCarouselActiveIndex";
 
 interface Props {
   listings: PropertyListing[];
@@ -58,6 +59,19 @@ function resolveZoneLink(projectId: string, projectName: string): string | null 
   return null;
 }
 
+// The backend already translates the raw API status ("available"/"reserved"/"sold") into
+// short Vietnamese text (see prompts.py's TRÌNH BÀY KẾT QUẢ TỒN KHO), so this only picks a
+// color for whichever exact string it sent — matched loosely (substring) rather than
+// exact-equals so a small wording variation still gets a sensible color instead of falling
+// through to the neutral default.
+function statusBadgeModifier(status: string): string {
+  const normalized = status.toLowerCase();
+  if (normalized.includes("trống")) return "listing-card-status-badge--available";
+  if (normalized.includes("bán")) return "listing-card-status-badge--sold";
+  if (normalized.includes("giữ") || normalized.includes("cọc")) return "listing-card-status-badge--reserved";
+  return "";
+}
+
 // The card sits inside a narrow chat bubble, not a full page — a thumbnail row long
 // enough to need its own horizontal scrollbar there was stretching the whole message
 // wider than the chat column instead of scrolling in place. Showing the row one page of
@@ -68,10 +82,22 @@ function resolveZoneLink(projectId: string, projectName: string): string | null 
 // window forward in place rather than just zooming that one photo.
 const _VISIBLE_THUMB_COUNT = 6;
 
-// One recommended unit at a time, with paging arrows between cards — the numeric details
-// (loại căn/diện tích/giá) used to be bullet lines inside the answer's own text; they now
-// live here instead, so the chat bubble stays a short 1-2 sentence recommendation and the
-// actual figures get a card of their own. `image_urls`/`amenities` are resolved
+interface ZoomState {
+  index: number;
+  activeImage: number;
+}
+
+// Several recommended units, laid out as a horizontal scroll-snap strip — the reference
+// the user pointed at (a chat-bot generic-template carousel) always leaves the next
+// card's edge peeking in at the right so it's visually obvious there's more to browse,
+// instead of relying on the dots alone. Every card is mounted at once for that (unlike
+// the old single-card-swapped-in-place version) so each keeps its own gallery state —
+// see ListingCardSlide below. The prev/next arrows float over the snapped-in card's hero
+// image rather than sitting below the card, matching that same reference.
+//
+// One recommended unit per card, with numeric details (loại căn/diện tích/giá) as a card
+// of their own rather than bullet lines inside the answer's own text — that keeps the
+// chat bubble a short 1-2 sentence recommendation. `image_urls`/`amenities` are resolved
 // server-side (see agent_pipeline._resolve_listing_images/select_listing_images): a floor
 // plan when the catalogue tags one for this unit type, the subdivision's own overview
 // shots otherwise — never a photo of the specific unit, since no such photo exists in the
@@ -86,41 +112,164 @@ const _VISIBLE_THUMB_COUNT = 6;
 // the same way as the photos) when one could be resolved, opening in a new tab so the
 // chat itself is never navigated away from.
 export function PropertyListingCarousel({ listings }: Props) {
-  const [index, setIndex] = useState(0);
-  const [activeImage, setActiveImage] = useState(0);
-  const [thumbPage, setThumbPage] = useState(0);
-  const [zoomOpen, setZoomOpen] = useState(false);
+  const { trackRef, activeIndex, scrollToIndex } = useCarouselActiveIndex<HTMLDivElement>(listings.length);
+  const [zoom, setZoom] = useState<ZoomState | null>(null);
   const [brokenUrls, setBrokenUrls] = useState<Set<string>>(new Set());
 
-  // Switching which recommended unit is shown must not carry over the previous unit's
-  // "which photo is big" state onto a gallery it doesn't belong to.
-  useEffect(() => {
-    setActiveImage(0);
-    setThumbPage(0);
-    setZoomOpen(false);
-  }, [index]);
+  const markBroken = (url: string) => setBrokenUrls((prev) => new Set(prev).add(url));
 
   useEffect(() => {
-    if (!zoomOpen) return;
+    if (!zoom) return;
+    const images = listings[zoom.index].image_urls.filter((url) => !brokenUrls.has(url));
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setZoomOpen(false);
-      if (e.key === "ArrowLeft") setActiveImage((i) => Math.max(0, i - 1));
-      if (e.key === "ArrowRight") setActiveImage((i) => i + 1);
+      if (e.key === "Escape") setZoom(null);
+      if (e.key === "ArrowLeft") setZoom((z) => (z ? { ...z, activeImage: Math.max(0, z.activeImage - 1) } : z));
+      if (e.key === "ArrowRight")
+        setZoom((z) => (z ? { ...z, activeImage: Math.min(images.length - 1, z.activeImage + 1) } : z));
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [zoomOpen]);
+  }, [zoom, listings, brokenUrls]);
 
   if (listings.length === 0) return null;
 
-  const current = listings[index];
-  const images = current.image_urls.filter((url) => !brokenUrls.has(url));
+  const zoomListing = zoom ? listings[zoom.index] : null;
+  const zoomImages = zoomListing ? zoomListing.image_urls.filter((url) => !brokenUrls.has(url)) : [];
+  const zoomHeroIndex = zoom ? Math.min(zoom.activeImage, Math.max(zoomImages.length - 1, 0)) : 0;
+
+  return (
+    <div className="listing-carousel">
+      <div className="listing-carousel-viewport">
+        <div
+          className={`listing-carousel-track ${listings.length === 1 ? "listing-carousel-track--single" : ""}`}
+          ref={trackRef}
+        >
+          {listings.map((listing, i) => (
+            <ListingCardSlide
+              key={`${listing.project_name}-${listing.unit_type}-${i}`}
+              listing={listing}
+              brokenUrls={brokenUrls}
+              onBroken={markBroken}
+              onZoom={(heroIndex) => setZoom({ index: i, activeImage: heroIndex })}
+            />
+          ))}
+        </div>
+        {listings.length > 1 && (
+          <div className="listing-carousel-arrow-zone">
+            <button
+              type="button"
+              className="listing-carousel-arrow"
+              disabled={activeIndex === 0}
+              onClick={() => scrollToIndex(activeIndex - 1)}
+              aria-label="Căn trước"
+            >
+              <ChevronLeftIcon size={18} />
+            </button>
+            <button
+              type="button"
+              className="listing-carousel-arrow"
+              disabled={activeIndex === listings.length - 1}
+              onClick={() => scrollToIndex(activeIndex + 1)}
+              aria-label="Căn tiếp theo"
+            >
+              <ChevronRightIcon size={18} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {listings.length > 1 && (
+        <div className="listing-carousel-dots">
+          {listings.map((listing, i) => (
+            <button
+              key={`${listing.project_name}-${listing.unit_type}-${i}-dot`}
+              type="button"
+              className={`listing-carousel-dot ${i === activeIndex ? "listing-carousel-dot--active" : ""}`}
+              onClick={() => scrollToIndex(i)}
+              aria-label={`Xem căn ${i + 1}`}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Portalled to <body>, same reasoning as AnswerImageStrip.tsx: `.chat-message` keeps
+          a transform from its entry animation, which would otherwise clip a `position:
+          fixed` lightbox to the message bubble instead of the viewport. Unlike that
+          simpler single-image lightbox, this one carries its own prev/next + counter +
+          thumbnail strip, since a listing has several photos worth browsing in place. */}
+      {zoom &&
+        zoomListing &&
+        zoomImages.length > 0 &&
+        createPortal(
+          <div className="image-lightbox" onClick={() => setZoom(null)} role="presentation">
+            <div className="property-lightbox" onClick={(e) => e.stopPropagation()}>
+              <div className="property-lightbox-main">
+                <button
+                  type="button"
+                  className="property-lightbox-arrow property-lightbox-arrow--left"
+                  disabled={zoomHeroIndex === 0}
+                  onClick={() => setZoom((z) => (z ? { ...z, activeImage: zoomHeroIndex - 1 } : z))}
+                  aria-label="Ảnh trước"
+                >
+                  <ChevronLeftIcon size={20} />
+                </button>
+                <img src={zoomImages[zoomHeroIndex]} alt={`${zoomListing.project_name} ${zoomHeroIndex + 1}`} />
+                <button
+                  type="button"
+                  className="property-lightbox-arrow property-lightbox-arrow--right"
+                  disabled={zoomHeroIndex === zoomImages.length - 1}
+                  onClick={() => setZoom((z) => (z ? { ...z, activeImage: zoomHeroIndex + 1 } : z))}
+                  aria-label="Ảnh tiếp theo"
+                >
+                  <ChevronRightIcon size={20} />
+                </button>
+                {zoomImages.length > 1 && (
+                  <span className="property-lightbox-counter">
+                    {zoomHeroIndex + 1} / {zoomImages.length}
+                  </span>
+                )}
+              </div>
+
+              {zoomImages.length > 1 && (
+                <div className="property-lightbox-thumbs">
+                  {zoomImages.map((url, i) => (
+                    <button
+                      key={url}
+                      type="button"
+                      className={`property-lightbox-thumb ${i === zoomHeroIndex ? "property-lightbox-thumb--active" : ""}`}
+                      onClick={() => setZoom((z) => (z ? { ...z, activeImage: i } : z))}
+                      title={`Ảnh ${i + 1} ${zoomListing.project_name}`}
+                    >
+                      <img src={url} alt={`${zoomListing.project_name} ${i + 1}`} loading="lazy" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </div>
+  );
+}
+
+interface SlideProps {
+  listing: PropertyListing;
+  brokenUrls: Set<string>;
+  onBroken: (url: string) => void;
+  onZoom: (heroIndex: number) => void;
+}
+
+// One card of the scroll-snap strip above. Now that every listing is mounted at once
+// (needed for the peek-the-next-card effect), "which photo is the hero"/thumbnail-page
+// state can no longer live as a single value on the parent — each slide owns its own.
+function ListingCardSlide({ listing, brokenUrls, onBroken, onZoom }: SlideProps) {
+  const [activeImage, setActiveImage] = useState(0);
+  const [thumbPage, setThumbPage] = useState(0);
+
+  const images = listing.image_urls.filter((url) => !brokenUrls.has(url));
   const heroIndex = Math.min(activeImage, Math.max(images.length - 1, 0));
-  const canGoBack = index > 0;
-  const canGoForward = index < listings.length - 1;
-  const canZoomPrev = heroIndex > 0;
-  const canZoomNext = heroIndex < images.length - 1;
-  const projectHref = current.project_id ? resolveZoneLink(current.project_id, current.project_name) : null;
+  const projectHref = listing.project_id ? resolveZoneLink(listing.project_id, listing.project_name) : null;
 
   // The thumbnail row shows one "page" of _VISIBLE_THUMB_COUNT photos at a time — the "+N"
   // badge on the last one is itself the "next page" control (tapping it slides the window
@@ -133,18 +282,17 @@ export function PropertyListingCarousel({ listings }: Props) {
   const visibleThumbs = images.slice(thumbPageStart, thumbPageStart + _VISIBLE_THUMB_COUNT);
   const hiddenThumbCount = images.length - (thumbPageStart + visibleThumbs.length);
 
-  const markBroken = (url: string) => setBrokenUrls((prev) => new Set(prev).add(url));
-
   const bodyContent = (
     <>
-      <p className="listing-card-title">{current.project_name}</p>
+      <p className="listing-card-title">{listing.project_name}</p>
+      {listing.unit_code && <p className="listing-card-unit-code">{listing.unit_code}</p>}
       <p className="listing-card-meta">
-        {current.unit_type} · {current.area_range}
+        {listing.unit_type} · {listing.area_range}
       </p>
-      <p className="listing-card-price">{current.price_range}</p>
-      {current.amenities.length > 0 && (
+      <p className="listing-card-price">{listing.price_range}</p>
+      {listing.amenities.length > 0 && (
         <div className="listing-card-amenities">
-          {current.amenities.map((amenity) => (
+          {listing.amenities.map((amenity) => (
             <span key={amenity} className="listing-card-amenity">
               {amenity}
             </span>
@@ -155,174 +303,89 @@ export function PropertyListingCarousel({ listings }: Props) {
   );
 
   return (
-    <div className="listing-carousel">
-      <div className="listing-card">
-        {images.length > 0 ? (
-          <>
-            <button
-              type="button"
-              className="listing-card-hero-btn"
-              onClick={() => setZoomOpen(true)}
-              title={`Phóng to ảnh ${current.project_name}`}
-            >
-              <img
-                className="listing-card-hero-image"
-                src={images[heroIndex]}
-                alt={`${current.project_name} ${heroIndex + 1}`}
-                onError={() => markBroken(images[heroIndex])}
-              />
-            </button>
-            {images.length > 1 && (
-              <div className="listing-card-thumbs">
-                {clampedThumbPage > 0 && (
-                  <button
-                    type="button"
-                    className="listing-card-thumb-page-btn"
-                    onClick={() => setThumbPage((p) => p - 1)}
-                    aria-label="Ảnh trước đó"
-                  >
-                    <ChevronLeftIcon size={14} />
-                  </button>
-                )}
-                {visibleThumbs.map((url, i) => {
-                  const globalIndex = thumbPageStart + i;
-                  const isLastVisible = i === visibleThumbs.length - 1;
-                  const showMoreBadge = isLastVisible && hiddenThumbCount > 0;
-                  return (
-                    <button
-                      key={url}
-                      type="button"
-                      className={`listing-card-thumb-btn ${globalIndex === heroIndex ? "listing-card-thumb-btn--active" : ""}`}
-                      onClick={() => (showMoreBadge ? setThumbPage((p) => p + 1) : setActiveImage(globalIndex))}
-                      title={
-                        showMoreBadge
-                          ? `Xem thêm ${hiddenThumbCount} ảnh ${current.project_name}`
-                          : `Ảnh ${globalIndex + 1} ${current.project_name}`
-                      }
-                    >
-                      <img
-                        className="listing-card-thumb-image"
-                        src={url}
-                        alt={`${current.project_name} ${globalIndex + 1}`}
-                        loading="lazy"
-                        onError={() => markBroken(url)}
-                      />
-                      {showMoreBadge && <span className="listing-card-thumb-more">+{hiddenThumbCount}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="listing-card-hero-image listing-card-hero-image--placeholder">
-            <HomeIcon size={36} />
-          </div>
-        )}
-
-        {projectHref ? (
-          <a
-            className="listing-card-body listing-card-body--link"
-            href={projectHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={`Xem ${current.project_name} trên trang phân khu`}
-            onClick={markCameFromChat}
+    <div className="listing-card">
+      {images.length > 0 ? (
+        <>
+          <button
+            type="button"
+            className="listing-card-hero-btn"
+            onClick={() => onZoom(heroIndex)}
+            title={`Phóng to ảnh ${listing.project_name}`}
           >
-            {bodyContent}
-          </a>
-        ) : (
-          <div className="listing-card-body">{bodyContent}</div>
-        )}
-
-        {listings.length > 1 && (
-          <div className="listing-carousel-nav">
-            <button
-              type="button"
-              className="listing-carousel-arrow"
-              disabled={!canGoBack}
-              onClick={() => setIndex((i) => i - 1)}
-              aria-label="Căn trước"
-            >
-              <ChevronLeftIcon size={16} />
-            </button>
-            <div className="listing-carousel-dots">
-              {listings.map((listing, i) => (
-                <span
-                  key={`${listing.project_name}-${listing.unit_type}-${i}`}
-                  className={`listing-carousel-dot ${i === index ? "listing-carousel-dot--active" : ""}`}
-                />
-              ))}
-            </div>
-            <button
-              type="button"
-              className="listing-carousel-arrow"
-              disabled={!canGoForward}
-              onClick={() => setIndex((i) => i + 1)}
-              aria-label="Căn tiếp theo"
-            >
-              <ChevronRightIcon size={16} />
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Portalled to <body>, same reasoning as AnswerImageStrip.tsx: `.chat-message` keeps
-          a transform from its entry animation, which would otherwise clip a `position:
-          fixed` lightbox to the message bubble instead of the viewport. Unlike that
-          simpler single-image lightbox, this one carries its own prev/next + counter +
-          thumbnail strip, since a listing has several photos worth browsing in place. */}
-      {zoomOpen &&
-        images.length > 0 &&
-        createPortal(
-          <div className="image-lightbox" onClick={() => setZoomOpen(false)} role="presentation">
-            <div className="property-lightbox" onClick={(e) => e.stopPropagation()}>
-              <div className="property-lightbox-main">
+            <img
+              className="listing-card-hero-image"
+              src={images[heroIndex]}
+              alt={`${listing.project_name} ${heroIndex + 1}`}
+              onError={() => onBroken(images[heroIndex])}
+            />
+            {listing.status && (
+              <span className={`listing-card-status-badge ${statusBadgeModifier(listing.status)}`}>
+                {listing.status}
+              </span>
+            )}
+          </button>
+          {images.length > 1 && (
+            <div className="listing-card-thumbs">
+              {clampedThumbPage > 0 && (
                 <button
                   type="button"
-                  className="property-lightbox-arrow property-lightbox-arrow--left"
-                  disabled={!canZoomPrev}
-                  onClick={() => setActiveImage((i) => i - 1)}
-                  aria-label="Ảnh trước"
+                  className="listing-card-thumb-page-btn"
+                  onClick={() => setThumbPage((p) => p - 1)}
+                  aria-label="Ảnh trước đó"
                 >
-                  <ChevronLeftIcon size={20} />
+                  <ChevronLeftIcon size={14} />
                 </button>
-                <img src={images[heroIndex]} alt={`${current.project_name} ${heroIndex + 1}`} />
-                <button
-                  type="button"
-                  className="property-lightbox-arrow property-lightbox-arrow--right"
-                  disabled={!canZoomNext}
-                  onClick={() => setActiveImage((i) => i + 1)}
-                  aria-label="Ảnh tiếp theo"
-                >
-                  <ChevronRightIcon size={20} />
-                </button>
-                {images.length > 1 && (
-                  <span className="property-lightbox-counter">
-                    {heroIndex + 1} / {images.length}
-                  </span>
-                )}
-              </div>
-
-              {images.length > 1 && (
-                <div className="property-lightbox-thumbs">
-                  {images.map((url, i) => (
-                    <button
-                      key={url}
-                      type="button"
-                      className={`property-lightbox-thumb ${i === heroIndex ? "property-lightbox-thumb--active" : ""}`}
-                      onClick={() => setActiveImage(i)}
-                      title={`Ảnh ${i + 1} ${current.project_name}`}
-                    >
-                      <img src={url} alt={`${current.project_name} ${i + 1}`} loading="lazy" />
-                    </button>
-                  ))}
-                </div>
               )}
+              {visibleThumbs.map((url, i) => {
+                const globalIndex = thumbPageStart + i;
+                const isLastVisible = i === visibleThumbs.length - 1;
+                const showMoreBadge = isLastVisible && hiddenThumbCount > 0;
+                return (
+                  <button
+                    key={url}
+                    type="button"
+                    className={`listing-card-thumb-btn ${globalIndex === heroIndex ? "listing-card-thumb-btn--active" : ""}`}
+                    onClick={() => (showMoreBadge ? setThumbPage((p) => p + 1) : setActiveImage(globalIndex))}
+                    title={
+                      showMoreBadge
+                        ? `Xem thêm ${hiddenThumbCount} ảnh ${listing.project_name}`
+                        : `Ảnh ${globalIndex + 1} ${listing.project_name}`
+                    }
+                  >
+                    <img
+                      className="listing-card-thumb-image"
+                      src={url}
+                      alt={`${listing.project_name} ${globalIndex + 1}`}
+                      loading="lazy"
+                      onError={() => onBroken(url)}
+                    />
+                    {showMoreBadge && <span className="listing-card-thumb-more">+{hiddenThumbCount}</span>}
+                  </button>
+                );
+              })}
             </div>
-          </div>,
-          document.body,
-        )}
+          )}
+        </>
+      ) : (
+        <div className="listing-card-hero-image listing-card-hero-image--placeholder">
+          <HomeIcon size={36} />
+        </div>
+      )}
+
+      {projectHref ? (
+        <a
+          className="listing-card-body listing-card-body--link"
+          href={projectHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`Xem ${listing.project_name} trên trang phân khu`}
+          onClick={markCameFromChat}
+        >
+          {bodyContent}
+        </a>
+      ) : (
+        <div className="listing-card-body">{bodyContent}</div>
+      )}
     </div>
   );
 }

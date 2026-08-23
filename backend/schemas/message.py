@@ -35,6 +35,10 @@ class PropertyListing(BaseModel):
     agent_pipeline._resolve_listing_images, which is what fills in `image_urls`/
     `amenities`/`project_id`. All three default empty: a listing whose project/gallery
     could not be resolved is still shown, just without photos or amenity tags.
+
+    `unit_code`/`status` are non-empty only for a listing built from one confirmed
+    TỒN KHO REAL-TIME record (see prompts.PropertyListing) — a catalogue-only
+    project/subdivision summary card leaves both "".
     """
 
     project_name: str
@@ -44,6 +48,8 @@ class PropertyListing(BaseModel):
     image_urls: list[str] = []
     amenities: list[str] = []
     project_id: str | None = None
+    unit_code: str = ""
+    status: str = ""
 
 
 class MessageCreate(BaseModel):

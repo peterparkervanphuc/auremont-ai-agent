@@ -563,6 +563,15 @@ def select_listing_images(gallery: list[str], unit_type: str, project_name: str 
     if not gallery:
         return []
 
+    # Missed until now: every other gallery read in this module drops the shared
+    # non-distinguishing photos (see _SHARED_NONDISTINGUISHING_PHOTO_PATTERN above), but a
+    # listing card's own gallery came straight from the project record — so two sibling
+    # projects with no photo of their own for a unit type (falling through to `fallback`
+    # below) could both surface the exact same shared pool shot as their lead image.
+    gallery = _drop_shared_nondistinguishing_photos(gallery)
+    if not gallery:
+        return []
+
     normalized_unit_type = _normalize(unit_type)
     unit_tokens = _unit_type_tokens(normalized_unit_type)
     type_matches = list(dict.fromkeys(url for url in gallery if any(token in _normalize_filename(url) for token in unit_tokens)))
