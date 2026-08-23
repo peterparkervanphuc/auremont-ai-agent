@@ -27,6 +27,7 @@ import logging
 import math
 import re
 from collections.abc import Iterable, Sequence
+from typing import Any
 
 from qdrant_client import models
 
@@ -65,57 +66,19 @@ class RetrievalError(RuntimeError):
     """The query could not be embedded, or Qdrant could not be queried."""
 
 
-def retrieve(
-    query: str,
-    visibility: DocumentVisibility,
-    project_id: str | None = None,
-    top_k: int = 5,
+def _build_query_filter(
     *,
-    focus_query: str | None = None,
-    project_ids: Iterable[str] | None = None,
-    excluded_project_ids: Iterable[str] | None = None,
-) -> list[dict]:
-    """Return retrieved chunks: [{"document_id": int, "title": str, "content": str, "score": float}, ...].
+    visibility: DocumentVisibility,
+    project_id: str | None,
+    project_ids: Iterable[str] | None,
+    excluded_project_ids: Iterable[str] | None,
+) -> models.Filter:
+    """Assemble every payload condition a retrieval must satisfy.
 
-    `visibility` is **the asker's clearance level**, not a label to match exactly:
-    INTERNAL (Sale/Admin) can read both internal and public documents, PUBLIC can read
-    only public ones. Matching exactly would mean a Sale never sees PUBLIC documents —
-    absurd, since those are precisely the ones they are allowed to send to customers.
-
-    Returns `[]` when nothing has been ingested yet (the collection does not exist) — the
-    Sale then sees the "Chưa có dữ liệu dự án" empty state rather than a system error.
-
-    Raises `RetrievalError` when Qdrant or Gemini genuinely fails.
+    Kept apart from the search itself because this is the RBAC boundary: the clearance,
+    approval and currency conditions here are what stop an internal or retired document
+    reaching an answer, independent of whatever the route allowed.
     """
-    if not query.strip() or top_k <= 0:
-        return []
-
-    try:
-        query_vector = embed_query(query)
-    except GeminiEmbeddingError as exc:
-        logger.exception(
-            "Embedding the query failed.",
-            extra={"event": "retrieval.embed.failed", "project_id": project_id},
-        )
-        raise RetrievalError("Could not embed the query.") from exc
-
-    sparse_query_vector = None
-    if settings.hybrid_search_enabled:
-        try:
-            sparse_query_vector = embed_query_sparse(query)
-        except SparseEmbeddingError:
-            # Degrade rather than fail: the keyword channel sharpens retrieval, but the
-            # dense channel alone still answers the question. A Sale waiting in front of
-            # a customer must not lose their answer to a model-cache problem.
-            logger.warning(
-                "BM25 query embedding failed; retrieving with the dense channel only.",
-                exc_info=True,
-                extra={"event": "retrieval.sparse_embed.failed", "project_id": project_id},
-            )
-
-    # Defense in depth: ingestion also keeps pending suggestions at is_current=false, but
-    # requiring approval here prevents a stale/corrupt vector payload with is_current=true
-    # from grounding an answer before an Admin reviews a weak classification.
     conditions: list[models.Condition] = [
         _visibility_condition(visibility),
         models.FieldCondition(
@@ -169,6 +132,103 @@ def retrieve(
         must=conditions,
         should=project_scope,
         must_not=exclusions,
+    )
+    return query_filter
+
+
+def _points_to_hits(points: Iterable[Any], *, fused: bool) -> list[dict]:
+    """Turn Qdrant points into the hit dicts the rest of the pipeline works with.
+
+    `fused` selects the score scale: an RRF-fused score already lives in [0, 1], a raw
+    cosine does not and is rescaled from [-1, 1].
+    """
+    hits: list[dict] = []
+    for point in points:
+        payload = point.payload or {}
+        content = payload.get("content") or ""
+        if not content:
+            continue
+        hits.append(
+            {
+                "document_id": payload.get("document_id"),
+                "title": payload.get("title") or "",
+                "content": content,
+                # page travels along so the Generate step can cite down to a page number.
+                "page": payload.get("page"),
+                # Y position (PDF points from the page's top) for scrolling a citation's
+                # PDF viewer straight to this chunk — see chunking_service.py and
+                # CitationList.tsx's withPageAnchor. None for DOCX or an older chunk
+                # indexed before this field existed.
+                "y_position": payload.get("y_position"),
+                # project_id travels along so a reply built from an unscoped, cross-project
+                # search (no project_id filter above) can tell "these docs actually agree on
+                # one project" apart from "retrieval grabbed unrelated projects" — see
+                # agent_pipeline._generate's citation filtering.
+                "project_id": payload.get("project_id"),
+                # Qdrant cosine lives in [-1, 1]; rescale to [0, 1] so it reads well on
+                # the Admin dashboard. A fused (hybrid) score is already normalised.
+                "score": point.score if fused else (point.score + 1.0) / 2.0,
+            }
+        )
+    return hits
+
+
+def retrieve(
+    query: str,
+    visibility: DocumentVisibility,
+    project_id: str | None = None,
+    top_k: int = 5,
+    *,
+    focus_query: str | None = None,
+    project_ids: Iterable[str] | None = None,
+    excluded_project_ids: Iterable[str] | None = None,
+) -> list[dict]:
+    """Return retrieved chunks: [{"document_id": int, "title": str, "content": str, "score": float}, ...].
+
+    `visibility` is **the asker's clearance level**, not a label to match exactly:
+    INTERNAL (Sale/Admin) can read both internal and public documents, PUBLIC can read
+    only public ones. Matching exactly would mean a Sale never sees PUBLIC documents —
+    absurd, since those are precisely the ones they are allowed to send to customers.
+
+    Returns `[]` when nothing has been ingested yet (the collection does not exist) — the
+    Sale then sees the "Chưa có dữ liệu dự án" empty state rather than a system error.
+
+    Raises `RetrievalError` when Qdrant or Gemini genuinely fails.
+    """
+    if not query.strip() or top_k <= 0:
+        return []
+
+    try:
+        query_vector = embed_query(query)
+    except GeminiEmbeddingError as exc:
+        logger.exception(
+            "Embedding the query failed.",
+            extra={"event": "retrieval.embed.failed", "project_id": project_id},
+        )
+        raise RetrievalError("Could not embed the query.") from exc
+
+    sparse_query_vector = None
+    if settings.hybrid_search_enabled:
+        try:
+            sparse_query_vector = embed_query_sparse(query)
+        except SparseEmbeddingError:
+            # Degrade rather than fail: the keyword channel sharpens retrieval, but the
+            # dense channel alone still answers the question. A Sale waiting in front of
+            # a customer must not lose their answer to a model-cache problem.
+            logger.warning(
+                "BM25 query embedding failed; retrieving with the dense channel only.",
+                exc_info=True,
+                extra={"event": "retrieval.sparse_embed.failed", "project_id": project_id},
+            )
+
+    # Defense in depth: ingestion also keeps pending suggestions at is_current=false, but
+    # requiring approval here prevents a stale/corrupt vector payload with is_current=true
+    # from grounding an answer before an Admin reviews a weak classification.
+    query_filter = _build_query_filter(
+        visibility=visibility,
+        project_id=project_id,
+        project_ids=project_ids,
+        excluded_project_ids=excluded_project_ids,
     )
     candidate_limit = top_k * OVERFETCH_FACTOR
 
@@ -236,34 +296,7 @@ def retrieve(
     # passed through untouched.
     fused = sparse_query_vector is not None
 
-    hits = []
-    for point in response.points:
-        payload = point.payload or {}
-        content = payload.get("content") or ""
-        if not content:
-            continue
-        hits.append(
-            {
-                "document_id": payload.get("document_id"),
-                "title": payload.get("title") or "",
-                "content": content,
-                # page travels along so the Generate step can cite down to a page number.
-                "page": payload.get("page"),
-                # Y position (PDF points from the page's top) for scrolling a citation's
-                # PDF viewer straight to this chunk — see chunking_service.py and
-                # CitationList.tsx's withPageAnchor. None for DOCX or an older chunk
-                # indexed before this field existed.
-                "y_position": payload.get("y_position"),
-                # project_id travels along so a reply built from an unscoped, cross-project
-                # search (no project_id filter above) can tell "these docs actually agree on
-                # one project" apart from "retrieval grabbed unrelated projects" — see
-                # agent_pipeline._generate's citation filtering.
-                "project_id": payload.get("project_id"),
-                # Qdrant cosine lives in [-1, 1]; rescale to [0, 1] so it reads well on
-                # the Admin dashboard. A fused (hybrid) score is already normalised.
-                "score": point.score if fused else (point.score + 1.0) / 2.0,
-            }
-        )
+    hits = _points_to_hits(response.points, fused=fused)
 
     ranked = _rerank(query, hits, fused=fused)
     return _select_context(focus_query or query, ranked, top_k=top_k)
