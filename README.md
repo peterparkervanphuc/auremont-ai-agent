@@ -86,11 +86,13 @@ Dev mode without Docker, mock inventory API setup, migrations: see [`docs/DEVELO
 ├── backend/
 │   ├── ai/            # Prompts, citations, intent detection
 │   ├── core/           # Config, clients, security
-│   ├── models/          # SQLAlchemy models
-│   ├── schemas/           # Pydantic schemas
-│   ├── repositories/       # Data access
-│   ├── services/            # Agent pipeline, RAG, verifier, memory, ingestion
-│   ├── routers/               # API endpoints
+│   ├── middleware/       # Request logging
+│   ├── models/             # SQLAlchemy models
+│   ├── schemas/              # Pydantic schemas
+│   ├── repositories/          # Data access
+│   ├── services/                # Agent pipeline, RAG, verifier, memory, ingestion
+│   ├── routers/                    # API endpoints
+│   ├── utils/                         # Shared helpers (text, time)
 │   └── main.py
 ├── frontend/            # React SPA (Sale / Admin / Customer)
 ├── migrations/            # Alembic
@@ -109,7 +111,7 @@ Dev mode without Docker, mock inventory API setup, migrations: see [`docs/DEVELO
 | POST | `/api/v1/customer/sessions/{id}/messages` | Customer asks the agent |
 | GET | `/api/v1/sale/live-inbox` | AI→Sale handoff queue |
 | POST | `/api/v1/hitl/{id}/confirm` | Confirm a commitment answer |
-| POST | `/api/v1/documents` | Upload/ingest a document |
+| POST | `/api/v1/documents/upload` | Upload/ingest a document |
 | GET | `/health` | Health check |
 
 Full API: http://localhost:8000/docs
