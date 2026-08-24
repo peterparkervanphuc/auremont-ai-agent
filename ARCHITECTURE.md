@@ -2,7 +2,7 @@
 
 ## Overview
 
-One React SPA, role-routed (Sale / Admin / Customer) via JWT. One FastAPI backend orchestrating a LangGraph pipeline (cache → retrieve → inventory tool → image tool → generate → verify → risk-check). Four data stores: MySQL (relational), Qdrant (vectors + semantic cache), Redis (memory, fail-open), MinIO (files). Docker Compose for local dev; no production infra configured.
+One React SPA, role-routed (Sale / Admin / Customer) via JWT. One FastAPI backend orchestrating a LangGraph pipeline (preflight → scope → cache → retrieve → criteria → inventory tool → image tool → generate → verify → risk-check). Four data stores: MySQL (relational), Qdrant (vectors + semantic cache), Redis (memory, fail-open), MinIO (files). Docker Compose for local dev; no production infra configured.
 
 ## Diagram
 
@@ -21,9 +21,13 @@ flowchart TB
 
         subgraph AGENT["Agent Pipeline (LangGraph)"]
             direction TB
+            PreflightNode["preflight"]
+            ScopeNode["scope_resolve"]
             CacheNode["cache_check"]
             RetrieveNode["retrieve"]
+            CriteriaNode["criteria_resolve"]
             ToolCallNode["tool_call"]
+            DiagnoseNode["criteria_diagnose"]
             ImageNode["image_tool"]
             GenerateNode["generate"]
             VerifyNode["verify"]
@@ -70,12 +74,15 @@ flowchart TB
         DcMinio["minio :9000/9001"]
     end
 
-    SPA --> FeNginx --> API --> Auth --> CacheNode
+    SPA --> FeNginx --> API --> Auth --> PreflightNode
+    PreflightNode --> ScopeNode --> CacheNode
     CacheNode -->|hit| END1(("answer"))
     CacheNode -->|miss| RetrieveNode --> Qdrant
-    RetrieveNode -->|needs inventory| ToolCallNode --> InventoryAPI
-    RetrieveNode -->|no inventory| ImageNode
-    ToolCallNode --> ImageNode --> GenerateNode
+    RetrieveNode --> CriteriaNode
+    CriteriaNode -->|needs inventory| ToolCallNode --> InventoryAPI
+    ToolCallNode --> DiagnoseNode --> ImageNode
+    CriteriaNode -->|no inventory| ImageNode
+    ImageNode --> GenerateNode
     GenerateNode --> Gemini
     GenerateNode --> LongTerm
     GenerateNode --> Reflection
@@ -95,7 +102,7 @@ flowchart TB
     classDef data fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef external fill:#fce7f3,stroke:#db2777,color:#831843
     classDef dev fill:#e0e7ff,stroke:#4f46e5,color:#312e81
-    class API,Auth,CacheNode,RetrieveNode,ToolCallNode,ImageNode,GenerateNode,VerifyNode,RiskNode,RetryNode,Sanitizer,Classifier,Chunker,Embedder,LongTerm,Reflection backend
+    class API,Auth,PreflightNode,ScopeNode,CacheNode,RetrieveNode,CriteriaNode,ToolCallNode,DiagnoseNode,ImageNode,GenerateNode,VerifyNode,RiskNode,RetryNode,Sanitizer,Classifier,Chunker,Embedder,LongTerm,Reflection backend
     class MySQL,Qdrant,Redis,MinIO data
     class Gemini,Cohere,InventoryAPI external
     class DcFrontend,DcBackend,DcMysql,DcQdrant,DcRedis,DcMinio dev
@@ -109,17 +116,21 @@ Single SPA, role-routed via JWT claim (`ProtectedRoute`). Sale: chat, HITL confi
 ### Backend
 FastAPI, RESTful, Swagger at `/docs`. JWT (HS256) with `role` claim (SALE/ADMIN/CUSTOMER); anonymous customers use a `visitor_token` instead. RBAC enforced at the route (`require_role`) and retrieval layer (Qdrant payload filter on `visibility`).
 
-Routers: `auth`, `users`, `projects`, `documents`, `document_relations`, `sale_chat`, `customer_chat`, `sale_live`, `hitl`, `feedback`, `admin_conflicts`, `admin_eval`, `admin_stats`, `admin_settings`, `dev_seed` (dev-only).
+Routers: `auth`, `users`, `projects`, `documents`, `document_relations`, `sale_chat`, `customer_chat`, `sale_live`, `hitl`, `feedback`, `admin_conflicts`, `admin_eval`, `admin_stats`, `admin_settings`, `admin_sales`, `admin_observability`, `dev_seed` (dev-only).
 
 ### Customer chat & AI↔Sale handoff
 Separate flow from Sale's own chat. Anonymous sessions use a `visitor_token`; logged-in customers use `customer_id`. Three gates for anonymous visitors — `turn_limit`, `closing_intent`, `human_request` — each short-circuits before the pipeline runs (zero LLM cost). Logged-in customers can be handed off to a live Sale (`WAITING_SALE`); `sale_live.py` is the claim/reply/co-pilot inbox for that queue. Anonymous endpoints are per-IP rate-limited.
 
 ### Agent Pipeline (LangGraph)
-One `StateGraph`, 9 nodes: `cache_check → retrieve → tool_call → image_tool → generate → verify → risk_check`, with `bump_retry`/`low_confidence` on the retry path.
+One `StateGraph`, 13 nodes: `preflight → scope_resolve → cache_check → retrieve → criteria_resolve → tool_call → criteria_diagnose → image_tool → generate → verify → risk_check`, with `bump_retry`/`low_confidence` on the retry path.
 
+- **preflight** — early exits (e.g. conversation-meta questions) before any retrieval.
+- **scope_resolve** — resolves project/topic scope for the question.
 - **cache_check** — semantic cache (Qdrant, cosine ≥ 0.95); skipped when there's conversation history or a personalization profile.
-- **retrieve** — Qdrant search + inventory-need detection.
-- **tool_call** — live inventory API.
+- **retrieve** — Qdrant search.
+- **criteria_resolve** — resolves search criteria and inventory-need detection.
+- **tool_call** — live inventory API; only reached when criteria_resolve determines inventory is needed.
+- **criteria_diagnose** — diagnoses/annotates the tool_call result before images are attached.
 - **image_tool** — runs *before* generate, so the model knows what photos will attach. Two strategies: uncapped when explicitly requested, capped at 3 with strict topic match when auto-attached.
 - **generate** — answer + citations + suggested follow-ups (+ quick-replies for customers), one Gemini call. Reads memory profile and reflection lessons from Redis.
 - **verify** — Faithfulness/Relevancy/Completeness (Gemini-as-judge). Rejections are distilled into a reflection lesson.
@@ -130,11 +141,12 @@ Verify is skipped for image-only answers, conversation-meta questions, and empty
 
 ```mermaid
 graph LR
-    START --> Cache{cache_check}
+    START --> Preflight
+    Preflight -->|continue| ScopeResolve --> Cache{cache_check}
     Cache -->|hit| END
-    Cache -->|miss| Retrieve
-    Retrieve -->|needs inventory| ToolCall --> ImageTool
-    Retrieve -->|no inventory| ImageTool
+    Cache -->|miss| Retrieve --> CriteriaResolve
+    CriteriaResolve -->|needs inventory| ToolCall --> CriteriaDiagnose --> ImageTool
+    CriteriaResolve -->|no inventory| ImageTool
     ImageTool --> Generate
     Generate -->|image/meta/empty| RiskCheck
     Generate --> Verify
@@ -175,13 +187,14 @@ Three complementary layers, none replacing the others:
 ## Data Flow
 1. Sale/Customer sends a question.
 2. Auth (JWT or visitor token) + role check; anonymous customers also pass rate-limit + 3 gates.
-3. `cache_check` — semantic cache hit answers immediately; skipped with history or a personalization profile.
-4. `retrieve` — Qdrant search; `tool_call` if live inventory is needed.
-5. `image_tool` — requested (uncapped) or auto-attached (capped at 3) photos.
-6. `generate` — Gemini answer + citations + suggested questions (+ quick-replies), informed by memory + reflection lessons.
-7. `verify` — score, one corrected retry max, decline if still low.
-8. `risk_check` — HITL flag for Sale; for customers, a risky answer never shows directly — it becomes a registration gate or a Sale handoff.
-9. Response returned; Verifier scores written to MySQL for the Admin dashboard; rejections feed reflection memory.
+3. `preflight` — early exit for conversation-meta questions; `scope_resolve` resolves project/topic scope.
+4. `cache_check` — semantic cache hit answers immediately; skipped with history or a personalization profile.
+5. `retrieve` — Qdrant search; `criteria_resolve` decides if live inventory is needed, then `tool_call` + `criteria_diagnose` if so.
+6. `image_tool` — requested (uncapped) or auto-attached (capped at 3) photos.
+7. `generate` — Gemini answer + citations + suggested questions (+ quick-replies), informed by memory + reflection lessons.
+8. `verify` — score, one corrected retry max, decline if still low.
+9. `risk_check` — HITL flag for Sale; for customers, a risky answer never shows directly — it becomes a registration gate or a Sale handoff.
+10. Response returned; Verifier scores written to MySQL for the Admin dashboard; rejections feed reflection memory.
 
 ## Deployment (local — Docker Compose)
 

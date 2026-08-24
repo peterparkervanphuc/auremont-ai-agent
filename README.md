@@ -200,6 +200,7 @@ P-110/
 ├── backend/
 │   ├── ai/                    # Prompt engineering, citations, intent classification
 │   ├── core/                  # Configuration, database engines, security, rate limiting
+│   ├── middleware/            # Request logging
 │   ├── models/                # SQLAlchemy ORM models (User, Session, Message, Audit)
 │   ├── schemas/               # Pydantic schemas for request/response serialization
 │   ├── repositories/          # Abstracted data-access layer (Session, Message, Document)
@@ -212,6 +213,7 @@ P-110/
 │   │   ├── reflection_memory.py # Self-correction lesson storage in Redis
 │   │   └── inventory_service.py # Live stock API client with slug mapping
 │   ├── routers/               # FastAPI route controllers (Auth, Sale, Customer, Admin, HITL)
+│   ├── utils/                 # Shared helpers (text, time)
 │   └── main.py                # Application entrypoint and lifespan management
 ├── frontend/                  # React 19 + Vite SPA (Sale, Admin, Customer interfaces)
 ├── migrations/                # Alembic database schema migrations
