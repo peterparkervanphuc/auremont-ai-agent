@@ -166,7 +166,11 @@ def test_prompt_keeps_unavailable_notice_when_lookup_cannot_resolve_a_project(mo
     prompt = prompts.build_prompt("Có căn nào 2 phòng ngủ?", [_policy_hit()], [], True, result["inventory_failed"])
 
     assert result["inventory_failed"] is True
-    assert "LIVE INVENTORY STATUS: unavailable" in prompt
+    assert "TỒN KHO THEO MÃ CĂN: chưa tra được" in prompt
+    assert "Không suy ra tình trạng còn/hết từ tài liệu dự án" in prompt
+    # A lookup that never ran says nothing about stock. Letting the model report it as
+    # sold out would send a customer away from a subdivision that is genuinely selling.
+    assert "không nói hay ngụ ý là đã hết căn" in prompt
 
 
 def test_internal_prompt_requires_every_requested_subject_to_be_answered():

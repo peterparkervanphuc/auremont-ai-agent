@@ -983,16 +983,48 @@ def build_prompt(
     sections.extend(_floor_plan_sections(floor_plan_towers_only=floor_plan_towers_only))
 
     if needs_inventory and inventory_failed:
+        # The old wording described the MECHANISM ("chưa có kết nối/mapping real-time"),
+        # and the model simply paraphrased it back to whoever was reading — a customer got
+        # "Catalogue chưa có trường cấp mã căn tồn kho real-time", which means nothing to
+        # them and reads as a broken system. "Không nói hệ thống lỗi" did not prevent it:
+        # the model does not classify a flat statement about data coverage as reporting a
+        # fault. So the mechanism is now named as something to WITHHOLD, and the wanted
+        # shape of the sentence is spelled out instead of left to inference.
+        #
+        # What must NOT change: silence about a unit's status can never become a claim
+        # about it. Absence of a lookup is not evidence of sold-out stock, and this is a
+        # sales tool — telling a customer a subdivision is gone when it is genuinely
+        # selling costs a real deal. Same reasoning as the zero-result rule in
+        # `_answer_rules`, which forbids "không có căn nào" on an empty live result.
+        withhold_and_never_deny = (
+            "TUYỆT ĐỐI không mô tả cơ chế tra cứu: không nhắc 'catalogue', 'mapping', "
+            "'real-time', 'trường dữ liệu', 'hệ thống', 'API' hay việc dữ liệu thiếu/chưa có. "
+            "Cũng TUYỆT ĐỐI không nói hay ngụ ý là đã hết căn, hết hàng, không còn căn nào, "
+            "hay dự án/phân khu này không còn bán — không tra được KHÔNG có nghĩa là hết hàng, "
+            "và nói vậy sẽ khiến khách bỏ đi khỏi một dự án đang mở bán. "
+            "Không khẳng định một mã căn cụ thể đang còn."
+        )
         if catalog_offer_context.strip():
             sections.append(
-                "TỒN KHO THEO MÃ CĂN: chưa có kết nối/mapping real-time đáng tin cậy cho đúng phạm vi đang hỏi. "
-                "Vẫn trả lời bằng BẢNG GIÁ CATALOGUE THAM KHẢO ở trên, ghi rõ đó là khoảng tham khảo; "
-                "không nói hệ thống lỗi và không khẳng định một mã căn cụ thể đang còn."
+                "TỒN KHO THEO MÃ CĂN: chưa tra được cho đúng phạm vi đang hỏi. "
+                + withhold_and_never_deny
+                + (
+                    " Mở đầu bằng khoảng giá/diện tích có trong BẢNG GIÁ CATALOGUE THAM KHẢO ở trên "
+                    "(ghi rõ là khoảng tham khảo), rồi kết bằng MỘT câu ngắn tự nhiên kiểu Sale hẹn "
+                    "xác nhận số căn trống cụ thể sau, ví dụ 'để em kiểm tra tình trạng căn trống của "
+                    "tòa BE1 và báo lại anh/chị ngay ạ'."
+                    if is_public
+                    else " Trả lời bằng BẢNG GIÁ CATALOGUE THAM KHẢO ở trên, ghi rõ đó là khoảng tham "
+                    "khảo, và nêu ngắn gọn rằng tình trạng từng căn cần xác nhận lại trước khi báo khách."
+                )
             )
         else:
             sections.append(
-                "LIVE INVENTORY STATUS: unavailable. Do not infer stock from project documents; "
-                "state that live inventory could not be checked."
+                "TỒN KHO THEO MÃ CĂN: chưa tra được, và cũng không có bảng giá tham khảo để thay thế. "
+                + withhold_and_never_deny
+                + " Không suy ra tình trạng còn/hết từ tài liệu dự án. Chỉ nói ngắn gọn rằng tình trạng "
+                "căn trống cần được xác nhận lại, rồi mời khách để lại nhu cầu (loại căn, ngân sách) "
+                "để được báo lại sớm."
             )
 
     if lessons.strip():
