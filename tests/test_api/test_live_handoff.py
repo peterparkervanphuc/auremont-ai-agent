@@ -16,12 +16,11 @@ from backend.main import app
 from backend.models.user import User
 from backend.repositories.chat_session import (
     claim_for_sale,
-    create_customer_session,
     enter_waiting_queue,
+    get_or_create_live_session,
     list_sessions_for_sale,
 )
 from backend.repositories.message import create_message
-from backend.schemas.customer import CustomerChatSessionCreate
 from backend.services import agent_pipeline
 from backend.services.agent_pipeline import PipelineResult
 
@@ -108,7 +107,7 @@ def stub_pipeline(monkeypatch):
 
 
 def test_claim_for_sale_is_race_safe(db_session, customer):
-    session = create_customer_session(db_session, customer_id=customer.id, schema=CustomerChatSessionCreate())
+    session = get_or_create_live_session(db_session, customer_id=customer.id)
     session.status = SessionStatus.WAITING_SALE
     db_session.commit()
 
@@ -131,7 +130,7 @@ def test_waiting_time_is_measured_from_the_handoff_not_session_creation(db_sessi
 
     from backend.utils.time import utcnow
 
-    session = create_customer_session(db_session, customer_id=customer.id, schema=CustomerChatSessionCreate())
+    session = get_or_create_live_session(db_session, customer_id=customer.id)
     # Simulate a session created long ago, chatting with the AI in the meantime.
     session.created_at = utcnow() - timedelta(hours=11)
     db_session.commit()
@@ -150,7 +149,7 @@ def test_waiting_time_is_measured_from_the_handoff_not_session_creation(db_sessi
 
 
 def test_claimed_customer_session_excluded_from_sale_self_consult_list(db_session, sale, customer):
-    session = create_customer_session(db_session, customer_id=customer.id, schema=CustomerChatSessionCreate())
+    session = get_or_create_live_session(db_session, customer_id=customer.id)
     session.status = SessionStatus.WAITING_SALE
     db_session.commit()
     claim_for_sale(db_session, session.id, sale_id=sale.id)
@@ -163,7 +162,7 @@ def test_sale_chat_rejects_a_claimed_customer_session(as_sale, sale, db_session,
     """`sale_chat.py`'s AI-consult endpoint must 404 on a session it doesn't own the normal
     way, even though `sale_id` matches after a claim — routing through it would call the AI
     pipeline mid-handoff. See `_owned_session`'s updated guard in routers/sale_chat.py."""
-    session = create_customer_session(db_session, customer_id=customer.id, schema=CustomerChatSessionCreate())
+    session = get_or_create_live_session(db_session, customer_id=customer.id)
     session.status = SessionStatus.WAITING_SALE
     db_session.commit()
     claim_for_sale(db_session, session.id, sale_id=sale.id)
@@ -174,14 +173,21 @@ def test_sale_chat_rejects_a_claimed_customer_session(as_sale, sale, db_session,
 
 
 def test_full_handoff_flow(as_customer, as_sale, sale, other_sale, customer, stub_pipeline):
+    """The AI thread and the live-Sale thread are separate sessions: asking for a human
+    queues the live one, and the Sale only ever sees that one."""
     customer_client = as_customer(customer)
 
-    session_id = customer_client.post("/api/v1/customer/sessions", json={}).json()["id"]
+    ai_session_id = customer_client.post("/api/v1/customer/sessions", json={}).json()["id"]
+
+    # Something the customer said to the AI, before any handoff — the Sale must never see it.
+    customer_client.post(
+        f"/api/v1/customer/sessions/{ai_session_id}/messages", json={"content": "Ngân sách của tôi là 2 tỷ"}
+    )
 
     # An explicit request for a person triggers handoff. Price/floor-plan questions stay
     # in self-service and are covered separately by test_customer_hitl_gate.py.
     handoff = customer_client.post(
-        f"/api/v1/customer/sessions/{session_id}/messages",
+        f"/api/v1/customer/sessions/{ai_session_id}/messages",
         json={"content": "Tôi muốn gặp chuyên viên tư vấn"},
     )
     assert handoff.status_code == 201, handoff.text
@@ -189,21 +195,20 @@ def test_full_handoff_flow(as_customer, as_sale, sale, other_sale, customer, stu
     assert body["status"] == "waiting_sale"
     assert body["sender"] == "agent"
 
-    # The AI must not answer again once handed off — the endpoint returns null.
-    silent = customer_client.post(f"/api/v1/customer/sessions/{session_id}/messages", json={"content": "còn không ạ?"})
-    assert silent.status_code == 201
-    assert silent.json() is None
+    # The handoff went to a DIFFERENT session — the customer's live thread.
+    live_session_id = customer_client.get("/api/v1/customer/sessions/live").json()["id"]
+    assert live_session_id != ai_session_id
 
-    # Sale A sees it in the queue, claims it; Sale B is too late.
+    # Sale A sees the LIVE session in the queue (never the AI one), claims it; Sale B is late.
     sale_a_client = as_sale(sale)
     inbox = sale_a_client.get("/api/v1/sale/live-inbox").json()
-    assert [row["session_id"] for row in inbox] == [session_id]
+    assert [row["session_id"] for row in inbox] == [live_session_id]
 
-    claimed = sale_a_client.post(f"/api/v1/sale/live-inbox/{session_id}/claim")
+    claimed = sale_a_client.post(f"/api/v1/sale/live-inbox/{live_session_id}/claim")
     assert claimed.status_code == 200, claimed.text
 
     sale_b_client = as_sale(other_sale)
-    assert sale_b_client.post(f"/api/v1/sale/live-inbox/{session_id}/claim").status_code == 409
+    assert sale_b_client.post(f"/api/v1/sale/live-inbox/{live_session_id}/claim").status_code == 409
 
     # `app.dependency_overrides` is shared app-global state, not per-TestClient — logging
     # in as Sale B above just overwrote it, so Sale A has to "log back in" before acting again.
@@ -213,44 +218,48 @@ def test_full_handoff_flow(as_customer, as_sale, sale, other_sale, customer, stu
     # Sale A can find it again under "mine" after navigating away or logging back in.
     assert sale_a_client.get("/api/v1/sale/live-inbox").json() == []
     mine = sale_a_client.get("/api/v1/sale/live-inbox/mine").json()
-    assert [row["session_id"] for row in mine] == [session_id]
+    assert [row["session_id"] for row in mine] == [live_session_id]
 
-    # Sale A reads the full AI-era history and replies directly — no pipeline call.
-    history = sale_a_client.get(f"/api/v1/sale/live-inbox/{session_id}/messages").json()
-    assert [m["sender"] for m in history] == ["customer", "agent", "customer"]
+    # The whole point: the AI conversation is not reachable by the Sale at all.
+    assert sale_a_client.get(f"/api/v1/sale/live-inbox/{ai_session_id}/messages").status_code == 404
+    assert sale_a_client.post(f"/api/v1/sale/live-inbox/{ai_session_id}/claim").status_code in (404, 409)
+
+    live_history = sale_a_client.get(f"/api/v1/sale/live-inbox/{live_session_id}/messages").json()
+    assert all("Ngân sách" not in m["content"] for m in live_history)
 
     reply = sale_a_client.post(
-        f"/api/v1/sale/live-inbox/{session_id}/reply", json={"content": "Chào anh/chị, em là Sale hỗ trợ ạ."}
+        f"/api/v1/sale/live-inbox/{live_session_id}/reply", json={"content": "Chào anh/chị, em là Sale hỗ trợ ạ."}
     )
     assert reply.status_code == 201, reply.text
     assert reply.json()["sender"] == "sale"
 
-    # The customer's next message is still stored, still no AI reply.
+    # The customer reads that reply on the live thread, which reports the live status.
+    status_check = customer_client.get(f"/api/v1/customer/sessions/{live_session_id}")
+    assert status_check.json()["status"] == "sale_handling"
+    messages = customer_client.get(f"/api/v1/customer/sessions/{live_session_id}/messages").json()
+    assert any("Chào anh/chị" in m["content"] for m in messages)
+
+    # Their message on the live thread is stored for the Sale, with no AI reply.
     after_reply = customer_client.post(
-        f"/api/v1/customer/sessions/{session_id}/messages", json={"content": "Dạ em cảm ơn"}
+        f"/api/v1/customer/sessions/{live_session_id}/messages", json={"content": "Dạ em cảm ơn"}
     )
     assert after_reply.json() is None
 
-    # The customer's poll endpoint picks up the Sale's reply and the live status.
-    status_check = customer_client.get(f"/api/v1/customer/sessions/{session_id}")
-    assert status_check.json()["status"] == "sale_handling"
-    messages = customer_client.get(f"/api/v1/customer/sessions/{session_id}/messages").json()
-    assert "Chào anh/chị" in messages[-2]["content"]
+    # Meanwhile the AI thread keeps working — it was never handed over, so it never went
+    # silent. Two independent conversations is exactly the intended model.
+    still_ai = customer_client.post(
+        f"/api/v1/customer/sessions/{ai_session_id}/messages", json={"content": "Dự án có tiện ích gì?"}
+    )
+    assert still_ai.json() is not None
+    assert still_ai.json()["status"] == "bot_handling"
 
-    # Sale ends the live chat -> the session goes back to the AI and drops off Sale A's "mine" list.
-    ended = sale_a_client.post(f"/api/v1/sale/live-inbox/{session_id}/end")
+    # Sale ends the live chat -> that thread goes back to bot_handling and drops off "mine".
+    ended = sale_a_client.post(f"/api/v1/sale/live-inbox/{live_session_id}/end")
     assert ended.status_code == 201, ended.text
     assert sale_a_client.get("/api/v1/sale/live-inbox/mine").json() == []
 
-    status_after_end = customer_client.get(f"/api/v1/customer/sessions/{session_id}")
+    status_after_end = customer_client.get(f"/api/v1/customer/sessions/{live_session_id}")
     assert status_after_end.json()["status"] == "bot_handling"
-
-    # The AI answers normally again — no more silent `null` replies.
-    resumed = customer_client.post(
-        f"/api/v1/customer/sessions/{session_id}/messages", json={"content": "Dự án có tiện ích gì?"}
-    )
-    assert resumed.json() is not None
-    assert resumed.json()["status"] == "bot_handling"
 
 
 def test_customer_can_self_service_return_to_ai_while_waiting(as_customer, customer, db_session):
@@ -297,7 +306,7 @@ def test_anonymous_visitor_asking_for_a_human_stays_in_self_service(db_session, 
 
 def _claimed_live_session(db, sale, customer, question: str):
     """A session a Sale has taken over, holding one customer question to answer."""
-    session = create_customer_session(db, customer_id=customer.id, schema=CustomerChatSessionCreate())
+    session = get_or_create_live_session(db, customer_id=customer.id)
     enter_waiting_queue(db, session)
     claim_for_sale(db, session.id, sale_id=sale.id)
     create_message(db, session.id, sender=MessageSender.CUSTOMER, content=question)

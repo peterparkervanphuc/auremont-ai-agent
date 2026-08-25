@@ -21,7 +21,9 @@ from backend.repositories.chat_session import (
     create_anonymous_session,
     delete_session,
     enter_waiting_queue,
+    get_live_session_for_customer,
     get_or_create_customer_session,
+    get_or_create_live_session,
     get_session,
     list_sessions_for_customer,
     return_to_bot,
@@ -192,6 +194,18 @@ async def list_customer_chat_sessions(
     return list_sessions_for_customer(db, customer_id=user.id)
 
 
+@router.get("/sessions/live", response_model=CustomerChatSessionResponse | None)
+async def get_my_live_session(
+    db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.CUSTOMER))
+) -> ChatSession | None:
+    """The customer's live-Sale conversation, or null if they have never requested one.
+
+    Declared before `/sessions/{session_id}` so the literal path wins over the int
+    converter. The customer chat page polls this to know when a Sale has picked them up.
+    """
+    return get_live_session_for_customer(db, user.id)
+
+
 @router.get("/sessions/{session_id}", response_model=CustomerChatSessionResponse)
 async def get_customer_chat_session(
     session_id: int,
@@ -304,8 +318,16 @@ async def ask_in_customer_session(
         answer_text = _TURN_LIMIT_MESSAGE
         verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
     elif not is_anonymous and needs_human_handoff(payload.content):
+        # Queue the customer's SEPARATE live session, exactly as the "Gặp chuyên viên tư vấn"
+        # button does (`request_human`). This AI session stays BOT_HANDLING and is never
+        # handed to a Sale, so asking for a human in words leaks no more history than
+        # clicking the button does. `new_status` still reports WAITING_SALE so the caller
+        # sees the handoff was accepted.
+        assert session.customer_id is not None  # not is_anonymous
+        live = get_or_create_live_session(db, session.customer_id, project_id=session.project_id)
         new_status = SessionStatus.WAITING_SALE
-        enter_waiting_queue(db, session)
+        if live.status == SessionStatus.BOT_HANDLING:
+            enter_waiting_queue(db, live)
         answer_text = _HANDOFF_DIRECT_REQUEST_MESSAGE if wants_human_agent(payload.content) else _HANDOFF_NOTICE_MESSAGE
         verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
     else:
@@ -399,39 +421,46 @@ async def request_human(
     """The "Gặp chuyên viên tư vấn" button — logged-in customers only, no dual-auth: an
     anonymous visitor never sees this button (see `wants_human_agent` handling in
     `ask_in_customer_session` for their equivalent, which routes into the registration gate
-    instead of a real handoff)."""
-    session = get_session(db, session_id)
-    session = _resolve_customer_asker(db, session, user, None)
+    instead of a real handoff).
 
-    if session.status == SessionStatus.BOT_HANDLING:
-        enter_waiting_queue(db, session)
+    `session_id` names the customer's AI session (the page they clicked from), but the
+    handoff is queued on their separate LIVE session — the only row a Sale is ever handed.
+    The AI conversation stays BOT_HANDLING throughout and is never exposed to the Sale.
+    """
+    session = get_session(db, session_id)
+    _resolve_customer_asker(db, session, user, None)
+
+    live = get_or_create_live_session(db, user.id, project_id=session.project_id if session else None)
+
+    if live.status == SessionStatus.BOT_HANDLING:
+        enter_waiting_queue(db, live)
         message = create_message(
             db,
-            session_id,
+            live.id,
             sender=MessageSender.AGENT,
             content=_HANDOFF_DIRECT_REQUEST_MESSAGE,
             emotion=MessageEmotion.RESPECTFUL,
         )
-        log_event("customer.handoff.requested", session_id=session_id, customer_id=user.id)
+        log_event("customer.handoff.requested", session_id=live.id, customer_id=user.id)
     else:
         # Already waiting or already live — no-op. Re-show the handoff notice rather than
         # whatever the customer said most recently, so this button always gets a
         # consistent, assistant-authored response back regardless of how many times it's
         # clicked.
         prior_notice = next(
-            (m for m in reversed(list_messages_for_session(db, session_id)) if m.sender != MessageSender.CUSTOMER),
+            (m for m in reversed(list_messages_for_session(db, live.id)) if m.sender != MessageSender.CUSTOMER),
             None,
         )
         message = prior_notice or create_message(
             db,
-            session_id,
+            live.id,
             sender=MessageSender.AGENT,
             content=_HANDOFF_DIRECT_REQUEST_MESSAGE,
             emotion=MessageEmotion.RESPECTFUL,
         )
 
     response = CustomerAskResponse.model_validate(message)
-    response.status = SessionStatus(session.status)
+    response.status = SessionStatus(live.status)
     return response
 
 

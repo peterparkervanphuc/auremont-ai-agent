@@ -30,7 +30,7 @@ export function Footer() {
               cross-page navigation, not a same-page click). */}
           <Link to={`${homeHref}#tra-cuu-du-an`}>Tra cứu dự án</Link>
           <Link to="/chat">Chat với Auremont AI</Link>
-          <Link to="/chat">Nhắn tin với chuyên viên tư vấn</Link>
+          <Link to="/chat/tu-van">Nhắn tin với chuyên viên tư vấn</Link>
         </div>
 
         <div className="site-footer-col">

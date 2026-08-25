@@ -304,17 +304,14 @@ export function TopNavbar() {
                   <ChevronRightIcon size={12} className="topnav-caret" />
                 </NavLink>
                 <div className={`topnav-dropdown ${openDropdown === "chat" ? "topnav-dropdown--open" : ""}`}>
-                  <NavLink to="/chat" onClick={() => setOpenDropdown(null)} className="topnav-dropdown-item">
+                  <NavLink to="/chat" end onClick={() => setOpenDropdown(null)} className="topnav-dropdown-item">
                     Chat với Auremont AI
                   </NavLink>
-                  {/* Prefills the question instead of auto-sending: works the same for an
-                      anonymous visitor (routes into the register gate, same as typing it
-                      themselves) and a logged-in customer (triggers the real handoff via
-                      `wants_human_agent` matching "gặp chuyên viên") without a separate
-                      unauthenticated-safe endpoint to wire up here. */}
+                  {/* Its own page (/chat/tu-van), not a prefill into the AI chat: opening it
+                      requests the handoff directly. An anonymous visitor still lands on the
+                      register gate there, same as before. */}
                   <NavLink
-                    to="/chat"
-                    state={{ prefill: "Tôi muốn gặp chuyên viên tư vấn" }}
+                    to="/chat/tu-van"
                     onClick={() => setOpenDropdown(null)}
                     className="topnav-dropdown-item"
                   >
@@ -453,6 +450,7 @@ export function TopNavbar() {
                   </span>
                   <NavLink
                     to="/chat"
+                    end
                     onClick={() => setMobileOpen(false)}
                     className={({ isActive }) =>
                       `topnav-link topnav-mobile-sublink ${isActive ? "topnav-link--active" : ""}`
@@ -461,8 +459,7 @@ export function TopNavbar() {
                     Chat với Auremont AI
                   </NavLink>
                   <NavLink
-                    to="/chat"
-                    state={{ prefill: "Tôi muốn gặp chuyên viên tư vấn" }}
+                    to="/chat/tu-van"
                     onClick={() => setMobileOpen(false)}
                     className={({ isActive }) =>
                       `topnav-link topnav-mobile-sublink ${isActive ? "topnav-link--active" : ""}`

@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from backend.core.enums import SessionStatus
+from backend.core.enums import SessionChannel, SessionStatus
 from backend.core.mysql_client import Base
 from backend.utils.time import utcnow
 
@@ -20,7 +20,8 @@ class ChatSession(Base):
       - Registered customer session, not yet claimed by a Sale: `customer_id` set (once
         claimed from anonymous, or created directly while logged in), the other two NULL.
       - Registered customer session claimed by a Sale (live handoff, `status=SALE_HANDLING`):
-        BOTH `customer_id` and `sale_id` set, `visitor_token` NULL. Code paths that list a
+        BOTH `customer_id` and `sale_id` set, `visitor_token` NULL, and `channel=LIVE` — a
+        distinct row from that customer's `channel=AI` conversation, which the Sale never sees. Code paths that list a
         Sale's own AI-consult sessions (`list_sessions_for_sale`) or resolve their ownership
         (`sale_chat._owned_session`) must exclude rows with `customer_id` set, or a claimed
         customer session leaks into the Sale's unrelated self-consult session list/access.
@@ -40,6 +41,12 @@ class ChatSession(Base):
     sale_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
     status: Mapped[str] = mapped_column(String(20), default=SessionStatus.BOT_HANDLING, nullable=False)
+
+    # Which conversation this row holds for a customer: the AI thread or the live-Sale
+    # thread. They are separate rows so a Sale physically cannot read the AI history — the
+    # live-inbox and `sale_live` endpoints only ever resolve a LIVE row. Sale-authored
+    # self-consult sessions keep the AI default, which nothing reads it for.
+    channel: Mapped[str] = mapped_column(String(10), default=SessionChannel.AI, nullable=False, index=True)
 
     # Stamped the moment `status` becomes WAITING_SALE (see repositories/chat_session.py::
     # enter_waiting_queue), cleared on claim/return-to-bot. Deliberately NOT the same as

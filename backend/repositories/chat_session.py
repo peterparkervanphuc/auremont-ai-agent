@@ -4,7 +4,7 @@ from sqlalchemy import update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
-from backend.core.enums import SessionStatus
+from backend.core.enums import SessionChannel, SessionStatus
 from backend.models.chat_session import ChatSession
 from backend.models.message import Message
 from backend.models.user import User
@@ -69,7 +69,7 @@ def delete_session(db: Session, session_id: int) -> None:
 def create_anonymous_session(db: Session, visitor_token: str, project_id: str | None = None) -> ChatSession:
     """A public-chat session with no account behind it yet — see ChatSession's docstring
     for the sale_id/customer_id/visitor_token ownership invariant."""
-    session = ChatSession(visitor_token=visitor_token, project_id=project_id)
+    session = ChatSession(visitor_token=visitor_token, project_id=project_id, channel=SessionChannel.AI)
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -83,7 +83,9 @@ def create_customer_session(db: Session, customer_id: int, schema: CustomerChatS
     API code must use `get_or_create_customer_session`, which enforces one continuing
     session per customer.
     """
-    session = ChatSession(customer_id=customer_id, title=schema.title, project_id=schema.project_id)
+    session = ChatSession(
+        customer_id=customer_id, title=schema.title, project_id=schema.project_id, channel=SessionChannel.AI
+    )
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -91,12 +93,42 @@ def create_customer_session(db: Session, customer_id: int, schema: CustomerChatS
 
 
 def get_latest_customer_session(db: Session, customer_id: int) -> ChatSession | None:
+    """The customer's AI conversation. Scoped to `channel=AI` on purpose: their live-Sale
+    thread is a separate row, and the customer-facing AI page must never resume into it."""
     return (
         db.query(ChatSession)
-        .filter(ChatSession.customer_id == customer_id)
+        .filter(ChatSession.customer_id == customer_id, ChatSession.channel == SessionChannel.AI)
         .order_by(ChatSession.created_at.desc(), ChatSession.id.desc())
         .first()
     )
+
+
+def get_live_session_for_customer(db: Session, customer_id: int) -> ChatSession | None:
+    """The customer's live-Sale conversation, if one exists — the only row a Sale is ever
+    handed for this customer."""
+    return (
+        db.query(ChatSession)
+        .filter(ChatSession.customer_id == customer_id, ChatSession.channel == SessionChannel.LIVE)
+        .order_by(ChatSession.created_at.desc(), ChatSession.id.desc())
+        .first()
+    )
+
+
+def get_or_create_live_session(db: Session, customer_id: int, project_id: str | None = None) -> ChatSession:
+    """The customer's live-Sale conversation, created empty on first request.
+
+    Locks the owner row for the same reason `get_or_create_customer_session` does: two tabs
+    both hitting "gặp chuyên viên" at once must not create two queue entries.
+    """
+    db.query(User).filter(User.id == customer_id).with_for_update().one()
+    existing = get_live_session_for_customer(db, customer_id)
+    if existing is not None:
+        return existing
+    session = ChatSession(customer_id=customer_id, channel=SessionChannel.LIVE, project_id=project_id)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
 
 
 def get_or_create_customer_session(db: Session, customer_id: int, schema: CustomerChatSessionCreate) -> ChatSession:
@@ -187,7 +219,7 @@ def list_waiting_sessions(db: Session) -> list[ChatSession]:
     wait first (FIFO)."""
     return (
         db.query(ChatSession)
-        .filter(ChatSession.status == SessionStatus.WAITING_SALE)
+        .filter(ChatSession.status == SessionStatus.WAITING_SALE, ChatSession.channel == SessionChannel.LIVE)
         .order_by(ChatSession.handoff_requested_at.asc())
         .all()
     )
@@ -202,7 +234,11 @@ def list_sessions_handled_by_sale(db: Session, sale_id: int) -> list[ChatSession
     """
     return (
         db.query(ChatSession)
-        .filter(ChatSession.sale_id == sale_id, ChatSession.status == SessionStatus.SALE_HANDLING)
+        .filter(
+            ChatSession.sale_id == sale_id,
+            ChatSession.status == SessionStatus.SALE_HANDLING,
+            ChatSession.channel == SessionChannel.LIVE,
+        )
         .order_by(ChatSession.created_at.desc())
         .all()
     )
@@ -224,7 +260,13 @@ def claim_for_sale(db: Session, session_id: int, sale_id: int) -> ChatSession | 
         CursorResult,
         db.execute(
             update(ChatSession)
-            .where(ChatSession.id == session_id, ChatSession.status == SessionStatus.WAITING_SALE)
+            .where(
+                ChatSession.id == session_id,
+                ChatSession.status == SessionStatus.WAITING_SALE,
+                # A Sale can only ever be handed a LIVE row; an AI conversation is not
+                # claimable even if some caller passes its id.
+                ChatSession.channel == SessionChannel.LIVE,
+            )
             .values(sale_id=sale_id, status=SessionStatus.SALE_HANDLING)
         ),
     )

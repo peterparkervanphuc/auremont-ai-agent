@@ -60,6 +60,18 @@ class SessionStatus(StrEnum):
     SALE_HANDLING = "sale_handling"
 
 
+class SessionChannel(StrEnum):
+    """Which conversation a customer session holds. A customer has at most one of each, and
+    they are deliberately separate rows rather than one thread split by a timestamp: a Sale
+    is never shown the AI conversation (`GET /sale-live/{id}/messages` can only ever read the
+    session it was handed), so the isolation survives any future endpoint that forgets to
+    filter. See ChatSession's docstring.
+    """
+
+    AI = "ai"
+    LIVE = "live"
+
+
 class HitlStatus(StrEnum):
     PENDING = "pending"
     CONFIRMED = "confirmed"

@@ -42,13 +42,21 @@ function HomeRoute() {
  * anonymous visitor must reach it without ever hitting a login redirect. */
 function ChatRoute() {
   const { isAuthenticated, role } = useAuth();
+  const { pathname } = useLocation();
 
   if (isAuthenticated && role === "admin") return <Navigate to="/home" replace />;
+
+  // Two separate pages rather than one page with a toggle: /chat is the AI assistant and
+  // /chat/tu-van is the live consultant, matching the two nav dropdown items. Sale keeps
+  // its own consultation UI on /chat regardless of the sub-path.
+  const isHumanChat = pathname.startsWith("/chat/tu-van");
 
   return (
     <div className="app-shell">
       <TopNavbar />
-      <div className="app-content">{role === "sale" ? <SalePage /> : <CustomerChatPage />}</div>
+      <div className="app-content">
+        {role === "sale" ? <SalePage /> : <CustomerChatPage mode={isHumanChat ? "human" : "ai"} />}
+      </div>
     </div>
   );
 }

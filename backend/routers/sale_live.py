@@ -12,13 +12,14 @@ from sqlalchemy.orm import Session
 
 from backend.core.audit import log_event, truncate
 from backend.core.deps import require_role
-from backend.core.enums import DocumentVisibility, MessageSender, SessionStatus, UserRole
+from backend.core.enums import DocumentVisibility, MessageSender, SessionChannel, SessionStatus, UserRole
 from backend.core.mysql_client import get_db
 from backend.models.chat_session import ChatSession
 from backend.models.message import Message
 from backend.models.user import User
 from backend.repositories.chat_session import (
     claim_for_sale,
+    get_latest_customer_session,
     get_session,
     list_sessions_handled_by_sale,
     list_waiting_sessions,
@@ -50,9 +51,19 @@ def _customer_label(db: Session, session: ChatSession) -> str:
 
 def _owned_live_session(db: Session, session_id: int, user: User) -> ChatSession:
     """404 unless this Sale is the one who claimed this session — same "don't reveal which
-    ids exist" posture as `sale_chat._owned_session`."""
+    ids exist" posture as `sale_chat._owned_session`.
+
+    The `channel == LIVE` check is the second lock on customer privacy: a Sale is never
+    shown the customer's AI conversation, and every read/write in this router goes through
+    here, so passing an AI session's id gets the same 404 as an id that doesn't exist.
+    """
     session = get_session(db, session_id)
-    if session is None or session.sale_id != user.id or session.customer_id is None:
+    if (
+        session is None
+        or session.sale_id != user.id
+        or session.customer_id is None
+        or session.channel != SessionChannel.LIVE
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return session
 
@@ -156,10 +167,18 @@ async def suggest(
     if last_customer_message is None:
         return SaleSuggestResponse(draft="")
 
+    # The customer's AI conversation is a separate session the Sale cannot open (see
+    # `_owned_live_session`), but the draft is written by the pipeline, not read by the
+    # Sale, so it still gets that context to avoid asking things the customer already
+    # answered. Only this generated draft crosses over — and the Sale edits it before it is
+    # ever sent, so nothing is disclosed that they don't choose to say themselves.
+    ai_session = get_latest_customer_session(db, session.customer_id) if session.customer_id else None
+    prior = list_messages_for_session(db, ai_session.id) if ai_session else []
+
     # Everything except the message being used as the query itself — same "history is
     # what came before" contract as customer_chat.py/sale_chat.py, just sliced out of an
     # already-fetched list here instead of fetched separately before persisting a new one.
-    history = history_for_pipeline([m for m in messages if m is not last_customer_message])
+    history = history_for_pipeline([*prior, *(m for m in messages if m is not last_customer_message)])
     result = agent_pipeline.run_pipeline(
         last_customer_message.content,
         project_id=session.project_id,

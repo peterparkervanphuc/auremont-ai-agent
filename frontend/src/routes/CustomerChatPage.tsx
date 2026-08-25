@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { customerApi } from "../api/customerChat";
 import { clearVisitorSession, getVisitorSession, setVisitorSession } from "../hooks/useVisitorToken";
 import { useAuth } from "../hooks/useAuth";
@@ -42,13 +42,23 @@ const LIVE_POLL_INTERVAL_MS = 4000;
  * ChatWindow.tsx: it drops HitlCard entirely (the customer IS the one reading the answer
  * directly, so there is no second human to relay it to and confirm), and manages a single
  * continuous session per visitor/account rather than Sale's multi-session sidebar. */
-export function CustomerChatPage() {
+export type CustomerChatMode = "ai" | "human";
+
+export function CustomerChatPage({ mode = "ai" }: { mode?: CustomerChatMode } = {}) {
   const { isAuthenticated, role } = useAuth();
   const isCustomer = isAuthenticated && role === "customer";
   const location = useLocation();
+  const navigate = useNavigate();
+  // /chat/tu-van renders this same page in "human" mode: same session and history, but it
+  // opens the handoff itself instead of waiting for the customer to ask the AI for one.
+  const isHumanMode = mode === "human";
 
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("bot_handling");
+  // Status of the customer's SEPARATE live-Sale session, tracked only on the AI page so its
+  // "Gặp chuyên viên tư vấn" button knows whether a Sale has picked them up yet. On
+  // /chat/tu-van that session IS `sessionStatus`, so this stays unused there.
+  const [liveStatus, setLiveStatus] = useState<SessionStatus | null>(null);
   const [messages, setMessages] = useState<MessageResponse[]>([]);
   // "Đặt lịch xem nhà" (ProjectOverviewPage.tsx) and the "Chat với chuyên viên tư vấn"
   // nav dropdown item (TopNavbar.tsx) both hand off here with a prefilled question via
@@ -93,7 +103,13 @@ export function CustomerChatPage() {
       try {
         let id: number | null = null;
 
-        if (isCustomer) {
+        if (isCustomer && isHumanMode) {
+          // The live-Sale conversation is its own session — never the AI one, which a Sale
+          // is never handed. Null until they first ask for a human; requestHuman creates it.
+          const live = await customerApi.get<CustomerChatSessionResponse | null>("/customer/sessions/live");
+          id = live?.id ?? null;
+          if (id && !cancelled) setSessionStatus(live!.status);
+        } else if (isCustomer) {
           const sessions = await customerApi.get<CustomerChatSessionResponse[]>("/customer/sessions");
           id = sessions[0]?.id ?? null;
           if (id && !cancelled) setSessionStatus(sessions[0].status);
@@ -131,7 +147,7 @@ export function CustomerChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [isCustomer]);
+  }, [isCustomer, isHumanMode]);
 
   // Once a Sale is involved (or the customer is waiting for one), the AI stops replying
   // synchronously — poll for the status flip and the Sale's messages instead. Stopped as
@@ -155,6 +171,44 @@ export function CustomerChatPage() {
     const interval = setInterval(poll, LIVE_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [sessionId, sessionStatus]);
+
+  // Initial read so a customer returning to /chat after a Sale claimed them sees the
+  // "vào chat với chuyên viên" button immediately, without waiting for a poll tick.
+  useEffect(() => {
+    if (isHumanMode || !isCustomer) return;
+    let cancelled = false;
+    customerApi
+      .get<CustomerChatSessionResponse | null>("/customer/sessions/live")
+      .then((live) => {
+        if (!cancelled && live) setLiveStatus(live.status);
+      })
+      .catch(() => {
+        // No live session yet, or a transient failure — the button just stays in its
+        // default "request a handoff" state, which is the correct fallback.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isHumanMode, isCustomer]);
+
+  // The AI page watches the live session it queued so the button can flip to "vào chat"
+  // the moment a Sale claims it. Only polls while a handoff is actually pending — before
+  // the first request there is nothing to watch, and once sale_handling it stops.
+  useEffect(() => {
+    if (isHumanMode || !isCustomer || liveStatus !== "waiting_sale") return;
+
+    const poll = async () => {
+      try {
+        const live = await customerApi.get<CustomerChatSessionResponse | null>("/customer/sessions/live");
+        if (live) setLiveStatus(live.status);
+      } catch {
+        // Transient failure — the next tick tries again.
+      }
+    };
+
+    const interval = setInterval(poll, LIVE_POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [isHumanMode, isCustomer, liveStatus]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -243,20 +297,51 @@ export function CustomerChatPage() {
 
   const requestHuman = useCallback(async () => {
     if (requestingHuman) return;
+    // Already claimed by a Sale: that conversation is a different session living on
+    // /chat/tu-van, so the button is a way in rather than a second request.
+    if (liveStatus === "sale_handling") {
+      navigate("/chat/tu-van");
+      return;
+    }
     setRequestingHuman(true);
     setError(null);
     setJustReturnedToAi(false);
     try {
       const id = await ensureSession();
+      // Queues the customer's separate LIVE session; this AI session stays bot_handling, so
+      // the reply's status describes the handoff, not the page we are on.
       const reply = await customerApi.post<CustomerAskResponse>(`/customer/sessions/${id}/request-human`);
-      setMessages((prev) => [...prev, reply]);
-      setSessionStatus(reply.status);
+      setLiveStatus(reply.status);
+      // A Sale who was already free can claim the queue entry before this response comes
+      // back; go straight through in that case instead of making the customer click again.
+      if (reply.status === "sale_handling") navigate("/chat/tu-van");
     } catch {
       setError("Tạm thời không kết nối được chuyên viên — vui lòng thử lại.");
     } finally {
       setRequestingHuman(false);
     }
-  }, [requestingHuman, ensureSession]);
+  }, [requestingHuman, ensureSession, liveStatus, navigate]);
+
+  // Opening /chat/tu-van IS the request — the customer already chose "Chat với chuyên viên
+  // tư vấn", so making them click a second button here would just repeat that choice. Waits
+  // for the resume effect to settle (historyLoading) so this reads the real session status
+  // and no-ops when a handoff is already under way. Anonymous visitors are excluded: the
+  // endpoint is CUSTOMER-only, they get the register gate below instead.
+  const autoRequestedRef = useRef(false);
+  useEffect(() => {
+    if (!isHumanMode || historyLoading) return;
+    // An anonymous visitor cannot be handed to a Sale at all (the endpoint is CUSTOMER-only),
+    // so ask them to register up front rather than leaving them on a chat box whose whole
+    // point they cannot reach. Same gate copy the AI path shows for a "human_request".
+    if (!isCustomer) {
+      setGate("human_request");
+      return;
+    }
+    if (autoRequestedRef.current) return;
+    if (sessionStatus !== "bot_handling") return;
+    autoRequestedRef.current = true;
+    void requestHuman();
+  }, [isHumanMode, isCustomer, historyLoading, sessionStatus, requestHuman]);
 
   const returnToAi = useCallback(async () => {
     if (!sessionId || returningToAi) return;
@@ -266,6 +351,13 @@ export function CustomerChatPage() {
       const reply = await customerApi.post<CustomerAskResponse>(`/customer/sessions/${sessionId}/return-to-ai`);
       setMessages((prev) => [...prev, reply]);
       setSessionStatus(reply.status);
+      // In human mode the AI conversation lives on its own page now, so "quay lại chat với
+      // AI" means going there rather than re-labelling this one — otherwise the auto-request
+      // effect above would just re-open the handoff the customer only asked to leave.
+      if (isHumanMode) {
+        navigate("/chat");
+        return;
+      }
       // Give an immediate way back in case that click was a mistake — see the banner
       // rendered below, cleared once the customer sends a message or re-requests a Sale.
       setJustReturnedToAi(true);
@@ -274,7 +366,7 @@ export function CustomerChatPage() {
     } finally {
       setReturningToAi(false);
     }
-  }, [sessionId, returningToAi]);
+  }, [sessionId, returningToAi, isHumanMode, navigate]);
 
   const clearHistory = useCallback(async () => {
     if (!sessionId || clearingHistory || messages.length === 0) return;
@@ -340,14 +432,13 @@ export function CustomerChatPage() {
 
   const ready = Boolean(input.trim()) && !loading;
   const visitor = getVisitorSession();
-  const isLive = sessionStatus !== "bot_handling";
 
   return (
     <div className="chat-page chat-page--standalone">
       <header className="chat-topbar">
         <div className="chat-topbar-info">
           <div className="chat-topbar-icon">
-            {sessionStatus === "sale_handling" ? (
+            {isHumanMode || sessionStatus === "sale_handling" ? (
               <UsersIcon size={20} />
             ) : (
               <AuremontAvatar size={26} emotion={sessionStatus === "waiting_sale" ? "thinking" : "idle"} variant="face" />
@@ -355,7 +446,7 @@ export function CustomerChatPage() {
           </div>
           <div>
             <div className="chat-topbar-name">
-              {sessionStatus === "sale_handling" ? "Chuyên viên tư vấn" : "Trợ lý tư vấn Auremont"}
+              {isHumanMode || sessionStatus === "sale_handling" ? "Chuyên viên tư vấn" : "Trợ lý tư vấn Auremont"}
             </div>
             <div className="chat-topbar-status">
               <span className="chat-status-dot" />
@@ -363,16 +454,22 @@ export function CustomerChatPage() {
                 ? "Đang kết nối chuyên viên..."
                 : sessionStatus === "sale_handling"
                   ? "Đang chat trực tiếp với bạn"
-                  : "Sẵn sàng giải đáp thắc mắc về dự án"}
+                  : isHumanMode
+                    ? "Chuyên viên sẽ phản hồi trong giây lát"
+                    : "Sẵn sàng giải đáp thắc mắc về dự án"}
             </div>
           </div>
         </div>
 
         <div className="chat-topbar-actions">
-          {isCustomer && !isLive && (
+          {/* Driven by the LIVE session's status, not this page's: once a Sale claims it the
+              button becomes the door into /chat/tu-van. Hidden while merely waiting_sale —
+              there is nothing to enter yet — and on /chat/tu-van itself, which already IS
+              that conversation. */}
+          {isCustomer && !isHumanMode && liveStatus !== "waiting_sale" && (
             <button className="btn btn-outline chat-request-human-btn" type="button" onClick={requestHuman} disabled={requestingHuman}>
               {requestingHuman ? <LoaderIcon size={15} className="icon-spin" /> : <UsersIcon size={15} />}
-              Gặp chuyên viên tư vấn
+              {liveStatus === "sale_handling" ? "Vào chat với chuyên viên" : "Gặp chuyên viên tư vấn"}
             </button>
           )}
           {sessionId && messages.length > 0 && (
@@ -389,6 +486,24 @@ export function CustomerChatPage() {
         </div>
       </header>
 
+      {/* The AI page's own view of the separate live session: it stays bot_handling itself,
+          so the banners below never fire here. Without this the customer would click "gặp
+          chuyên viên", see the button vanish, and get no sign anything was happening. */}
+      {!isHumanMode && liveStatus === "waiting_sale" && (
+        <div className="chat-live-banner chat-live-banner--waiting">
+          <ClockIcon size={15} />
+          <span>Đang kết nối chuyên viên tư vấn — bạn vẫn có thể tiếp tục hỏi Auremont AI ở đây.</span>
+        </div>
+      )}
+      {!isHumanMode && liveStatus === "sale_handling" && (
+        <div className="chat-live-banner chat-live-banner--live">
+          <UsersIcon size={15} />
+          <span>Chuyên viên tư vấn đã sẵn sàng.</span>
+          <button type="button" className="chat-live-banner-action" onClick={() => navigate("/chat/tu-van")}>
+            Vào chat với chuyên viên
+          </button>
+        </div>
+      )}
       {sessionStatus === "waiting_sale" && (
         <div className="chat-live-banner chat-live-banner--waiting">
           <ClockIcon size={15} />
@@ -423,20 +538,36 @@ export function CustomerChatPage() {
         <div className="chat-messages-inner">
           {messages.length === 0 && !loading && !historyLoading && (
             <div className="chat-landing">
-              <AuremontAvatar size={64} emotion="greeting" className="chat-landing-mascot" />
-              <h2 className="chat-empty-title">Hỏi Auremont về dự án</h2>
-              <p className="chat-empty-text">
-                Vị trí, tiện ích, loại căn hộ... hỏi Auremont bất cứ điều gì bạn quan tâm về dự án.
-              </p>
-              <div className="chat-suggest-card">
-                <span className="chat-suggest-label">Thử hỏi</span>
-                {SUGGESTIONS.map((s) => (
-                  <button key={s} type="button" className="chat-suggest-item" onClick={() => sendMessage(s)}>
-                    <span>{s}</span>
-                    <ArrowRightIcon size={15} />
-                  </button>
-                ))}
-              </div>
+              {isHumanMode ? (
+                <>
+                  {/* No AI suggestion chips here: they would be answered by a person, and
+                      "thử hỏi Auremont" is the other page's offer. */}
+                  <div className="chat-topbar-icon chat-landing-mascot">
+                    <UsersIcon size={32} />
+                  </div>
+                  <h2 className="chat-empty-title">Chat với chuyên viên tư vấn</h2>
+                  <p className="chat-empty-text">
+                    Hãy để lại câu hỏi của bạn, chuyên viên tư vấn sẽ phản hồi trực tiếp trong giây lát.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <AuremontAvatar size={64} emotion="greeting" className="chat-landing-mascot" />
+                  <h2 className="chat-empty-title">Hỏi Auremont về dự án</h2>
+                  <p className="chat-empty-text">
+                    Vị trí, tiện ích, loại căn hộ... hỏi Auremont bất cứ điều gì bạn quan tâm về dự án.
+                  </p>
+                  <div className="chat-suggest-card">
+                    <span className="chat-suggest-label">Thử hỏi</span>
+                    {SUGGESTIONS.map((s) => (
+                      <button key={s} type="button" className="chat-suggest-item" onClick={() => sendMessage(s)}>
+                        <span>{s}</span>
+                        <ArrowRightIcon size={15} />
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
