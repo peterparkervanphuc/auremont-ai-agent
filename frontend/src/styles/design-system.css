@@ -3079,10 +3079,13 @@ code {
   box-shadow: 0 2px 10px rgba(10, 30, 60, 0.06);
 }
 .chat-bubble--user {
-  background: var(--grad-wide);
+  /* Not var(--grad-wide): that ramp peaks at #2e7bff around its midpoint, where white
+     body text sits near 3:1 — under the 4.5:1 WCAG AA needs. This darker ramp keeps the
+     same blue identity while holding white text above 7:1 across the whole bubble. */
+  background: linear-gradient(135deg, #0b3fa8 0%, #0d4fd1 45%, #072a6e 100%);
   color: #fff;
   border-bottom-right-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0,80,239,0.35);
+  box-shadow: 0 4px 16px rgba(0, 80, 239, 0.28);
 }
 .chat-bubble--error {
   background: rgba(190,18,60,0.08);
@@ -3173,6 +3176,48 @@ code {
   text-align: left;
 }
 .chat-markdown th { background: var(--bg-3); font-weight: 600; }
+
+/* ── Markdown inside the blue (user/Sale) bubble ──
+   The rules above colour markdown for the light bot bubble: strong/headings take
+   var(--text-1) (near-black) and code/blockquote take var(--accent) (blue). Inside
+   .chat-bubble--user those land on a blue gradient, so dark-on-blue and blue-on-blue
+   text drops far below a readable contrast ratio. Everything here re-states those
+   colours against the blue ground; the bubble's own background is darkened separately
+   so plain body text clears WCAG AA too. */
+.chat-bubble--user .chat-markdown strong,
+.chat-bubble--user .chat-markdown h1,
+.chat-bubble--user .chat-markdown h2,
+.chat-bubble--user .chat-markdown h3 {
+  color: #fff;
+}
+.chat-bubble--user .chat-markdown code {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #f2f6ff;
+}
+.chat-bubble--user .chat-markdown pre {
+  background: rgba(3, 12, 30, 0.55);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.chat-bubble--user .chat-markdown blockquote {
+  border-left-color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.88);
+}
+.chat-bubble--user .chat-markdown th,
+.chat-bubble--user .chat-markdown td {
+  border-color: rgba(255, 255, 255, 0.28);
+}
+.chat-bubble--user .chat-markdown th {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+.chat-bubble--user .chat-markdown a {
+  color: #dce8ff;
+  text-decoration-color: rgba(255, 255, 255, 0.5);
+}
+.chat-bubble--user .chat-markdown li::marker {
+  color: rgba(255, 255, 255, 0.75);
+}
 .chat-markdown tr:nth-child(even) { background: var(--bg-glass); }
 .chat-markdown a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .chat-markdown hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }

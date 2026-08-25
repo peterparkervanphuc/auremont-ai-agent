@@ -68,16 +68,6 @@ export const CATALOG: CatalogMegaProject[] = [
             projects: [{ name: "The Sapphire", projectId: "the-sapphire" }],
           },
           {
-            slug: "masteri-waterfront",
-            name: "Masteri Waterfront",
-            projects: [{ name: "Masteri Waterfront" }],
-          },
-          {
-            slug: "masteri-lakeside",
-            name: "Masteri Lakeside",
-            projects: [{ name: "Masteri Lakeside" }],
-          },
-          {
             slug: "the-senique-hanoi",
             name: "The Senique Hanoi",
             projects: [{ name: "The Senique Hanoi", projectId: "the-senique-hanoi" }],
