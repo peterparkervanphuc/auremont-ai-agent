@@ -3648,6 +3648,19 @@ code {
     white-space: nowrap;
   }
 
+  /* .chat-topbar has no flex-wrap and .chat-request-human-btn is flex-shrink:0 +
+     white-space:nowrap, so on a narrow screen the button just overflows past the
+     screen edge instead of shrinking. Let it drop to its own row instead. */
+  .chat-page--standalone .chat-topbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .chat-page--standalone .chat-topbar-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
   .chat-input-wrapper {
     padding-bottom: 10px;
   }
@@ -3963,7 +3976,11 @@ code {
   }
 
   .home-compact .home-hero {
-    padding: 52px 0 34px;
+    /* .home-hero carries margin-top: -68px to slide the hero under the fixed 68px
+       .topnav on desktop (where padding-top is 200px). At this breakpoint padding-top
+       must still clear navbar height (68px) + that negative margin (68px), or the
+       title renders behind the fixed bar. */
+    padding: 152px 0 34px;
   }
 
   .hero-badge {
@@ -4590,6 +4607,14 @@ code {
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.18);
 }
 
+/* This dropdown always sits on its own opaque --bg-2, even in .topnav--overlay mode
+   (that variant is only for the slim bar floating over the hero image) — without this,
+   .topnav--overlay's `color: #fff` rule (further up) makes every link here white text
+   on this menu's white background, i.e. invisible. */
+.topnav--overlay .topnav-mobile-menu .topnav-link {
+  color: var(--text-1);
+}
+
 .topnav-mobile-menu .topnav-link {
   width: 100%;
   justify-content: flex-start;
@@ -4867,7 +4892,10 @@ code {
   display: grid;
   grid-template-columns: 1.4fr 1fr 1fr 1.4fr;
   gap: 32px;
-  padding: 48px 0 36px;
+  /* Vertical-only: this div also carries .container's own `padding: 0 24px` for the
+     side gutters — a full `padding` shorthand here would zero those out. */
+  padding-top: 48px;
+  padding-bottom: 36px;
 }
 
 .site-footer-brand {
@@ -4947,7 +4975,9 @@ code {
 }
 
 .site-footer-bottom-inner {
-  padding: 16px 0;
+  /* Vertical-only — see .site-footer-grid comment above, same .container clash. */
+  padding-top: 16px;
+  padding-bottom: 16px;
   font-size: 0.78rem;
   color: var(--text-3);
 }

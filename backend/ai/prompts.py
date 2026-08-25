@@ -752,9 +752,9 @@ def _public_answer_rules(*, units: list[InventoryUnit], catalog_offer_context: s
 def _sale_answer_rules(*, units: list[InventoryUnit]) -> str:
     """How the assistant answers a Sale: a dense brief they read in front of a client."""
     internal_layout = (
-        "- Dòng đầu tiên tóm tắt đúng tổng số căn còn trống và khoảng giá, KHÔNG bắt đầu bằng '- '.\n"
-        "- Sau đó liệt kê ĐỦ mọi căn trong TỒN KHO REAL-TIME, mỗi căn một dòng bắt đầu bằng '- '; "
-        "không bỏ bớt căn và không gộp nhiều căn vào một dòng.\n"
+        "- Mỗi căn trong TỒN KHO REAL-TIME đã hiện thành một thẻ listings riêng kèm ảnh — không "
+        "lặp lại thành gạch đầu dòng trong text (xem quy tắc TRÌNH BÀY KẾT QUẢ TỒN KHO). Chỉ viết "
+        "đúng MỘT dòng tóm tắt tổng số căn còn trống và khoảng giá chung, KHÔNG bắt đầu bằng '- '.\n"
         if units
         else (
             "- Dòng đầu tiên trả lời thẳng điều Sale hỏi, kèm con số chính và KHÔNG bắt đầu bằng '- '.\n"

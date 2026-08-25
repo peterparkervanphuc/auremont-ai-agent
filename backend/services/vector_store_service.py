@@ -20,7 +20,7 @@ class VectorStoreError(RuntimeError):
     """Failure while initialising the collection or writing vectors to Qdrant."""
 
 
-_KEYWORD_INDEX_FIELDS = ("project_id", "visibility", "review_status")
+_KEYWORD_INDEX_FIELDS = ("project_id", "visibility", "review_status", "category")
 
 
 def _ensure_payload_indexes(client, collection_name: str) -> None:

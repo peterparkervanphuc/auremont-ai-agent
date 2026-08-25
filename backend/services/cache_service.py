@@ -204,6 +204,20 @@ def _ensure_cache_collection() -> None:
             distance=models.Distance.COSINE,
         ),
     )
+    # Qdrant Cloud strict mode rejects a filter on an unindexed field outright rather than
+    # falling back to an unindexed scan — without these, _cache_filter's query 400s on
+    # every lookup. Caught and swallowed by lookup_cache's fail-silent design, so the
+    # symptom is invisible (just a permanently-missing cache), not an error anyone sees.
+    client.create_payload_index(
+        collection_name=CACHE_COLLECTION,
+        field_name="project_id",
+        field_schema=models.PayloadSchemaType.KEYWORD,
+    )
+    client.create_payload_index(
+        collection_name=CACHE_COLLECTION,
+        field_name="visibility",
+        field_schema=models.PayloadSchemaType.KEYWORD,
+    )
 
 
 def _cache_filter(project_id: str | None, clearance: DocumentVisibility) -> models.Filter:
