@@ -180,7 +180,39 @@ def fetch_units(project_id: str | None) -> list[InventoryUnit]:
     payload = _fetch_units(api_project_id)
 
     units = [unit for unit in (_parse_unit(item) for item in payload) if unit is not None]
-    return [unit for unit in units if unit.project_id == api_project_id]
+    units = [unit for unit in units if unit.project_id == api_project_id]
+    return _scope_to_slug_subdivision(units, project_id)
+
+
+def _scope_to_slug_subdivision(units: list[InventoryUnit], project_id: str | None) -> list[InventoryUnit]:
+    """Narrow an API project's rows to the subdivision the catalogue slug names.
+
+    Several catalogue slugs share one API project code (the current MockAPI groups every
+    Ocean Park sub-zone under `ocp1` and separates them only by `subdivision`). Returning
+    the code's whole row set would answer "what's left at The Pavilion" with Ngọc Trai and
+    San Hô units relabelled as Pavilion stock — the same cross-project leak
+    `has_exact_project_mapping` guards against at the pipeline level.
+
+    Only an explicitly mapped slug is scoped. A slug resolved through the `*` catch-all (or
+    no slug at all) is a deliberately unscoped, whole-project search and stays unfiltered.
+
+    A mapped slug that matches no subdivision returns an empty list, which is a truthful
+    "no units" rather than another project's stock. That is the correct answer for a slug
+    the inventory genuinely does not carry.
+    """
+    if not has_exact_project_mapping(project_id):
+        return units
+
+    assert project_id is not None  # implied by has_exact_project_mapping
+    slug_text = project_id.replace("-", " ")
+    wanted = {
+        _normalize_text(unit.subdivision)
+        for unit in units
+        if unit.subdivision and any(alias and alias in slug_text for alias in _subdivision_aliases(unit.subdivision))
+    }
+    if not wanted:
+        return []
+    return [unit for unit in units if _normalize_text(unit.subdivision) in wanted]
 
 
 def resolve_api_project_id(project_id: str | None) -> str | None:

@@ -134,6 +134,78 @@ def test_current_mockapi_query_filters_colloquial_bedrooms_and_parent_subdivisio
     assert [unit.unit_code for unit in result] == ["OCP1-S1-0203", "OCP1-S2-0303"]
 
 
+_SHARED_CODE_UNITS = [
+    {
+        "unit_code": "OCP1-PA-0202",
+        "project_id": "ocp1",
+        "subdivision": "The Pavilion",
+        "unit_type": "2PN",
+        "status": "available",
+    },
+    {
+        "unit_code": "OCP1-NT-01-01",
+        "project_id": "ocp1",
+        "subdivision": "Ngọc Trai",
+        "unit_type": "BTDL",
+        "status": "available",
+    },
+    {
+        "unit_code": "OCP1-S1-0203",
+        "project_id": "ocp1",
+        "subdivision": "The Sapphire 1",
+        "unit_type": "2PN",
+        "status": "available",
+    },
+    {
+        "unit_code": "OCP1-S2-0303",
+        "project_id": "ocp1",
+        "subdivision": "The Sapphire 2",
+        "unit_type": "2PN",
+        "status": "available",
+    },
+]
+
+
+@patch("httpx.get")
+def test_mapped_slug_sees_only_its_own_subdivision(mock_get, monkeypatch):
+    """Many slugs share one API code; a named project must not show another's stock."""
+    mock_get.return_value = _response(_SHARED_CODE_UNITS)
+    monkeypatch.setattr(settings, "inventory_project_map", "the-pavilion=ocp1,*=ocp1")
+
+    result = lookup_inventory("the-pavilion", "còn căn nào trống không")
+
+    assert [unit.unit_code for unit in result] == ["OCP1-PA-0202"]
+
+
+@patch("httpx.get")
+def test_mapped_slug_absent_from_inventory_is_sold_out_not_another_project(mock_get, monkeypatch):
+    """A mapped slug the API carries no rows for answers "none left", never other stock."""
+    mock_get.return_value = _response(_SHARED_CODE_UNITS)
+    monkeypatch.setattr(settings, "inventory_project_map", "the-london=ocp1,*=ocp1")
+
+    assert lookup_inventory("the-london", "còn căn nào trống không") == []
+
+
+@patch("httpx.get")
+def test_parent_slug_keeps_every_numbered_child(mock_get, monkeypatch):
+    """`the-sapphire` scopes to Sapphire 1 and 2 together, the way Sales ask for it."""
+    mock_get.return_value = _response(_SHARED_CODE_UNITS)
+    monkeypatch.setattr(settings, "inventory_project_map", "the-sapphire=ocp1,*=ocp1")
+
+    result = lookup_inventory("the-sapphire", "còn căn nào trống không")
+
+    assert [unit.unit_code for unit in result] == ["OCP1-S1-0203", "OCP1-S2-0303"]
+
+
+@patch("httpx.get")
+def test_catch_all_slug_stays_an_unscoped_whole_project_search(mock_get, monkeypatch):
+    """Only an explicit mapping scopes; `*` remains a deliberate cross-project search."""
+    mock_get.return_value = _response(_SHARED_CODE_UNITS)
+    monkeypatch.setattr(settings, "inventory_project_map", "*=ocp1")
+
+    assert len(lookup_inventory("the-palma", "còn căn nào trống không")) == len(_SHARED_CODE_UNITS)
+
+
 @patch("httpx.get")
 def test_specific_subdivision_child_wins_over_parent_alias(mock_get):
     mock_get.return_value = _response(
