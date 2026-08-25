@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { saleLiveApi } from "../../api/saleLive";
 import type { MessageResponse } from "../../types";
 import { AnswerImageStrip } from "./AnswerImageStrip";
+import { PropertyListingCarousel } from "../PropertyListingCarousel";
 import { parseServerDate } from "../../utils/datetime";
 import { AuremontAvatar } from "../../components/AuremontAvatar";
 import { MessageContent } from "../../components/MessageContent";
@@ -186,11 +187,15 @@ export function LiveChatPage() {
                   <div className={`chat-bubble ${isCustomer ? "chat-bubble--bot" : "chat-bubble--user"}`}>
                     <MessageContent content={m.content} className="chat-bubble-text" />
 
-                    {isCustomer && m.citations && m.citations.length > 0 && (
+                    {!isCustomer && m.citations && m.citations.length > 0 && (
                       <CitationList citations={m.citations} className="chat-citations" label="Nguồn" />
                     )}
 
-                    {isCustomer && m.images && m.images.length > 0 && <AnswerImageStrip images={m.images} />}
+                    {!isCustomer && m.images && m.images.length > 0 && <AnswerImageStrip images={m.images} />}
+
+                    {!isCustomer && m.listings && m.listings.length > 0 && (
+                      <PropertyListingCarousel listings={m.listings} />
+                    )}
                   </div>
                   <span className="chat-timestamp">{formatTime(m.created_at)}</span>
                 </div>

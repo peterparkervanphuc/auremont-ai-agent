@@ -3507,6 +3507,10 @@
 @media (max-width: 640px) {
   .admin-metric-grid, .sale-card-grid { grid-template-columns: 1fr; }
   .admin-head-actions, .admin-head-actions > *, .routing-action, .routing-action > * { width: 100%; }
+  /* .routing-action has no flex-wrap, so the `width: 100%` above does nothing without
+     this — the select (min-width: 170px) and button just keep sharing one row and
+     overflow the screen edge instead of stacking. */
+  .routing-action { flex-direction: column; }
   .routing-row { grid-template-columns: 1fr; }
   .trace-layout { grid-template-columns: 1fr; }
   .trace-list { max-height: 150px; }
