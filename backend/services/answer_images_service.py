@@ -131,6 +131,12 @@ _IMAGE_INTENT_KEYWORDS = (
 # Only ever meaningful next to a topic — see `wants_images`.
 _LOOK_VERBS = ("xem", "coi", "show")
 
+# The folders MinIO files a subdivision's photos under. `_normalize_filename` prepends one
+# of these to the filename it matches against, so a photo whose topic is recorded only by
+# where it sits still answers a question about that topic. Already de-accented and in the
+# hyphenated form filename tokens use, so `tien_ich` is written `tien-ich` here.
+_CATEGORY_FOLDERS = frozenset({"tien-ich", "mat-bang", "hinh-anh-thuc-te"})
+
 # Topic asked about -> tokens that appear in catalogue filenames. Matching is done on the
 # de-accented filename, so the values here are already in slug form.
 _TOPIC_TOKENS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
@@ -871,5 +877,25 @@ def _normalize(text: str) -> str:
 
 
 def _normalize_filename(url: str) -> str:
-    """The filename in slug form, so topic tokens can be matched against it."""
-    return strip_diacritics(url.rsplit("/", 1)[-1]).lower()
+    """The filename in slug form, so topic tokens can be matched against it.
+
+    Prefixed with the catalogue folder when the photo sits in one. MinIO files a
+    subdivision's photos under `tien_ich/`, `mat_bang/` and `hinh_anh_thuc_te/`, and that
+    folder is frequently the ONLY record of what the photo shows: The Zenpark's amenity
+    shots are named `be-boi-4-mua-...`, `san-the-thao-...`, `vuon-nhat-...`, none of which
+    contains "tien ich", so matching the bare filename found 2 of its 5 amenity photos.
+
+    Only the three names in `_CATEGORY_FOLDERS` are treated as folders. Gallery entries
+    are stored as full URLs, so the segment before the filename is usually the project
+    slug — and four catalogues are named `shop-thuong-mai-*`, which would then make every
+    photo in them match "shop"/"thuong mai" no matter what it depicts.
+    """
+    parts = url.rsplit("/", 2)
+    name = strip_diacritics(parts[-1]).lower()
+    if len(parts) < 3:
+        return name
+    # `tien_ich` -> `tien-ich`, so one token form matches folder and filename alike.
+    folder = strip_diacritics(parts[-2]).lower().replace("_", "-")
+    if folder not in _CATEGORY_FOLDERS:
+        return name
+    return f"{folder}/{name}"

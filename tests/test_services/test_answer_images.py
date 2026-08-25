@@ -461,3 +461,49 @@ class _FakeProjectWithoutAmenities:
 
 def test_select_listing_amenities_handles_missing_data():
     assert answer_images_service.select_listing_amenities(_FakeProjectWithoutAmenities()) == []
+
+
+# ── Catalogue folder as the topic label ──
+# MinIO files a subdivision's photos under tien_ich/, mat_bang/ and hinh_anh_thuc_te/, and
+# for many photos that folder is the ONLY record of what they show: The Zenpark's amenity
+# shots are named be-boi-4-mua/san-the-thao/vuon-nhat, none of which says "tien ich".
+
+ZENPARK_FOLDERED_GALLERY = [
+    "https://cdn/p/the-zenpark/tien_ich/be-boi-4-mua-the-zenpark.jpg",
+    "https://cdn/p/the-zenpark/tien_ich/san-the-thao-the-zenpark.jpg",
+    "https://cdn/p/the-zenpark/tien_ich/vuon-nhat-the-zenpark.jpg",
+    "https://cdn/p/the-zenpark/mat_bang/toa-r1-02-zenpark.jpg",
+    "https://cdn/p/the-zenpark/hinh_anh_thuc_te/cau-nhat-the-zenpark.jpg",
+]
+
+
+def test_amenity_question_matches_photos_labelled_only_by_their_folder():
+    picked = answer_images_service._auto_attach_images(ZENPARK_FOLDERED_GALLERY, "tien ich the zenpark", [])
+
+    assert sorted(url.rsplit("/", 1)[-1] for url in picked) == [
+        "be-boi-4-mua-the-zenpark.jpg",
+        "san-the-thao-the-zenpark.jpg",
+        "vuon-nhat-the-zenpark.jpg",
+    ]
+
+
+def test_floor_plan_question_does_not_pull_in_the_amenity_folder():
+    picked = answer_images_service._auto_attach_images(ZENPARK_FOLDERED_GALLERY, "mat bang the zenpark", [])
+
+    assert [url.rsplit("/", 1)[-1] for url in picked] == ["toa-r1-02-zenpark.jpg"]
+
+
+def test_project_slug_before_the_filename_is_never_read_as_a_folder():
+    """Four catalogues are named `shop-thuong-mai-*`, and gallery entries are full URLs.
+
+    Were the segment before the filename taken as a category unconditionally, every photo
+    in those catalogues would answer to "shop"/"thuong mai" regardless of what it depicts.
+    """
+    gallery = [
+        "https://cdn/p/shop-thuong-mai-sh09/noi-that-sh09.jpg",
+        "https://cdn/p/shop-thuong-mai-sh09/shop-tmdv-sh09.jpg",
+    ]
+
+    picked = answer_images_service._auto_attach_images(gallery, "cho xem shop", [])
+
+    assert [url.rsplit("/", 1)[-1] for url in picked] == ["shop-tmdv-sh09.jpg"]
