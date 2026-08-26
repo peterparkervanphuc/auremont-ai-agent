@@ -23,6 +23,7 @@ from backend.models import (  # noqa: F401  (đăng ký bảng vào Base.metadat
     document_relation,
     feedback,
     hitl_log,
+    lead,
     message,
     observability,
     project,
@@ -42,6 +43,7 @@ EXPECTED_TABLES = {
     "hitl_logs",
     "conflict_flags",
     "document_relations",
+    "leads",
     "pipeline_trace_runs",
     "llm_usage_events",
 }

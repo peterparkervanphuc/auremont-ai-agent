@@ -13,7 +13,7 @@ import {
 } from "../../components/Icons";
 import { LegacyReclassificationModal } from "../../components/admin/LegacyReclassificationModal";
 import { useAuth } from "../../hooks/useAuth";
-import type { BusinessDashboard, BusinessSummaryBase } from "../../types/admin";
+import type { BusinessDashboard, BusinessSummaryBase, LeadStats } from "../../types/admin";
 
 const EMPTY: BusinessDashboard = {
   period_days: 14,
@@ -428,9 +428,53 @@ function QualityChart({ points, threshold, onSelect }: QualityChartProps) {
   );
 }
 
+const LEAD_TIER_META = [
+  { key: "hot" as const, label: "HOT", className: "badge badge-danger", hint: "Gọi ngay" },
+  { key: "warm" as const, label: "WARM", className: "badge badge-warning", hint: "Theo dõi" },
+  { key: "cold" as const, label: "COLD", className: "badge badge-muted", hint: "Chưa có tín hiệu" },
+];
+
+function LeadPanel({ leads }: { leads: LeadStats | null }) {
+  if (!leads) return <div className="business-empty">Chưa tải được số liệu lead.</div>;
+  if (!leads.totals.total) return <div className="business-empty">Chưa có lead nào được chấm trong kỳ này.</div>;
+
+  const { totals } = leads;
+  return (
+    <>
+      <div className="business-chart-summary">
+        <span>Tổng lead <strong>{number(totals.total)}</strong></span>
+        {/* The lead-CAPTURE KPI: whether requiring a phone at the gate is actually paying off. */}
+        <span>Có số điện thoại <strong>{percent(leads.contact_rate)}</strong></span>
+        <span>Điểm trung bình <strong>{leads.avg_score.toLocaleString("vi-VN", { maximumFractionDigits: 1 })}</strong></span>
+      </div>
+
+      <div className="business-lead-tiers">
+        {LEAD_TIER_META.map((tier) => (
+          <div className="business-lead-tier" key={tier.key}>
+            <span className={tier.className}>{tier.label}</span>
+            <strong>{number(totals[tier.key])}</strong>
+            <small>{tier.hint}</small>
+          </div>
+        ))}
+      </div>
+
+      <div className="business-chart-summary">
+        <span>Đã đăng ký <strong>{number(leads.registered)}</strong></span>
+        <span>Ẩn danh <strong>{number(leads.anonymous)}</strong></span>
+        {/* Makes the LLM cost brake measured rather than assumed — see lead_scoring_service. */}
+        <span>Tỷ lệ gọi LLM <strong>{percent(leads.llm_enrichment.call_rate)}</strong></span>
+      </div>
+    </>
+  );
+}
+
 export function AdminHome() {
   const { username } = useAuth();
   const [dashboard, setDashboard] = useState<BusinessDashboard | null>(null);
+  // Leads live on their own endpoint, not inside /business: that one scopes every metric to
+  // sessions owned by an official Sale, while a customer-chat session has no Sale until it
+  // is claimed. See backend/schemas/admin_dashboard.py::LeadStatsResponse.
+  const [leads, setLeads] = useState<LeadStats | null>(null);
   const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(14);
@@ -459,6 +503,14 @@ export function AdminHome() {
       });
     return () => { cancelled = true; };
   }, [days, projectId, saleId, refreshKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    adminDashboardApi.leads(days, projectId)
+      .then((result) => { if (!cancelled) setLeads(result); })
+      .catch(() => { if (!cancelled) setLeads(null); });
+    return () => { cancelled = true; };
+  }, [days, projectId, refreshKey]);
 
   const data = dashboard ?? EMPTY;
   const maxProject = Math.max(1, ...data.top_projects.map((project) => project.sessions));
@@ -597,6 +649,16 @@ export function AdminHome() {
           <p className="business-hover-hint">Rê vào từng phần biểu đồ để làm nổi và xem tỷ lệ.</p>
         </section>
       </div>
+
+      <section className="business-panel">
+        <div className="business-panel-head">
+          <div>
+            <h3>Lead theo mức độ sẵn sàng</h3>
+            <p>Chấm sau mỗi lượt khách hỏi — HOT là sẵn sàng mua, không phải chi nhiều tiền</p>
+          </div>
+        </div>
+        <LeadPanel leads={leads} />
+      </section>
 
       <div className="business-bottom-grid">
         <section className="business-panel">

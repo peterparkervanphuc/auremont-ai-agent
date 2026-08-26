@@ -9,17 +9,24 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from backend.core.config import get_settings
 from backend.core.deps import require_role
-from backend.core.enums import UserRole
+from backend.core.enums import LeadTier, UserRole
 from backend.core.mysql_client import get_db
 from backend.models.chat_session import ChatSession
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
 from backend.models.feedback import Feedback
 from backend.models.hitl_log import HitlLog
+from backend.models.lead import Lead
 from backend.models.message import Message
 from backend.models.project import Project
 from backend.models.user import User
-from backend.schemas.admin_dashboard import BusinessDashboardResponse
+from backend.schemas.admin_dashboard import (
+    BusinessDashboardResponse,
+    LeadEnrichmentStats,
+    LeadStatsResponse,
+    LeadTierCounts,
+    LeadTrendPoint,
+)
 from backend.services.document_coverage_service import (
     COVERAGE_CATEGORIES,
     document_coverage_state,
@@ -368,4 +375,66 @@ async def get_business_dashboard(
             "confirmed": summary["hitl_confirmed"],
         },
         "document_coverage": document_coverage[:8],
+    }
+
+
+@router.get("/leads", response_model=LeadStatsResponse)
+async def get_lead_stats(
+    days: int = Query(default=14, ge=7, le=90),
+    project_id: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Lead capture and scoring over the last `days`.
+
+    Deliberately NOT part of /business: that endpoint scopes everything to sessions owned by
+    an official Sale, while a customer-chat session has no Sale until it is claimed. Merging
+    the two would make one response describe two different populations.
+    """
+    zone = _dashboard_timezone()
+    today = datetime.now(UTC).astimezone(zone).date()
+    start_at = _utc_boundary(today - timedelta(days=days - 1), zone)
+
+    query = db.query(Lead).filter(Lead.scored_at.isnot(None), Lead.scored_at >= start_at)
+    if project_id:
+        query = query.filter(Lead.project_id == project_id)
+    leads = query.all()
+
+    totals = LeadTierCounts(
+        hot=sum(1 for lead in leads if lead.tier == LeadTier.HOT),
+        warm=sum(1 for lead in leads if lead.tier == LeadTier.WARM),
+        cold=sum(1 for lead in leads if lead.tier == LeadTier.COLD),
+        total=len(leads),
+    )
+
+    by_day: dict[str, LeadTrendPoint] = {}
+    for offset in range(days):
+        key = (today - timedelta(days=days - 1 - offset)).isoformat()
+        by_day[key] = LeadTrendPoint(date=key)
+    for lead in leads:
+        key = lead.scored_at.replace(tzinfo=UTC).astimezone(zone).date().isoformat()
+        point = by_day.get(key)
+        if point is not None:
+            setattr(point, str(lead.tier), getattr(point, str(lead.tier)) + 1)
+
+    registered = sum(1 for lead in leads if lead.customer_id is not None)
+    customer_ids = [lead.customer_id for lead in leads if lead.customer_id is not None]
+    contactable = (
+        db.query(User).filter(User.id.in_(customer_ids), User.phone.isnot(None)).count() if customer_ids else 0
+    )
+    llm_calls = sum(1 for lead in leads if lead.detection_method == "rule+llm")
+
+    return {
+        "period_days": days,
+        "totals": totals,
+        "trend": list(by_day.values()),
+        "registered": registered,
+        "anonymous": len(leads) - registered,
+        "contactable": contactable,
+        "contact_rate": round(contactable / len(leads), 3) if leads else 0.0,
+        "avg_score": round(sum(lead.score for lead in leads) / len(leads), 1) if leads else 0.0,
+        "llm_enrichment": LeadEnrichmentStats(
+            scored=len(leads),
+            llm_calls=llm_calls,
+            call_rate=round(llm_calls / len(leads), 3) if leads else 0.0,
+        ),
     }

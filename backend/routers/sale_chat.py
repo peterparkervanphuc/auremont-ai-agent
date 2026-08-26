@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.ai.intent import is_customer_memory_query
-from backend.core.audit import log_event, truncate
+from backend.core.audit import log_event, redact_and_truncate
 from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import MessageEmotion, MessageSender, UserRole
@@ -180,7 +180,8 @@ async def ask_in_session(
         citation_count=len(result.citations),
         duration_ms=duration_ms,
         query_len=len(payload.content),
-        query=truncate(payload.content) if settings.log_query_text else None,
+        # A Sale relays a customer's details as often as they ask about a project.
+        query=redact_and_truncate(payload.content) if settings.log_query_text else None,
     )
     # Only the human's own question is remembered, never the generated answer. `db` lets
     # the project be read out of the question when the session carries none.

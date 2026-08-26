@@ -133,3 +133,28 @@ def test_resolve_listing_images_handles_a_missing_db():
     assert resolved[0]["amenities"] == []
     assert resolved[0]["project_id"] is None
     assert resolved[0]["project_name"] == "The Sapphire 2"
+
+
+def test_a_card_with_no_figures_at_all_is_dropped():
+    """The placeholder card `eval/deepeval_suite.py` caught the model inventing on a plain
+    policy question, on 5 of 6 live runs. A card exists to carry an area and a price; one
+    carrying neither renders as an empty box beside a correct answer.
+
+    Checked structurally — a real figure has a digit — rather than against a list of banned
+    words, because the model worded the placeholder differently almost every run
+    ("Đang cập nhật", "Theo catalogue", "Nhiều mức giá").
+    """
+    for placeholder in ("Đang cập nhật", "Theo catalogue", "Nhiều mức giá", "Liên hệ", ""):
+        figureless = _listing(unit_type="Nhiều loại căn", area_range=placeholder, price_range=placeholder)
+
+        assert agent_pipeline._drop_figureless_listings([figureless]) == [], placeholder
+
+
+def test_a_card_keeps_its_place_when_either_figure_is_real():
+    """Only a card with neither figure is noise. One real number is a card worth showing —
+    a unit with a confirmed price whose area the catalogue never recorded, for instance."""
+    priced = _listing(area_range="Đang cập nhật", price_range="3,6 tỷ đồng")
+    sized = _listing(area_range="68,2 m²", price_range="Liên hệ")
+
+    assert agent_pipeline._drop_figureless_listings([priced, sized]) == [priced, sized]
+    assert agent_pipeline._drop_figureless_listings([_listing()]) == [_listing()]

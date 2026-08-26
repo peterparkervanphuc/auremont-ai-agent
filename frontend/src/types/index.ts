@@ -159,12 +159,59 @@ export interface CustomerAskResponse extends MessageResponse {
 
 // ── Sale live inbox (AI -> Sale handoff) — mirrors backend/schemas/sale_live.py ──
 
+export type LeadTier = "hot" | "warm" | "cold";
+
 export interface LiveInboxEntry {
   session_id: number;
   customer_label: string;
   last_message_preview: string;
   // When this session entered the waiting queue — not when the session itself was created.
   waiting_since: string | null;
+  // Never null: a lead with no buying signal yet genuinely IS cold, so the badge always
+  // renders. See backend/core/enums.py::LeadTier.
+  lead_tier: LeadTier;
+  lead_score: number;
+  // The signals behind the tier, so a Sale can see why before they click.
+  lead_reason: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+}
+
+export type LeadUrgency = "immediate" | "near_term" | "exploring";
+export type LeadPurpose = "living" | "investment" | "business" | "unknown";
+
+export interface LeadSignalDetail {
+  label: string;
+  points: number;
+}
+
+/** Full breakdown behind one lead's tier — GET /sale/live-inbox/{id}/lead.
+ * `null` when nobody has scored this session yet. */
+export interface LeadDetail {
+  customer_label: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  lead_tier: LeadTier;
+  lead_score: number;
+  rule_score: number;
+  // None means the LLM pass never ran — different from having run and found nothing.
+  soft_score: number | null;
+  urgency: LeadUrgency | null;
+  purpose: LeadPurpose | null;
+  confidence: number | null;
+  detection_method: string;
+  turn_count: number;
+  scored_at: string | null;
+  signals: LeadSignalDetail[];
+  llm_reason: string | null;
+  // One concrete thing to do next, decided server-side from the tier plus what is already
+  // known — see lead_scoring_service.suggest_next_action.
+  next_action: string;
+  // What the customer told the AI they want, from the same Redis profile the answer
+  // pipeline reads. Lets the Sale open with context instead of re-asking.
+  budgets: string[];
+  unit_types: string[];
+  projects: string[];
 }
 
 export interface TokenResponse {

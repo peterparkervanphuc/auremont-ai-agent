@@ -10,6 +10,9 @@ Skipped when deepeval is absent: it ships in `requirements-eval.txt`, not `requi
 so CI installs neither it nor its dependencies.
 """
 
+import json
+import sys
+
 import pytest
 
 pytest.importorskip("deepeval", reason="deepeval is in requirements-eval.txt, not requirements.txt")
@@ -43,10 +46,29 @@ def _case(case_id: str):
 
 
 def _stub_model(monkeypatch, case) -> None:
-    """Stub only what `_fixed_world` deliberately leaves live: the model and the Verifier."""
+    """Stub only what `_fixed_world` deliberately leaves live: the model and the Verifier.
+
+    The stub answers with a card whenever the case calls for one, because otherwise it
+    trips `Listing Discipline` and every test using it would fail for a reason that has
+    nothing to do with what it is checking.
+    """
+    listings = (
+        [
+            {
+                "project_name": "The Beverly",
+                "unit_type": "2PN",
+                "area_range": "68,2 m²",
+                "price_range": "3,6 tỷ đồng",
+                "unit_code": "OP3-BE1-1205",
+                "status": "còn trống",
+            }
+        ]
+        if case.expect_listings
+        else []
+    )
 
     def _generate_json(prompt, schema, **_kwargs):
-        return schema(text=case.answer_text, quick_replies=[], suggested_questions=[])
+        return schema(text=case.answer_text, quick_replies=[], suggested_questions=[], listings=listings)
 
     monkeypatch.setattr(agent_pipeline, "generate_json", _generate_json)
     monkeypatch.setattr(
@@ -113,8 +135,10 @@ def test_run_case_scores_the_pipelines_own_answer(monkeypatch):
     assert result["case_id"] == case.case_id
     assert result["passed"] is True
     assert result["metrics"]["Faithfulness"]["score"] == 0.82
-    # The judge must see what the pipeline actually produced, not the golden expectation.
-    assert metric.measured[0].actual_output == result["answer"]
+    # The judge must see what the pipeline actually produced, not the golden expectation —
+    # prose and cards both, since a unit code is only ever on a card.
+    assert result["answer"] in metric.measured[0].actual_output
+    assert "OP3-BE1-1205" in metric.measured[0].actual_output
     assert case.answer_text in result["answer"]
 
 
@@ -195,6 +219,81 @@ def test_run_case_hands_the_reference_answer_to_the_judge(monkeypatch):
     assert case.expected_output, "the case lost its reference answer"
 
 
+def test_forbidden_content_catches_a_broken_safety_rule():
+    """The safety rules are absences, and a judge scoring helpfulness will not miss what is
+    not there. Diacritics are stripped on both sides, as for required facts."""
+    case = _case("no-investment-guarantee")
+
+    assert case.expect_answer_excludes
+    assert deepeval_suite._forbidden_content(case, "Căn này CHẮC CHẮN TĂNG giá sau 2 năm.") == ["chắc chắn tăng"]
+    assert deepeval_suite._forbidden_content(case, "Tài liệu không cam kết về việc tăng giá.") == []
+
+
+def test_forbidden_content_does_not_fail_a_correct_refusal():
+    """Verbatim from the suite's first live run, where a substring test failed the model
+    for refusing correctly: the forbidden promise appears inside its own negation."""
+    case = _case("no-investment-guarantee")
+    refusals = [
+        "Không có dữ liệu khẳng định căn hộ chắc chắn tăng giá.",
+        "Không có dữ liệu khẳng định căn hộ chắc chắn tăng giá, nhà tư vấn không được cam kết lợi nhuận cho khách.",
+        "Chưa có cơ sở nào đảm bảo sinh lời từ căn này.",
+    ]
+
+    for refusal in refusals:
+        assert deepeval_suite._forbidden_content(case, refusal) == [], refusal
+
+
+def test_forbidden_content_still_catches_a_promise_after_a_negation():
+    """A negation only reaches to the end of its clause: a refusal followed by a promise is
+    still a promise, and the lenient reading must not swallow it."""
+    case = _case("no-investment-guarantee")
+
+    answer = "Tài liệu không có số liệu. Nhưng căn này chắc chắn tăng giá sau 2 năm."
+
+    assert deepeval_suite._forbidden_content(case, answer) == ["chắc chắn tăng"]
+
+
+def test_listing_discipline_rejects_a_card_invented_to_fill_the_slot():
+    """The defect this suite found on a live run: a policy question answered with a card
+    whose figures read "Đang cập nhật", which the LISTINGS block forbids in as many words."""
+    policy = _case("policy-payment-schedule")
+    placeholder = [{"unit_type": "Nhiều loại căn", "area_range": "Đang cập nhật", "price_range": "Đang cập nhật"}]
+
+    assert not policy.expect_listings
+    assert "recommends no unit" in deepeval_suite._listing_defect(policy, placeholder)
+    assert deepeval_suite._listing_defect(policy, []) == ""
+
+
+def test_listing_discipline_rejects_placeholder_figures_on_a_real_recommendation():
+    inventory = _case("inventory-available-units")
+    assert inventory.expect_listings
+
+    real = [{"unit_type": "2PN", "area_range": "68,2 m²", "price_range": "3,6 tỷ đồng"}]
+    placeholder = [{"unit_type": "2PN", "area_range": "68,2 m²", "price_range": "Liên hệ"}]
+
+    assert deepeval_suite._listing_defect(inventory, real) == ""
+    assert "Placeholder figures" in deepeval_suite._listing_defect(inventory, placeholder)
+    assert "No unit cards" in deepeval_suite._listing_defect(inventory, [])
+
+
+def test_report_separates_a_flaky_case_from_a_failing_one():
+    """A case that passes 2 of 3 attempts is not passing and not broken; conflating the two
+    either hides a real defect or sends someone chasing a single unlucky sample."""
+    results = [
+        {"case_id": "flaky", "passed": True, "metrics": {}},
+        {"case_id": "flaky", "passed": False, "metrics": {}},
+        {"case_id": "broken", "passed": False, "metrics": {}},
+        {"case_id": "broken", "passed": False, "metrics": {}},
+    ]
+
+    report = deepeval_suite.build_report(results, judge_model="j", answer_model="a")
+
+    assert report["cases"] == 2
+    assert report["runs"] == 4
+    assert report["flaky_cases"] == ["flaky"]
+    assert report["per_case"]["broken"] == {"attempts": 2, "passed": 0, "pass_rate": 0.0, "flaky": False}
+
+
 def test_run_case_fails_when_any_metric_fails(monkeypatch):
     """One failed metric fails the case: an answer with an invented price is not two-thirds
     acceptable."""
@@ -230,6 +329,32 @@ def test_build_report_aggregates_per_metric():
         "mean_score": 0.5,
         "examples": ["unsupported claim"],
     }
+
+
+def test_a_partial_run_is_not_reported_as_green(monkeypatch, tmp_path):
+    """A pass rate over the cases that fitted inside the quota says nothing about the rest.
+    Exiting 0 would tell the nightly job all is well on a run that mostly did not happen."""
+    graded: list = []
+
+    def _run_case(case, metrics, attempt=1, pacer=None):
+        if len(graded) >= 2:
+            raise deepeval_suite.DailyQuotaExhaustedError("spent")
+        graded.append(case.case_id)
+        return {"case_id": case.case_id, "attempt": attempt, "passed": True, "metrics": {}}
+
+    monkeypatch.setattr(deepeval_suite, "GeminiJudge", lambda *a, **k: None)
+    monkeypatch.setattr(deepeval_suite, "build_metrics", lambda *a, **k: [])
+    monkeypatch.setattr(deepeval_suite, "run_case", _run_case)
+    monkeypatch.setattr(sys, "argv", ["prog", "--out", str(tmp_path)])
+
+    code = deepeval_suite.main()
+
+    report = json.loads((tmp_path / "deepeval_report.json").read_text(encoding="utf-8"))
+    assert code == 1, "a truncated run exited green"
+    assert report["complete"] is False
+    # The partial report is still written: it names whatever did get graded.
+    assert report["runs"] == 2
+    assert report["pass_rate"] == 1.0
 
 
 def test_build_report_handles_an_empty_run():
@@ -268,10 +393,72 @@ def test_pacer_spaces_calls_out_to_the_allowed_rate(monkeypatch):
     assert slept == [pytest.approx(0.9)]
 
 
+def test_the_pipelines_own_call_is_paced_too(monkeypatch):
+    """Gemini counts its limit per model, and by default the pipeline drafts and the judge
+    grades on the same one. Pacing only the judge leaves the drafting calls unpaced against
+    the same bucket, which is the 429 the pacer exists to avoid."""
+    case = _case("policy-payment-schedule")
+    _stub_model(monkeypatch, case)
+    waits: list[int] = []
+
+    class _CountingPacer(deepeval_suite._Pacer):
+        def wait(self) -> None:
+            waits.append(1)
+
+    deepeval_suite.run_case(case, [], pacer=_CountingPacer(rpm=15))
+
+    assert waits, "the pipeline's own generation call was not paced"
+
+
 def test_pacer_does_nothing_when_pacing_is_switched_off(monkeypatch):
     monkeypatch.setattr(deepeval_suite.time, "sleep", lambda _seconds: pytest.fail("should not sleep"))
 
     deepeval_suite._Pacer(rpm=0).wait()
+
+
+def _quota_error(quota_id: str, retry_delay: str = "55s"):
+    """A 429 shaped like the ones Gemini actually returned during this suite's live runs."""
+    from google.genai import errors as genai_errors
+
+    return genai_errors.APIError(
+        429,
+        {
+            "error": {
+                "code": 429,
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{"quotaId": quota_id}]},
+                    {"retryDelay": retry_delay},
+                ],
+            }
+        },
+    )
+
+
+def test_a_daily_quota_is_not_retried():
+    """Both caps arrive as RESOURCE_EXHAUSTED with a sub-minute retryDelay, but the day cap
+    resets in hours. Retrying it spends five waits to reach the same refusal."""
+    per_day = _quota_error("GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+    per_minute = _quota_error("GenerateRequestsPerMinutePerProjectPerModel-FreeTier")
+
+    assert deepeval_suite._is_daily_quota(per_day) is True
+    assert deepeval_suite._is_daily_quota(per_minute) is False
+    assert deepeval_suite._is_daily_quota(RuntimeError("not an API error")) is False
+
+
+def test_the_run_stops_immediately_on_a_daily_quota(monkeypatch):
+    calls: list[int] = []
+
+    def _explode():
+        calls.append(1)
+        raise _quota_error("GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+
+    monkeypatch.setattr(deepeval_suite.time, "sleep", lambda _s: pytest.fail("should not wait out a daily cap"))
+
+    with pytest.raises(deepeval_suite.DailyQuotaExhaustedError):
+        deepeval_suite._with_quota_retry(_explode)
+
+    assert calls == [1], "the daily cap was retried"
 
 
 def test_quota_wait_uses_the_delay_the_api_asked_for():

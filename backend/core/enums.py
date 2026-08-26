@@ -136,3 +136,47 @@ class DocumentRelationType(StrEnum):
     SUPERSEDES = "supersedes"
     GUIDES = "guides"
     RELATED_TO = "related_to"
+
+
+class LeadTier(StrEnum):
+    """How ready a customer is to buy — the priority a Sale should give them.
+
+    Describes readiness, NOT spending power: someone asking to book a viewing this week is
+    HOT on a 2 tỷ budget, while someone idly browsing 10 tỷ villas is not.
+
+    COLD is the honest default for a lead who has shown no buying signal yet — it never
+    means "we failed to score this person". A scoring failure leaves the previous tier
+    untouched (see lead_service), because a Sale who cannot trust the badge ignores it.
+    """
+
+    HOT = "hot"
+    WARM = "warm"
+    COLD = "cold"
+
+
+class LeadUrgency(StrEnum):
+    """How soon the customer intends to act, judged from how they talk about timing.
+
+    Only the LLM pass sets this — no regex can tell "đang cần gấp" from "để em xem đã".
+    EXPLORING is the conservative fallback for an unparseable or missing verdict: assuming
+    someone is in a hurry when they are not sends a Sale chasing the wrong person.
+    """
+
+    IMMEDIATE = "immediate"
+    NEAR_TERM = "near_term"
+    EXPLORING = "exploring"
+
+
+class LeadPurpose(StrEnum):
+    """What the customer wants the property for.
+
+    Values deliberately match the strings `SearchCriteria.purpose` already produces
+    (backend/services/search_criteria.py `_PURPOSE_PATTERNS`) — the regex extractor and the
+    LLM describe the same fact, and two vocabularies for one fact guarantees they disagree.
+    UNKNOWN covers "nobody said yet", which is the common case early in a conversation.
+    """
+
+    LIVING = "living"
+    INVESTMENT = "investment"
+    BUSINESS = "business"
+    UNKNOWN = "unknown"

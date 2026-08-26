@@ -29,9 +29,11 @@ class Settings(BaseSettings):
     # text in dev (human-readable). Set LOG_JSON=true/false to force one mode
     # regardless of environment.
     log_json: bool | None = None
-    # Logs the first 200 characters of a Sale's question to the audit log. This is
-    # the single most valuable field when reproducing a wrong answer, and it is
-    # text the Sale typed, not customer PII. Still toggleable without a code change.
+    # Logs the first 200 characters of a question to the audit log — the single most
+    # valuable field when reproducing a wrong answer. Covers the customer chat as well as
+    # the Sale one, so the text can be the customer's own; it goes through
+    # `audit.redact_and_truncate`, which strips phone numbers, citizen IDs and emails
+    # before the trail sees them. Still toggleable without a code change.
     log_query_text: bool = True
 
     # Authentication
@@ -239,6 +241,29 @@ class Settings(BaseSettings):
     # they all share one bucket. See backend/core/rate_limit.py.
     trusted_proxy_count: int = 0
 
+    # Lead capture & scoring
+    lead_scoring_enabled: bool = True
+    # Hard signals are scored by rules on every customer turn; this only gates the optional
+    # LLM pass that reads soft signals (urgency, ở/đầu tư) off the conversation.
+    lead_scoring_llm_enabled: bool = True
+    lead_hot_threshold: int = 65
+    lead_warm_threshold: int = 35
+    # Turns that must pass before the LLM pass may run again for the same lead. Bypassed
+    # when the turn latches a new hard signal, because that is the moment the verdict
+    # actually changes.
+    lead_llm_min_turns: int = 3
+    # Customer messages fed to the LLM pass. Only the customer's own words are ever sent —
+    # including the AI's replies would let one hallucinated "anh/chị cần mua gấp phải không"
+    # score itself.
+    lead_llm_max_history_turns: int = 6
+    # Waiting longer than this outranks any tier in the live inbox. Without the escape, a
+    # steady trickle of HOT leads starves a COLD customer who is a real person watching a
+    # spinner after asking for a human.
+    lead_inbox_fairness_minutes: int = 10
+    # Set false to accept registrations without a phone number, if the gate turns out to
+    # cost more registrations than the contact details are worth.
+    lead_require_phone_on_register: bool = True
+
     @property
     def is_production(self) -> bool:
         """True outside the known development/test environments.
@@ -266,6 +291,21 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SECRET_KEY must be set to a unique value when APP_ENV is not a development "
                 'environment. Generate one with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_inverted_lead_thresholds(self) -> "Settings":
+        """Refuse to boot when the WARM threshold is not below the HOT one.
+
+        An inverted pair silently marks every lead HOT, which is worse than shipping no
+        scoring at all: a Sale who cannot trust the badge stops reading it, and the queue
+        goes back to being unordered while looking like it is prioritised.
+        """
+        if self.lead_warm_threshold >= self.lead_hot_threshold:
+            raise ValueError(
+                f"LEAD_WARM_THRESHOLD ({self.lead_warm_threshold}) must be below "
+                f"LEAD_HOT_THRESHOLD ({self.lead_hot_threshold}) — otherwise every lead scores HOT."
             )
         return self
 

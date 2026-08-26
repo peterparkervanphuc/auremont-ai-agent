@@ -3,7 +3,7 @@
 // than the visitor-token-aware `customerApi`.
 
 import { api } from "./client";
-import type { LiveInboxEntry, MessageResponse } from "../types";
+import type { LeadDetail, LiveInboxEntry, MessageResponse } from "../types";
 
 export const saleLiveApi = {
   listWaiting: () => api.get<LiveInboxEntry[]>("/sale/live-inbox"),
@@ -13,6 +13,7 @@ export const saleLiveApi = {
   listMine: () => api.get<LiveInboxEntry[]>("/sale/live-inbox/mine"),
   claim: (sessionId: number) => api.post<LiveInboxEntry>(`/sale/live-inbox/${sessionId}/claim`),
   getMessages: (sessionId: number) => api.get<MessageResponse[]>(`/sale/live-inbox/${sessionId}/messages`),
+  getLead: (sessionId: number) => api.get<LeadDetail | null>(`/sale/live-inbox/${sessionId}/lead`),
   reply: (sessionId: number, content: string) =>
     api.post<MessageResponse>(`/sale/live-inbox/${sessionId}/reply`, { content }),
   suggest: (sessionId: number) =>

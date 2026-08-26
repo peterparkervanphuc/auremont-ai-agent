@@ -296,3 +296,50 @@ class BusinessDashboardResponse(BaseModel):
     quality_trend: list[BusinessQualityPoint]
     hitl_funnel: BusinessHitlFunnel
     document_coverage: list[BusinessDocumentCoverage]
+
+
+class LeadTierCounts(BaseModel):
+    hot: int = 0
+    warm: int = 0
+    cold: int = 0
+    total: int = 0
+
+
+class LeadTrendPoint(BaseModel):
+    date: str
+    hot: int = 0
+    warm: int = 0
+    cold: int = 0
+
+
+class LeadEnrichmentStats(BaseModel):
+    """How often the LLM pass actually ran. Makes the cost brake measured, not assumed."""
+
+    scored: int = 0
+    llm_calls: int = 0
+    call_rate: float = 0.0
+
+
+class LeadStatsResponse(BaseModel):
+    """Lead capture and scoring, on its own endpoint rather than folded into /business.
+
+    /business scopes every metric to sessions owned by an official Sale. Customer-chat
+    sessions have `sale_id IS NULL` until claimed, so leads sit outside that universe by
+    construction — merging them would make the headline session/customer counts describe two
+    different populations, which is the inconsistency /business's own scoping comment exists
+    to prevent.
+    """
+
+    period_days: int
+    totals: LeadTierCounts
+    trend: list[LeadTrendPoint]
+    registered: int = 0
+    anonymous: int = 0
+    # The lead-CAPTURE KPI: leads whose account carries a phone number. This is the figure
+    # that says whether requiring a phone at the gate was worth its cost in conversions.
+    contactable: int = 0
+    contact_rate: float = 0.0
+    # Drift detector: if this climbs after a weight change, the weights inflated rather than
+    # the leads improving.
+    avg_score: float = 0.0
+    llm_enrichment: LeadEnrichmentStats = LeadEnrichmentStats()

@@ -11,10 +11,21 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.core.audit import log_event, truncate
+from backend.core.config import get_settings
 from backend.core.deps import require_role
-from backend.core.enums import DocumentVisibility, MessageSender, SessionChannel, SessionStatus, UserRole
+from backend.core.enums import (
+    DocumentVisibility,
+    LeadPurpose,
+    LeadTier,
+    LeadUrgency,
+    MessageSender,
+    SessionChannel,
+    SessionStatus,
+    UserRole,
+)
 from backend.core.mysql_client import get_db
 from backend.models.chat_session import ChatSession
+from backend.models.lead import Lead
 from backend.models.message import Message
 from backend.models.user import User
 from backend.repositories.chat_session import (
@@ -25,11 +36,19 @@ from backend.repositories.chat_session import (
     list_waiting_sessions,
     return_to_bot,
 )
+from backend.repositories.lead import get_lead_for_customer, list_leads_for_customers
 from backend.repositories.message import create_message, history_for_pipeline, list_messages_for_session
-from backend.repositories.user import get_user_by_id
+from backend.repositories.user import get_user_by_id, list_users_by_ids
 from backend.schemas.message import MessageResponse
-from backend.schemas.sale_live import LiveInboxEntry, SaleLiveMessageRequest, SaleSuggestResponse
-from backend.services import agent_pipeline
+from backend.schemas.sale_live import (
+    LeadDetailResponse,
+    LeadSignalDetail,
+    LiveInboxEntry,
+    SaleLiveMessageRequest,
+    SaleSuggestResponse,
+)
+from backend.services import agent_pipeline, lead_scoring_service, memory_service
+from backend.utils.time import utcnow
 
 router = APIRouter(
     prefix="/sale/live-inbox",
@@ -44,9 +63,10 @@ _HANDOFF_ENDED_MESSAGE = (
 )
 
 
-def _customer_label(db: Session, session: ChatSession) -> str:
-    user = get_user_by_id(db, session.customer_id) if session.customer_id else None
-    return user.email if user else f"Khách #{session.customer_id}"
+def _customer_label(user: User | None, session: ChatSession) -> str:
+    if user is None:
+        return f"Khách #{session.customer_id}"
+    return user.full_name or user.email
 
 
 def _owned_live_session(db: Session, session_id: int, user: User) -> ChatSession:
@@ -68,20 +88,99 @@ def _owned_live_session(db: Session, session_id: int, user: User) -> ChatSession
     return session
 
 
-def _to_entry(db: Session, session: ChatSession) -> LiveInboxEntry:
+def _to_entry(
+    db: Session,
+    session: ChatSession,
+    *,
+    users: dict[int, User] | None = None,
+    leads: dict[int, Lead] | None = None,
+) -> LiveInboxEntry:
     messages = list_messages_for_session(db, session.id)
     preview = truncate(messages[-1].content, limit=80) if messages else ""
+
+    user = (users or {}).get(session.customer_id) if session.customer_id else None
+    if user is None and session.customer_id and users is None:
+        user = get_user_by_id(db, session.customer_id)
+    lead = (leads or {}).get(session.customer_id) if session.customer_id else None
+    if lead is None and session.customer_id and leads is None:
+        lead = get_lead_for_customer(db, session.customer_id)
+
     return LiveInboxEntry(
         session_id=session.id,
-        customer_label=_customer_label(db, session),
+        customer_label=_customer_label(user, session),
         last_message_preview=preview or "",
         waiting_since=session.handoff_requested_at,
+        lead_tier=LeadTier(lead.tier) if lead else LeadTier.COLD,
+        lead_score=lead.score if lead else 0,
+        lead_reason=_lead_reason(lead),
+        customer_name=user.full_name if user else None,
+        customer_phone=user.phone if user else None,
     )
+
+
+def _lead_reason(lead: Lead | None) -> str | None:
+    """One short Vietnamese line naming the signals behind the tier."""
+    if lead is None or not lead.signals:
+        return None
+    fired = [name for name, value in (lead.signals.get("flags") or {}).items() if value]
+    labels = [_SIGNAL_LABELS[name] for name in fired if name in _SIGNAL_LABELS]
+    return " · ".join(labels) if labels else None
+
+
+# Every key in lead_scoring_service._RULE_WEIGHTS needs a label here, or a fired signal is
+# invisible in the detail panel — a tier with unexplainable evidence defeats the reason this
+# panel exists (see LeadDetailResponse).
+_SIGNAL_LABELS = {
+    "stated_budget": "Đã nêu ngân sách",
+    "budget_over_1bn": "Ngân sách từ 1 tỷ trở lên",
+    "closing_intent": "Muốn xem nhà / đặt lịch / xin bảng giá",
+    "wants_human": "Xin gặp tư vấn viên",
+    "named_unit_code": "Hỏi đúng mã căn cụ thể",
+    "three_filters": "Đã lọc theo từ 3 tiêu chí trở lên",
+    "registered": "Đã tạo tài khoản",
+    "has_phone": "Đã có số điện thoại",
+    "engaged": "Đã hỏi từ 6 lượt trở lên",
+    "purpose_known": "Đã nói rõ mục đích ở/đầu tư",
+    "household_known": "Đã nói số người trong gia đình",
+}
+
+
+def _decorate(db: Session, sessions: list[ChatSession]) -> list[LiveInboxEntry]:
+    """Batch the user and lead lookups.
+
+    Both list endpoints are polled every 5 seconds by every logged-in Sale, so a per-row
+    query for the label plus another for the tier is an N+1 that grows with the queue.
+    """
+    customer_ids = [s.customer_id for s in sessions if s.customer_id is not None]
+    users = list_users_by_ids(db, customer_ids)
+    leads = list_leads_for_customers(db, customer_ids)
+    return [_to_entry(db, session, users=users, leads=leads) for session in sessions]
+
+
+def _inbox_order(entry: LiveInboxEntry, fairness_minutes: int) -> tuple[int, int, float]:
+    """Starved first, then hottest, then longest-waiting.
+
+    Tier-first alone lets a steady trickle of HOT leads starve a COLD customer indefinitely —
+    they are still a real person who asked for a human and is watching a spinner. Waiting
+    past the fairness window outranks any tier.
+    """
+    waiting_since = entry.waiting_since
+    waited = (utcnow() - waiting_since).total_seconds() if waiting_since else 0.0
+    starved = 1 if waited >= fairness_minutes * 60 else 0
+    tier_rank = {LeadTier.HOT: 2, LeadTier.WARM: 1, LeadTier.COLD: 0}[entry.lead_tier]
+    return (-starved, -tier_rank, -waited)
 
 
 @router.get("", response_model=list[LiveInboxEntry])
 async def list_waiting(db: Session = Depends(get_db)) -> list[LiveInboxEntry]:
-    return [_to_entry(db, session) for session in list_waiting_sessions(db)]
+    """Ordered by business priority here rather than in the repository.
+
+    `list_waiting_sessions` documents itself as FIFO on `handoff_requested_at`; burying a
+    tier ranking inside it would make that docstring a lie for every other caller.
+    """
+    fairness = get_settings().lead_inbox_fairness_minutes
+    entries = _decorate(db, list_waiting_sessions(db))
+    return sorted(entries, key=lambda entry: _inbox_order(entry, fairness))
 
 
 @router.get("/mine", response_model=list[LiveInboxEntry])
@@ -91,7 +190,7 @@ async def list_mine(
     """Sessions this Sale has already claimed and is still chatting through live — without
     this, claiming removes a session from `list_waiting` and there is no other way back to
     it after navigating away or logging back in."""
-    return [_to_entry(db, session) for session in list_sessions_handled_by_sale(db, sale_id=user.id)]
+    return _decorate(db, list_sessions_handled_by_sale(db, sale_id=user.id))
 
 
 @router.post("/{session_id}/claim", response_model=LiveInboxEntry)
@@ -107,6 +206,62 @@ async def claim(
 
     log_event("chat.handoff.claimed", session_id=session_id, sale_id=user.id, customer_id=session.customer_id)
     return _to_entry(db, session)
+
+
+@router.get("/{session_id}/lead", response_model=LeadDetailResponse | None)
+async def get_lead_detail(
+    session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))
+) -> LeadDetailResponse | None:
+    """The full scoring breakdown for the customer on this live session.
+
+    Powers the "vì sao" panel on the chat screen itself — a richer view than the one-line
+    `lead_reason` in the inbox row, with every fired signal's own point value and the LLM's
+    own explanation when it has run.
+    """
+    session = _owned_live_session(db, session_id, user)
+    lead = get_lead_for_customer(db, session.customer_id) if session.customer_id else None
+    if lead is None or lead.scored_at is None:
+        return None
+
+    user_row = get_user_by_id(db, session.customer_id) if session.customer_id else None
+    weights = (lead.signals or {}).get("weights") or {}
+    signals = [
+        LeadSignalDetail(label=_SIGNAL_LABELS[name], points=points)
+        for name, points in sorted(weights.items(), key=lambda item: item[1], reverse=True)
+        if name in _SIGNAL_LABELS
+    ]
+
+    flags = (lead.signals or {}).get("flags") or {}
+    has_phone = bool(user_row is not None and user_row.phone)
+    profile = memory_service.load_profile(memory_service.customer_key(session.customer_id))
+
+    return LeadDetailResponse(
+        customer_label=_customer_label(user_row, session),
+        customer_name=user_row.full_name if user_row else None,
+        customer_phone=user_row.phone if user_row else None,
+        next_action=lead_scoring_service.suggest_next_action(
+            LeadTier(lead.tier),
+            has_phone=has_phone,
+            has_budget=bool(flags.get("stated_budget")),
+            wants_human=bool(flags.get("wants_human")),
+            turn_count=lead.turn_count,
+        ),
+        budgets=profile.budgets,
+        unit_types=profile.unit_types,
+        projects=profile.projects,
+        lead_tier=LeadTier(lead.tier),
+        lead_score=lead.score,
+        rule_score=lead.rule_score,
+        soft_score=lead.soft_score,
+        urgency=LeadUrgency(lead.urgency) if lead.urgency else None,
+        purpose=LeadPurpose(lead.purpose) if lead.purpose else None,
+        confidence=lead.confidence,
+        detection_method=lead.detection_method,
+        turn_count=lead.turn_count,
+        scored_at=lead.scored_at,
+        signals=signals,
+        llm_reason=(lead.signals or {}).get("llm_reason"),
+    )
 
 
 @router.get("/{session_id}/messages", response_model=list[MessageResponse])

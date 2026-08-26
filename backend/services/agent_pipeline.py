@@ -1019,7 +1019,7 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     # Both schemas carry `listings` now (see prompts.SaleAnswer) — a Sale asking the same
     # recommendation question a customer would ask gets the same photo-carrying cards back.
     if isinstance(parsed, prompts.ConsultAnswer | prompts.SaleAnswer):
-        listings = _resolve_listing_images(state.get("db"), parsed.listings)
+        listings = _resolve_listing_images(state.get("db"), _drop_figureless_listings(parsed.listings))
 
     # Strip before checking for emptiness: an answer made up of only Markdown characters
     # renders as blank on screen, so it must fall into the error branch instead of
@@ -1066,6 +1066,40 @@ def _generate(state: PipelineState) -> dict[str, Any]:
         # redundant photo blocks for the same project on screen; the listing card wins.
         "images": [] if listings else state.get("images") or [],
     }
+
+
+# A real figure has a digit in it. Every placeholder the model has been observed inventing
+# — "Đang cập nhật", "Theo catalogue", "Nhiều mức giá", "Liên hệ" — has none, which is what
+# makes this a structural check rather than a list of banned strings to keep extending.
+_HAS_DIGIT = re.compile(r"\d")
+
+
+def _drop_figureless_listings(listings: list["prompts.PropertyListing"]) -> list["prompts.PropertyListing"]:
+    """Discard cards the model filled with words where the figures should be.
+
+    The LISTINGS block says to leave `listings` empty when the context has no price for a
+    unit type, rather than "tự chế hay mượn tạm một con số khác cho đủ 3 trường". The model
+    does it anyway, and reliably: `eval/deepeval_suite.py` caught a placeholder card on 5
+    of 6 runs of a plain policy question, each time with a differently worded placeholder.
+
+    A card exists to carry an area and a price. One that carries neither renders as an
+    empty box beside a correct answer, so dropping it loses nothing a reader wanted — and
+    doing it here rather than in the prompt makes it a property of the system instead of
+    something that drifts with the next prompt edit or model upgrade.
+    """
+    kept = []
+    for listing in listings:
+        if _HAS_DIGIT.search(listing.area_range) or _HAS_DIGIT.search(listing.price_range):
+            kept.append(listing)
+            continue
+
+        tracing.step(
+            "listing.dropped",
+            reason="no_figures",
+            project_name=listing.project_name,
+            unit_type=listing.unit_type,
+        )
+    return kept
 
 
 def _resolve_listing_images(db: Session | None, listings: list["prompts.PropertyListing"]) -> list[dict]:

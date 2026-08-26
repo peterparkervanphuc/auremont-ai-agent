@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { saleLiveApi } from "../../api/saleLive";
-import type { MessageResponse } from "../../types";
+import type { LeadDetail, MessageResponse } from "../../types";
 import { AnswerImageStrip } from "./AnswerImageStrip";
+import { LeadContextCard } from "./LeadContextCard";
+import { LeadInsightPanel } from "./LeadInsightPanel";
 import { PropertyListingCarousel } from "../PropertyListingCarousel";
 import { parseServerDate } from "../../utils/datetime";
 import { AuremontAvatar } from "../../components/AuremontAvatar";
@@ -32,6 +34,8 @@ export function LiveChatPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const [messages, setMessages] = useState<MessageResponse[]>([]);
+  const [lead, setLead] = useState<LeadDetail | null>(null);
+  const [leadLoading, setLeadLoading] = useState(true);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
@@ -59,6 +63,20 @@ export function LiveChatPage() {
     const interval = setInterval(reload, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [reload]);
+
+  // Re-fetched whenever the message count changes rather than on its own timer: a lead is
+  // only ever re-scored after a customer message (see backend/routers/customer_chat.py), so
+  // tying this to `messages.length` keeps the panel in sync exactly when it can change and
+  // skips a poll on every tick where nothing new was said.
+  useEffect(() => {
+    if (!sessionId) return;
+    setLeadLoading(true);
+    saleLiveApi
+      .getLead(Number(sessionId))
+      .then(setLead)
+      .catch(() => setLead(null))
+      .finally(() => setLeadLoading(false));
+  }, [sessionId, messages.length]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -138,7 +156,13 @@ export function LiveChatPage() {
 
   const ready = Boolean(input.trim()) && !loading && !awaitingAck;
 
+  // Previously hardcoded to "Chat trực tiếp với khách" — the lead lookup already carries
+  // the customer's real name (or their label as a fallback), so the topbar can finally show
+  // WHO the Sale is talking to instead of nothing at all.
+  const topbarName = lead?.customer_name ?? lead?.customer_label ?? "Chat trực tiếp với khách";
+
   return (
+    <div className="live-chat-layout">
     <div className="chat-page chat-page--standalone">
       <header className="chat-topbar">
         <div className="chat-topbar-info">
@@ -149,7 +173,7 @@ export function LiveChatPage() {
             <UsersIcon size={20} />
           </div>
           <div>
-            <div className="chat-topbar-name">Chat trực tiếp với khách</div>
+            <div className="chat-topbar-name">{topbarName}</div>
             <div className="chat-topbar-status">
               <span className="chat-status-dot" />
               Bạn đang chat trực tiếp — AI không tự trả lời trong phiên này
@@ -165,6 +189,7 @@ export function LiveChatPage() {
 
       <div className="chat-messages" ref={scrollRef}>
         <div className="chat-messages-inner">
+          <LeadContextCard lead={lead} />
           {messages.map((m) => {
             const isCustomer = m.sender === "customer";
             const isSaleMessage = m.sender === "sale";
@@ -244,6 +269,9 @@ export function LiveChatPage() {
           </div>
         </form>
       </div>
+    </div>
+
+      <LeadInsightPanel lead={lead} loading={leadLoading} />
     </div>
   );
 }

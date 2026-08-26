@@ -1,21 +1,37 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from backend.core.enums import SessionStatus
 from backend.schemas.message import MessageResponse
+from backend.utils.phone import normalise_vn_mobile
 
 
 class CustomerRegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8)
-    full_name: str | None = None
+    full_name: str | None = Field(default=None, max_length=255)
+    # Stored normalised (`0xxxxxxxxx`) so the live inbox shows one form regardless of how
+    # the visitor typed it. Optional here even when the product requires it: requiredness
+    # is enforced in the router against `lead_require_phone_on_register`, so it can be
+    # relaxed with one env var if the gate turns out to cost too many registrations.
+    phone: str | None = None
     # If the visitor was chatting anonymously before registering, both identify the
     # in-progress session so it gets claimed (ownership transferred) instead of starting
     # the customer over with an empty chat history.
     session_id: int | None = None
     visitor_token: str | None = None
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def _normalise_phone(cls, value: object) -> object:
+        return normalise_vn_mobile(value) if isinstance(value, str) else value
+
+    @field_validator("full_name", mode="before")
+    @classmethod
+    def _strip_full_name(cls, value: object) -> object:
+        return value.strip() or None if isinstance(value, str) else value
 
 
 class AnonymousSessionResponse(BaseModel):

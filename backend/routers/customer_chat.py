@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from backend.ai.intent import needs_human_handoff, wants_human_agent
-from backend.core.audit import log_event, truncate
+from backend.core.audit import log_event, redact_and_truncate
 from backend.core.config import settings
 from backend.core.deps import get_optional_current_user, require_role
 from backend.core.enums import DocumentVisibility, MessageEmotion, MessageSender, SessionStatus, UserRole
@@ -31,6 +31,7 @@ from backend.repositories.chat_session import (
 )
 from backend.repositories.feedback import delete_feedback_for_session
 from backend.repositories.hitl_log import delete_hitl_logs_for_session
+from backend.repositories.lead import claim_anonymous_lead, get_or_create_lead, reset_lead_score
 from backend.repositories.message import (
     create_message,
     delete_messages_for_session,
@@ -49,7 +50,7 @@ from backend.schemas.customer import (
 )
 from backend.schemas.message import MessageResponse
 from backend.schemas.user import TokenResponse, UserResponse
-from backend.services import agent_pipeline, memory_service, search_criteria
+from backend.services import agent_pipeline, lead_service, memory_service, search_criteria
 
 router = APIRouter(prefix="/customer", tags=["Customer Chat"])
 
@@ -117,11 +118,27 @@ async def register_customer(
     """Create a CUSTOMER account and, if the visitor was chatting anonymously, claim their
     in-progress session so the conversation continues without losing history."""
     if get_user_by_email(db, payload.email) is not None:
-        log_event("customer.register.failure", email=payload.email, reason="email_taken")
+        # No email: the account is never created, so this row would be a stranger's address
+        # kept forever in a table with no foreign key to delete it by. `reason` answers the
+        # only question anyone asks of this event. (`auth.login.failure` does log a
+        # username, deliberately — that is a staff account and a security trail.)
+        log_event("customer.register.failure", reason="email_taken")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
+    if settings.lead_require_phone_on_register and not payload.phone:
+        log_event("customer.register.failure", reason="phone_missing")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Vui lòng nhập số điện thoại"
+        )
+
     user = create_user(
-        db, username=payload.email, email=payload.email, password=payload.password, role=UserRole.CUSTOMER
+        db,
+        username=payload.email,
+        email=payload.email,
+        password=payload.password,
+        role=UserRole.CUSTOMER,
+        full_name=payload.full_name,
+        phone=payload.phone,
     )
 
     if payload.session_id is not None and payload.visitor_token is not None:
@@ -129,8 +146,16 @@ async def register_customer(
         if session is not None and session.customer_id is None and session.visitor_token == payload.visitor_token:
             canonical = claim_or_merge_anonymous_session(db, session, user.id)
             _remember_customer_history(db, canonical, user.id)
+            lead_service.rescore_after_claim(
+                db, claim_anonymous_lead(db, visitor_token=payload.visitor_token, customer_id=user.id), user
+            )
 
-    log_event("customer.register.success", username=user.username, user_id=user.id)
+    log_event(
+        "customer.register.success",
+        username=user.username,
+        user_id=user.id,
+        phone_captured=user.phone is not None,
+    )
     return TokenResponse(
         access_token=create_access_token(subject=user.username, role=user.role),
         refresh_token=create_refresh_token(subject=user.username),
@@ -184,6 +209,12 @@ async def claim_anonymous_chat_session(
 
     canonical = claim_or_merge_anonymous_session(db, anonymous, user.id)
     _remember_customer_history(db, canonical, user.id)
+    # The lead follows the transcript. Easy to miss: this is the returning-customer path,
+    # distinct from the registration one above, and a visitor who logs in rather than
+    # signing up would otherwise leave their accumulated score orphaned on a dead token.
+    lead_service.rescore_after_claim(
+        db, claim_anonymous_lead(db, visitor_token=payload.visitor_token, customer_id=user.id), user
+    )
     return canonical
 
 
@@ -281,6 +312,14 @@ async def ask_in_customer_session(
     create_message(db, session_id, sender=MessageSender.CUSTOMER, content=payload.content)
     if memory_key is not None:
         memory_service.remember(memory_key, payload.content, session.project_id, db=db)
+
+    # Scored HERE, above every early return below, because the branches this function takes
+    # afterwards include the two turns a lead is hottest on: the anonymous turn-limit gate
+    # (which never calls the pipeline) and a customer messaging while a Sale already has
+    # them (which returns immediately) — the exact population the live inbox displays.
+    # A hook placed after the branch chain, or inside the pipeline, would score neither.
+    # Never raises; see `lead_service.rescore_for_turn`.
+    lead_service.rescore_for_turn(db, session, payload.content)
 
     if session.status != SessionStatus.BOT_HANDLING:
         log_event(
@@ -383,7 +422,9 @@ async def ask_in_customer_session(
         used_cache=used_cache,
         duration_ms=duration_ms,
         query_len=len(payload.content),
-        query=truncate(payload.content) if settings.log_query_text else None,
+        # A customer types their own phone number into this box ("gọi tôi 09..."), and the
+        # audit table has no foreign key, so the row outlives the account.
+        query=redact_and_truncate(payload.content) if settings.log_query_text else None,
     )
 
     message = create_message(
@@ -505,11 +546,23 @@ def _remember_customer_history(db: Session, session: ChatSession, customer_id: i
             memory_service.remember(key, message.content, session.project_id, db=db)
 
 
-def _forget_customer_context(session_id: int, customer_id: int | None) -> None:
-    """Drop every non-MySQL context layer that can affect the next customer answer."""
+def _forget_customer_context(
+    session_id: int, customer_id: int | None, db: Session | None = None, visitor_token: str | None = None
+) -> None:
+    """Drop the context that would otherwise outlive the messages the customer just erased.
+
+    Mostly the non-MySQL layers (Redis search criteria, long-term memory), plus one MySQL
+    one: the lead score. Its signals were read off the very messages being deleted, so
+    keeping the tier would leave a verdict with no evidence behind it. The lead ROW and its
+    identity survive — clearing a conversation is not a request to delete an account.
+    """
     search_criteria.clear(session_id)
     if customer_id is not None:
         memory_service.forget(memory_service.customer_key(customer_id))
+    if db is not None:
+        lead = get_or_create_lead(db, customer_id=customer_id, visitor_token=visitor_token)
+        if lead is not None:
+            reset_lead_score(db, lead)
 
 
 @router.delete("/sessions/{session_id}/messages", status_code=status.HTTP_204_NO_CONTENT)
@@ -537,7 +590,7 @@ async def clear_customer_session_messages(
     delete_messages_for_session(db, session_id)
     session.title = None
     db.commit()
-    _forget_customer_context(session_id, customer_id)
+    _forget_customer_context(session_id, customer_id, db=db, visitor_token=session.visitor_token)
     log_event(
         "customer.history.cleared",
         session_id=session_id,
@@ -555,5 +608,5 @@ async def remove_customer_session(
     delete_hitl_logs_for_session(db, session_id)
     delete_feedback_for_session(db, session_id)
     delete_messages_for_session(db, session_id)
-    _forget_customer_context(session_id, session.customer_id)
+    _forget_customer_context(session_id, session.customer_id, db=db, visitor_token=session.visitor_token)
     delete_session(db, session_id)
