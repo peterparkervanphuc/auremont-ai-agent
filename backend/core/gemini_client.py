@@ -170,7 +170,7 @@ def client_models_generate(prompt: str, config):
             if exc.code not in _GENERATE_RETRY_STATUS_CODES or attempt == _GENERATE_MAX_ATTEMPTS:
                 raise
 
-            delay = min(_retry_delay_seconds(exc), _GENERATE_MAX_RETRY_DELAY_SECONDS)
+            delay = min(retry_delay_seconds(exc), _GENERATE_MAX_RETRY_DELAY_SECONDS)
             logger.warning(
                 "Gemini generation hit a transient fault; retrying once.",
                 extra={
@@ -256,7 +256,7 @@ def _embed(
                 )
                 raise GeminiEmbeddingError("Gemini embedding request failed.") from exc
 
-            delay = _retry_delay_seconds(exc)
+            delay = retry_delay_seconds(exc)
             logger.warning(
                 "Gemini embedding rate-limited; retrying.",
                 extra={
@@ -301,7 +301,7 @@ def _embed(
 _DEFAULT_RETRY_DELAY_SECONDS = 20.0
 
 
-def _retry_delay_seconds(exc: genai_errors.APIError) -> float:
+def retry_delay_seconds(exc: genai_errors.APIError) -> float:
     """The 429 response itself names how long to back off (google.rpc.RetryInfo,
     e.g. "21s") — use it instead of guessing, falling back to a fixed default only if the
     response is ever shaped differently than the one this was built against.

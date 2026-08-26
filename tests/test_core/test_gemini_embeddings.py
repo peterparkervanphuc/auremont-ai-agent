@@ -152,9 +152,9 @@ def test_embed_does_not_retry_a_non_rate_limit_error(monkeypatch):
 
 
 def test_retry_delay_seconds_parses_the_api_suggestion():
-    assert gemini_client._retry_delay_seconds(_rate_limit_error("21s")) == 21.0
+    assert gemini_client.retry_delay_seconds(_rate_limit_error("21s")) == 21.0
 
 
 def test_retry_delay_seconds_falls_back_when_shape_is_unexpected():
     malformed = genai_errors.ClientError(429, {"error": {"code": 429}})
-    assert gemini_client._retry_delay_seconds(malformed) == gemini_client._DEFAULT_RETRY_DELAY_SECONDS
+    assert gemini_client.retry_delay_seconds(malformed) == gemini_client._DEFAULT_RETRY_DELAY_SECONDS

@@ -52,6 +52,17 @@ class GoldenCase:
     verifier_next_action: str = "accept"
     verifier_failure_mode: str = "none"
 
+    # The answer a Sale would accept as correct, written by hand against the fixed world
+    # above rather than sampled from any model. `eval/deepeval_suite.py` grades the real
+    # model's draft against this instead of asking a judge what "good" means — a judge
+    # scoring its own vendor's output rates it highly almost by construction, and no amount
+    # of prompt wording fixes that. Empty for a case that never reaches Generate.
+    #
+    # Facts here are entailed by `retrieved_docs`/`inventory_units`; the wording is a first
+    # draft for the Sale team to correct, since only they can say what a field answer must
+    # cover to be useful.
+    expected_output: str = ""
+
     # --- expectations checked against the PipelineResult -------------------------------
     expect_notice: bool = False
     expect_cited_document_ids: set[int] = field(default_factory=set)
@@ -98,6 +109,9 @@ GOLDEN_CASES: list[GoldenCase] = [
             )
         ],
         answer_text="- Thanh toan theo tien do 8 dot.\n- Giu cho 50 trieu dong o dot 1.",
+        expected_output=(
+            "Chính sách thanh toán của The Beverly chia theo tiến độ 8 đợt. Đợt 1 là khoản giữ chỗ 50 triệu đồng."
+        ),
         expect_cited_document_ids={101},
         expect_requires_hitl=True,  # "50 trieu dong" is a money figure -> commitment risk
         expect_answer_contains=("8 dot",),
@@ -110,6 +124,9 @@ GOLDEN_CASES: list[GoldenCase] = [
         retrieved_docs=[],
         inventory_units=[_unit("OP3-BE1-1205", project_id="ocean-park-3", price=3_600_000_000)],
         answer_text="- Con can OP3-BE1-1205, gia 3,6 ty dong.",
+        expected_output=(
+            "Hiện còn căn OP3-BE1-1205 tại The Beverly, loại 2 phòng ngủ, diện tích 68,2 m², giá 3,6 tỷ đồng."
+        ),
         expect_requires_hitl=True,
         expect_inventory_called=True,
         expect_answer_contains=("OP3-BE1-1205",),
@@ -144,6 +161,11 @@ GOLDEN_CASES: list[GoldenCase] = [
         ],
         inventory_units=[_unit("OP3-BE1-1205", project_id="ocean-park-3", price=3_600_000_000)],
         answer_text="- Con can OP3-BE1-1205 gia 3,6 ty dong.\n- Chiet khau 5% khi thanh toan som.",
+        expected_output=(
+            "Hiện còn căn OP3-BE1-1205 tại The Beverly, loại 2 phòng ngủ, diện tích 68,2 m², "
+            "giá 3,6 tỷ đồng. Về chính sách bán hàng, căn 2 phòng ngủ được chiết khấu 5% "
+            "khi thanh toán sớm."
+        ),
         expect_cited_document_ids={101},
         expect_requires_hitl=True,
         expect_inventory_called=True,
