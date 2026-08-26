@@ -39,3 +39,23 @@ def test_catalogue_is_complete_only_when_every_seed_record_is_present(monkeypatc
     monkeypatch.setattr(bootstrap_data, "_expected_catalogue_ids", lambda: {"parent", "child"})
 
     assert bootstrap_data._catalogue_is_loaded() is True
+
+
+def test_existing_catalogue_still_syncs_missing_project_images(monkeypatch):
+    settings = SimpleNamespace(
+        auto_load_demo_data=True,
+        project_images_archive_url="https://cdn.example.test/project-images.tar.gz",
+        project_images_base_url="https://cdn.example.test/project-images",
+    )
+    downloaded: list[str] = []
+    monkeypatch.setattr(bootstrap_data, "get_settings", lambda: settings)
+    monkeypatch.setattr(bootstrap_data, "_catalogue_is_loaded", lambda: True)
+    monkeypatch.setattr(
+        bootstrap_data,
+        "_download_archive_to_minio",
+        lambda url: downloaded.append(url) or 2,
+    )
+
+    bootstrap_data.load_demo_data()
+
+    assert downloaded == [settings.project_images_archive_url]

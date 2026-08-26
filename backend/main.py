@@ -19,6 +19,7 @@ from backend.middleware.logging import RequestContextMiddleware
 from backend.models import (  # noqa: F401
     chat_session,
     conflict_flag,
+    customer_conversation_summary,
     document,
     document_relation,
     hitl_log,

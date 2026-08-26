@@ -19,6 +19,7 @@ from backend.models import (  # noqa: F401  (đăng ký bảng vào Base.metadat
     audit_log,
     chat_session,
     conflict_flag,
+    customer_conversation_summary,
     document,
     document_relation,
     feedback,
@@ -44,6 +45,7 @@ EXPECTED_TABLES = {
     "document_relations",
     "pipeline_trace_runs",
     "llm_usage_events",
+    "customer_conversation_summaries",
 }
 
 

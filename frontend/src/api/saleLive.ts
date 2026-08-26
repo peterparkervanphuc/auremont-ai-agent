@@ -3,7 +3,7 @@
 // than the visitor-token-aware `customerApi`.
 
 import { api } from "./client";
-import type { LiveInboxEntry, MessageResponse } from "../types";
+import type { CustomerConversationSummary, LiveInboxEntry, MessageResponse } from "../types";
 
 export const saleLiveApi = {
   listWaiting: () => api.get<LiveInboxEntry[]>("/sale/live-inbox"),
@@ -17,6 +17,10 @@ export const saleLiveApi = {
     api.post<MessageResponse>(`/sale/live-inbox/${sessionId}/reply`, { content }),
   suggest: (sessionId: number) =>
     api.post<{ draft: string; requires_hitl: boolean }>(`/sale/live-inbox/${sessionId}/suggest`),
+  getCustomerSummary: (sessionId: number) =>
+    api.get<CustomerConversationSummary>(`/sale/live-inbox/${sessionId}/customer-summary`),
+  refreshCustomerSummary: (sessionId: number) =>
+    api.post<CustomerConversationSummary>(`/sale/live-inbox/${sessionId}/customer-summary/refresh`),
   /** Hand the session back to the AI — the customer can go back to chatting with Auremont. */
   end: (sessionId: number) => api.post<MessageResponse>(`/sale/live-inbox/${sessionId}/end`),
 };

@@ -3266,6 +3266,210 @@ code {
 
 .chat-input-area { display: flex; flex-direction: column; gap: 6px; }
 
+.chat-command-menu {
+  overflow: hidden;
+  max-height: min(390px, 52vh);
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg) 96%, var(--accent) 4%);
+  box-shadow: 0 18px 48px rgba(7, 20, 40, 0.2), 0 0 0 1px color-mix(in srgb, var(--accent) 6%, transparent);
+  animation: chat-command-in 0.16s var(--ease) both;
+}
+
+@keyframes chat-command-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chat-command-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 14px 11px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 9%, var(--bg)), var(--bg));
+}
+
+.chat-command-menu-head > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-command-menu-head strong {
+  color: var(--text-1);
+  font-size: 0.84rem;
+}
+
+.chat-command-menu-kicker {
+  color: var(--accent);
+  font-size: 0.61rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.chat-command-prefix {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 10px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.chat-command-menu-label {
+  padding: 10px 14px 6px;
+  color: var(--text-3);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chat-command-results {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 6px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 25%, var(--border)) transparent;
+}
+
+.chat-command-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 9px;
+  border: 0;
+  border-radius: 11px;
+  color: var(--text-1);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
+}
+
+.chat-command-item:hover,
+.chat-command-item:focus-visible,
+.chat-command-item--active {
+  outline: none;
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-2));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.chat-command-item:hover {
+  transform: translateX(1px);
+}
+
+.chat-command-icon {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
+}
+
+.chat-command-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chat-command-copy strong {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-command-copy small {
+  color: var(--text-3);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.chat-command-privacy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--emerald) 22%, var(--border));
+  border-radius: 999px;
+  color: var(--emerald);
+  background: color-mix(in srgb, var(--emerald) 7%, var(--bg));
+  font-size: 0.62rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.chat-command-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 18px 14px 20px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.chat-command-empty strong {
+  color: var(--text-2);
+  font-size: 0.78rem;
+}
+
+.chat-command-empty span {
+  font-size: 0.7rem;
+}
+
+.chat-command-menu-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 8px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--bg-2) 70%, var(--bg));
+  font-size: 0.62rem;
+}
+
+.chat-command-menu-footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-command-menu-footer kbd {
+  min-width: 20px;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-bottom-color: color-mix(in srgb, var(--text-3) 35%, var(--border));
+  border-radius: 5px;
+  color: var(--text-2);
+  background: var(--bg);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--text-3) 18%, transparent);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+}
+
 .chat-input-box {
   display: flex;
   align-items: center;
@@ -5229,6 +5433,331 @@ code {
   font-size: 0.8125rem;
   line-height: 1.5;
   color: var(--text-2);
+}
+
+/* Incremental customer handoff brief. The drawer is intentionally separate from the raw
+   transcript: Sale sees the derived cross-channel context, while the AI-only session stays
+   inaccessible through the live-message API. */
+.chat-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.customer-summary-scrim {
+  position: fixed;
+  z-index: 180;
+  inset: 64px 0 0;
+  width: 100%;
+  border: 0;
+  background: rgba(7, 20, 40, 0.3);
+  backdrop-filter: blur(3px);
+  cursor: default;
+}
+
+.customer-summary-drawer {
+  position: fixed;
+  z-index: 190;
+  top: 64px;
+  right: 0;
+  bottom: 0;
+  width: min(520px, 94vw);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  box-shadow: -24px 0 60px rgba(7, 20, 40, 0.2);
+  animation: customer-summary-in 0.24s var(--ease) both;
+}
+
+@keyframes customer-summary-in {
+  from { opacity: 0; transform: translateX(28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.customer-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.customer-summary-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.2rem;
+  letter-spacing: -0.025em;
+}
+
+.customer-summary-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 20px 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--rose) 28%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--rose) 8%, white);
+  color: var(--rose);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.customer-summary-error svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.customer-summary-eyebrow {
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.customer-summary-close {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--bg-2);
+  cursor: pointer;
+  transition: border-color var(--t-fast), color var(--t-fast), transform var(--t-fast);
+}
+
+.customer-summary-close:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  transform: translateY(-1px);
+}
+
+.customer-summary-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px 24px;
+}
+
+.customer-summary-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px;
+  text-align: center;
+  color: var(--text-2);
+}
+
+.customer-summary-loading span {
+  max-width: 330px;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--text-3);
+}
+
+.customer-summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 14px;
+}
+
+.customer-summary-meta span,
+.customer-summary-signal,
+.customer-summary-tags span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: 999px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-2));
+  font-size: 0.72rem;
+}
+
+.customer-summary-hero {
+  padding: 17px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 44%),
+    var(--bg-2);
+}
+
+.customer-summary-signal-row,
+.customer-summary-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.customer-summary-signal {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.customer-summary-hero p {
+  margin: 12px 0 0;
+  color: var(--text-1);
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.customer-summary-section {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.customer-summary-section h3 {
+  margin: 0 0 12px;
+  font-size: 0.88rem;
+}
+
+.customer-summary-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.customer-summary-facts > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-2);
+}
+
+.customer-summary-facts span,
+.customer-summary-unit span {
+  color: var(--text-3);
+  font-size: 0.7rem;
+}
+
+.customer-summary-facts strong {
+  overflow-wrap: anywhere;
+  color: var(--text-1);
+  font-size: 0.8rem;
+}
+
+.customer-summary-list {
+  display: grid;
+  gap: 8px;
+}
+
+.customer-summary-unit {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-2);
+  transition: transform var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.customer-summary-unit:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  box-shadow: 0 8px 22px rgba(7, 20, 40, 0.08);
+}
+
+.customer-summary-unit > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.customer-summary-unit p {
+  margin: 7px 0;
+  color: var(--text-2);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.customer-summary-unit small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--amber);
+  font-size: 0.68rem;
+}
+
+.customer-summary-checklist,
+.customer-summary-section--actions ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+  color: var(--text-2);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.customer-summary-checklist li::marker,
+.customer-summary-section--actions li::marker {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.customer-summary-checklist--warning li::marker { color: var(--amber); }
+
+.customer-summary-section--actions {
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--emerald) 28%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--emerald) 6%, var(--bg-2));
+}
+
+.customer-summary-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+}
+
+.customer-summary-footer > span {
+  color: var(--text-3);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.customer-summary-footer .customer-summary-private {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.customer-summary-private svg {
+  flex-shrink: 0;
+  color: var(--emerald);
+}
+
+@media (max-width: 560px) {
+  .customer-summary-scrim { inset: var(--mob-bar) 0 0; }
+  .customer-summary-drawer { top: var(--mob-bar); width: 100vw; }
+  .customer-summary-facts { grid-template-columns: 1fr; }
+  .customer-summary-body { padding-left: 16px; padding-right: 16px; }
+  .chat-topbar-actions .btn { padding-left: 9px; padding-right: 9px; font-size: 0.76rem; }
+  .chat-command-privacy,
+  .chat-command-menu-footer { display: none; }
+  .chat-command-item { grid-template-columns: 36px minmax(0, 1fr); }
 }
 
 /* Stands in for a price/commitment answer the widget must not show: the confirm-and-copy

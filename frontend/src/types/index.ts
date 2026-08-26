@@ -167,6 +167,62 @@ export interface LiveInboxEntry {
   waiting_since: string | null;
 }
 
+export interface CustomerSummaryNeeds {
+  purchase_purpose: string | null;
+  projects: string[];
+  property_types: string[];
+  unit_types: string[];
+  budget_min: number | null;
+  budget_max: number | null;
+  area_min_m2: number | null;
+  area_max_m2: number | null;
+  preferred_floor: string | null;
+  preferred_view: string | null;
+  purchase_timeline: string | null;
+}
+
+export interface CustomerSummaryConsideredUnit {
+  unit_code: string;
+  project_id: string | null;
+  customer_reaction: string | null;
+  last_mentioned_at: string | null;
+  inventory_recheck_required: boolean;
+  evidence_message_ids: number[];
+}
+
+export interface CustomerSummaryCommitment {
+  content: string;
+  status: string;
+  evidence_message_ids: number[];
+}
+
+export interface CustomerSummaryMetadata {
+  needs: CustomerSummaryNeeds;
+  considered_units: CustomerSummaryConsideredUnit[];
+  objections: string[];
+  pending_questions: string[];
+  commitments: CustomerSummaryCommitment[];
+  sentiment: string | null;
+  urgency: string | null;
+  next_best_actions: string[];
+  evidence: Array<{ field: string; message_ids: number[]; source_role: string }>;
+}
+
+export interface CustomerConversationSummary {
+  customer_id: number;
+  customer_label: string;
+  summary_text: string;
+  metadata: CustomerSummaryMetadata;
+  last_processed_message_id: number;
+  source_message_count: number;
+  newly_processed_message_count: number;
+  generated_at: string;
+  schema_version: string;
+  model_name: string;
+  from_cache: boolean;
+  is_stale: boolean;
+}
+
 export interface TokenResponse {
   access_token: string;
   refresh_token: string;
