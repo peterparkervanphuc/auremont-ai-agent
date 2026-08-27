@@ -1463,6 +1463,19 @@
   color: var(--amber);
 }
 
+/* .chat-bubble--user is a dark blue gradient (see its own rule for why) — the light,
+   --bg-1-based card look above reads as washed-out grey pills against it. Same "adapt to
+   what's actually behind it" idea as the .chat-bubble--user .chat-markdown rules further
+   down, just for the plain-bullet renderer instead of the Markdown one. */
+.chat-bubble--user .message-content-list > li {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chat-bubble--user .message-content-list > li::before {
+  color: #fff;
+}
+
 .hitl-sources {
   display: flex;
   flex-wrap: wrap;

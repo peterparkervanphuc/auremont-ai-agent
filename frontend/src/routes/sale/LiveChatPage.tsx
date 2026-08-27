@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { saleLiveApi } from "../../api/saleLive";
 import type { MessageResponse } from "../../types";
 import { AnswerImageStrip } from "./AnswerImageStrip";
+import { AiHistoryModal } from "./AiHistoryModal";
 import { PropertyListingCarousel } from "../PropertyListingCarousel";
 import { parseServerDate } from "../../utils/datetime";
 import { AuremontAvatar } from "../../components/AuremontAvatar";
@@ -11,6 +12,7 @@ import { CitationList } from "../../components/CitationList";
 import {
   AlertTriangleIcon,
   ArrowLeftIcon,
+  ClockIcon,
   LoaderIcon,
   SendIcon,
   SparklesIcon,
@@ -37,6 +39,7 @@ export function LiveChatPage() {
   const [suggesting, setSuggesting] = useState(false);
   const [ending, setEnding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAiHistory, setShowAiHistory] = useState(false);
   // Holds an AI draft that tripped the price/commitment detector and has not been
   // acknowledged yet. Replies here reach the customer directly, with none of the HITL card
   // the AI-consult flow puts in the way, so an AI-authored commitment gets the same
@@ -157,11 +160,21 @@ export function LiveChatPage() {
           </div>
         </div>
 
-        <button className="btn btn-outline" type="button" onClick={endChat} disabled={ending}>
-          {ending ? <LoaderIcon size={15} className="icon-spin" /> : null}
-          Kết thúc chat
-        </button>
+        <div className="chat-topbar-actions">
+          <button className="btn btn-outline" type="button" onClick={() => setShowAiHistory(true)}>
+            <ClockIcon size={15} />
+            Xem lại hội thoại AI
+          </button>
+          <button className="btn btn-outline" type="button" onClick={endChat} disabled={ending}>
+            {ending ? <LoaderIcon size={15} className="icon-spin" /> : null}
+            Kết thúc chat
+          </button>
+        </div>
       </header>
+
+      {sessionId && (
+        <AiHistoryModal sessionId={Number(sessionId)} open={showAiHistory} onClose={() => setShowAiHistory(false)} />
+      )}
 
       <div className="chat-messages" ref={scrollRef}>
         <div className="chat-messages-inner">

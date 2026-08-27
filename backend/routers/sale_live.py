@@ -113,10 +113,25 @@ async def claim(
 async def get_live_messages(
     session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))
 ) -> list[Message]:
-    """Full history, including everything the AI already said, so the Sale never has to ask
-    the customer to repeat themselves."""
+    """Only what was said on this LIVE row — the customer's AI-era conversation lives in a
+    separate `channel=AI` session the Sale cannot open (see `_owned_live_session`). Use
+    `get_ai_history` for a deliberate, read-only look at that prior conversation."""
     _owned_live_session(db, session_id, user)
     return list_messages_for_session(db, session_id)
+
+
+@router.get("/{session_id}/ai-history", response_model=list[MessageResponse])
+async def get_ai_history(
+    session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))
+) -> list[Message]:
+    """Read-only look at the customer's AI-era conversation, so a Sale isn't forced to make
+    the customer repeat themselves — a deliberate, explicit crossing of the privacy boundary
+    `_owned_live_session` otherwise enforces (see that function and `SessionChannel`'s
+    docstring), rather than the old behaviour of silently merging it into the live transcript.
+    """
+    session = _owned_live_session(db, session_id, user)
+    ai_session = get_latest_customer_session(db, session.customer_id) if session.customer_id else None
+    return list_messages_for_session(db, ai_session.id) if ai_session else []
 
 
 @router.post("/{session_id}/reply", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)

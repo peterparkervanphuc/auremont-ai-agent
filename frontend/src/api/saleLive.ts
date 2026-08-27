@@ -13,6 +13,9 @@ export const saleLiveApi = {
   listMine: () => api.get<LiveInboxEntry[]>("/sale/live-inbox/mine"),
   claim: (sessionId: number) => api.post<LiveInboxEntry>(`/sale/live-inbox/${sessionId}/claim`),
   getMessages: (sessionId: number) => api.get<MessageResponse[]>(`/sale/live-inbox/${sessionId}/messages`),
+  /** Read-only look at the customer's AI-era conversation (separate `channel=AI` session) —
+   * see backend/routers/sale_live.py::get_ai_history. */
+  getAiHistory: (sessionId: number) => api.get<MessageResponse[]>(`/sale/live-inbox/${sessionId}/ai-history`),
   reply: (sessionId: number, content: string) =>
     api.post<MessageResponse>(`/sale/live-inbox/${sessionId}/reply`, { content }),
   suggest: (sessionId: number) =>
