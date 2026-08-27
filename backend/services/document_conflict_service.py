@@ -35,8 +35,6 @@ class DocumentConflictAssessmentError(RuntimeError):
 class SemanticConflictEvidence(BaseModel):
     """One source-grounded business fact that supports the assessment."""
 
-    # Keep the schema compatible with Gemini structured output.  In particular, do not
-    # use ``extra="forbid"`` because that emits ``additionalProperties``.
     model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
 
     quote_a: str = Field(min_length=8, max_length=1_000, description="Short quote copied from document A.")
@@ -269,9 +267,6 @@ def assess_semantic_conflict(
             }
         )
 
-    # Fixed-window sampling is useful for finding a conflict, but it can never prove
-    # absence of one in omitted regions. Until both documents carry an explicit
-    # full-coverage fact manifest, a sampled "compatible" result is review-only.
     if assessment.decision == "compatible" and (len(text_a) > max_chars or len(text_b) > max_chars):
         return assessment.model_copy(
             update={
@@ -328,8 +323,6 @@ def _sample_document_text(text: str, *, max_chars: int, segment_count: int) -> s
     marker_budget = len(_OMISSION_MARKER) * (segment_count - 1)
     content_budget = max_chars - marker_budget
     if content_budget < segment_count:
-        # Public callers use a validated minimum, but keep the helper total for focused
-        # tests and future reuse with a smaller explicit limit.
         return text[:max_chars]
 
     base_size, remainder = divmod(content_budget, segment_count)
@@ -346,8 +339,6 @@ def _sample_document_text(text: str, *, max_chars: int, segment_count: int) -> s
         samples.append(text[start : start + size])
 
     result = _OMISSION_MARKER.join(samples)
-    # The allocation above is exact; retain the slice as a defensive invariant if the
-    # marker is ever changed to a dynamically generated value.
     return result[:max_chars]
 
 

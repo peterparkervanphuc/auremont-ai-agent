@@ -84,7 +84,6 @@ def _run(
     return seen
 
 
-# --- Hoc giua cac cau hoi ----------------------------------------------------------------
 
 
 def test_a_lesson_from_one_question_reaches_the_next(reflection_redis, monkeypatch):
@@ -152,7 +151,6 @@ def test_pipeline_reads_and_writes_reflections_in_the_same_session_scope(reflect
     assert "BÀI HỌC TỪ CÁC LỖI TRƯỚC ĐÂY" in same_customer[0]
 
 
-# --- Tat/hong thi khong duoc anh huong cau tra loi -----------------------------------------
 
 
 def test_disabled_flag_neither_reads_nor_writes(reflection_redis, monkeypatch):
@@ -174,7 +172,6 @@ def test_redis_outage_still_answers(monkeypatch):
     assert seen
 
 
-# --- Thu tu trong prompt --------------------------------------------------------------------
 
 
 def test_correction_is_read_after_the_lessons():

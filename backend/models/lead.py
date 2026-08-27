@@ -41,40 +41,26 @@ class Lead(Base):
         Integer, ForeignKey("users.id"), nullable=True, unique=True, index=True
     )
     visitor_token: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
-    # Last project the person showed interest in — powers the Admin per-project breakdown.
     project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
 
-    # Indexed: the live inbox sorts on this every 5 seconds, for every logged-in Sale.
     tier: Mapped[str] = mapped_column(
         String(10), default=LeadTier.COLD, server_default=LeadTier.COLD.value, nullable=False, index=True
     )
     score: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    # Kept apart from `score` so the LLM's contribution stays auditable after the fact —
-    # without it, a retuned weight table and a drifting model look identical in the data.
     rule_score: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
-    # NULL means the LLM pass has never run for this lead, which is different from it having
-    # run and found nothing (0).
     soft_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     urgency: Mapped[str | None] = mapped_column(String(12), nullable=True)
     purpose: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
-    # Latched signal flags plus the evidence behind them and a one-sentence Vietnamese
-    # reason. JSON rather than a wide mostly-NULL table, same reasoning as
-    # `conflict_flags.evidence` and `audit_logs.payload`: the signal set will change as the
-    # weights are tuned against real traffic, and a verdict with no evidence is unauditable.
     signals: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
-    # Scoring provenance, same shape as `conflict_flags`: "rule" or "rule+llm".
     detection_method: Mapped[str] = mapped_column(
         String(20), default="rule", server_default="rule", nullable=False
     )
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    # Bumped whenever the weight table changes, so rows scored under old weights stay
-    # identifiable instead of silently polluting the Admin averages.
     analysis_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
-    # Customer turns seen so far — both a signal and the anchor for the LLM debounce.
     turn_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     llm_scored_turn: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

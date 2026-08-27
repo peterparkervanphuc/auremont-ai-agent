@@ -45,7 +45,6 @@ def rescore_for_turn(db: Session, session: ChatSession, query: str) -> None:
 def _rescore(db: Session, session: ChatSession, query: str, settings) -> None:
     lead = get_or_create_lead(db, customer_id=session.customer_id, visitor_token=session.visitor_token)
     if lead is None:
-        # A Sale's own AI-consult session: nobody to score.
         return
 
     criteria = _criteria_for(session.id, query)
@@ -87,7 +86,6 @@ def _rescore(db: Session, session: ChatSession, query: str, settings) -> None:
     )
 
     tracing.step("lead.score", tier=verdict.tier, rule_score=rule_score, llm_called=soft is not None)
-    # Never the question, the name, or the phone number — see backend/core/audit.py.
     log_event(
         "lead.scored",
         lead_id=lead.id,
@@ -144,7 +142,6 @@ def _criteria_for(session_id: int, query: str) -> search_criteria.SearchCriteria
     try:
         stored, _ = search_criteria.load(session_id)
     except Exception:
-        # Redis down: this turn's own text still carries most of the signal.
         logger.debug("Could not load stored criteria for session %s.", session_id, exc_info=True)
     return search_criteria.merge_criteria(stored, search_criteria.parse_criteria(query))
 

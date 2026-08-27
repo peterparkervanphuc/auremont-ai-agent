@@ -13,22 +13,9 @@ from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Bulk document upload (Admin's multi-file queue) fires one embed_content call per
-# document in quick succession, each covering many chunks — comfortably enough to blow
-# through the Gemini free tier's ~100 requests/minute embedding quota partway through a
-# batch. A 429 there is not a real failure (the document is fine, the model call would
-# succeed if it weren't for the moment's rate limit) but every retry-less call above this
-# treated it as one, silently leaving gaps in the knowledge base that later read as "the
-# AI has no data" for whichever project's doc lost the race. See _embed's retry loop.
 _EMBED_MAX_ATTEMPTS = 4
 _EMBED_RETRY_STATUS_CODES = {429}
 
-# Generation (every answer, and every Verifier judgement) sits on the interactive path with
-# its sub-3-second field budget, so it gets a far tighter policy than the batch embedding
-# loop above: one retry, transient faults only, and a hard cap on the backoff — a 429's
-# suggested retryDelay can be tens of seconds, which is worse than failing fast here.
-# Without any retry a single blip failed the whole turn and reached the Admin dashboard
-# looking identical to an answer the Verifier genuinely rejected.
 _GENERATE_MAX_ATTEMPTS = 2
 _GENERATE_RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 _GENERATE_MAX_RETRY_DELAY_SECONDS = 1.0
@@ -113,7 +100,6 @@ def generate_json(
     if isinstance(parsed, schema):
         return parsed
 
-    # Older SDK builds populate `.text` but not `.parsed`.
     raw = (response.text or "").strip()
     if not raw:
         return None
@@ -145,8 +131,6 @@ def client_models_generate(prompt: str, config):
                     total_tokens=total_tokens,
                 )
                 if settings.observability_metrics_enabled:
-                    # This independent best-effort transaction also covers document
-                    # classification/conflict calls that run outside the chat graph.
                     try:
                         from backend.core.observability_sink import persist_llm_usage
 
@@ -183,7 +167,6 @@ def client_models_generate(prompt: str, config):
             )
             time.sleep(delay)
 
-    # Unreachable: the loop either returns or raises on its final attempt.
     raise RuntimeError("Gemini generation retry loop exited without a result.")
 
 
@@ -228,7 +211,6 @@ def _embed(
         "output_dimensionality": settings.embedding_dimensions,
     }
 
-    # A title improves retrieval quality for document embeddings.
     if title:
         config_kwargs["title"] = title
 
@@ -275,14 +257,12 @@ def _embed(
             )
             raise GeminiEmbeddingError("Gemini embedding request failed.") from exc
 
-    assert response is not None  # every loop exit either raises or breaks with a response
+    assert response is not None
 
     if not response.embeddings:
         raise GeminiEmbeddingError("Gemini returned no embeddings.")
 
-    # Built as a loop rather than a comprehension so the None check actually narrows the
     # element type: `embedding.values` is optional in the SDK's own typing, and a None
-    # reaching Qdrant would fail far from here with nothing pointing back at this call.
     vectors: list[list[float]] = []
     for embedding in response.embeddings:
         if embedding.values is None:

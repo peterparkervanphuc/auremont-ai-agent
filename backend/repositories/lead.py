@@ -51,10 +51,6 @@ def update_lead_score(
     lead.score = verdict.score
     lead.rule_score = verdict.rule_score
     new_signals = dict(verdict.signals)
-    # `combine()` rebuilds this dict from scratch every call, so a rules-only rescore (no
-    # fresh LLM pass this turn) would silently erase a previous turn's `llm_reason` even
-    # though nothing contradicted it — the lead just did not say anything new. Carry the
-    # old explanation forward until a new LLM pass actually replaces it.
     if "llm_reason" not in new_signals and lead.signals and lead.signals.get("llm_reason"):
         new_signals["llm_reason"] = lead.signals["llm_reason"]
     lead.signals = new_signals

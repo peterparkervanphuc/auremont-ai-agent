@@ -131,10 +131,6 @@ class _VectorMetadata:
     is_current: bool
 
 
-# Operators worth preserving through normalisation: "≤ 3 tỷ" and "< 3 tỷ" mean the same
-# thing and must compare equal, while dropping them entirely would make "≤ 3 tỷ" and
-# "≥ 3 tỷ" look identical. Typed wider than it looks because that is what str.maketrans
-# accepts.
 _OPERATOR_TRANSLATIONS: dict[str, str | int | None] = {"≤": "<=", "≥": ">=", "≠": "!="}
 
 
@@ -230,11 +226,6 @@ def ingest_uploaded_document(
         update_document_storage_path(db, document.id, object_key)
 
         if not auto_approve:
-            # Classification review is a hard boundary for expensive/derived data.
-            # Keep only the original file and the LLM's metadata suggestion until an
-            # Admin explicitly confirms (or corrects) it.  In particular, documents
-            # classified as OTHER can never pollute Qdrant before a human assigns a
-            # supported business category.
             document.status = DocumentStatus.COMPLETED
             document.is_current = False
             db.commit()
@@ -248,23 +239,12 @@ def ingest_uploaded_document(
         if not chunks:
             raise DocumentIngestionError("No chunks were produced.")
 
-        # Keep new vectors quarantined until the conflict scan succeeds. This stops an
-        # auto-approved document from answering between Qdrant upsert and conflict
-        # detection (or after a failed scan).
         vector_write_attempted = True
         _embed_and_index(document, chunks, is_current=False)
 
-        # LLM work must never hold the MySQL advisory lock. The locked scan below
-        # revalidates source hashes and fails closed if the comparison set changed.
         semantic_assessments = prepare_semantic_conflict_assessments(db, document, raw_text=raw_text)
 
-        # Serialize the compare-and-activate section for one project/category. Without
-        # this, two concurrent uploads can both scan while the other is PROCESSING,
-        # both see no completed sibling, and both become retrievable.
         with _conflict_scope_lock(db, document):
-            # Keep the flags in this transaction. A later sibling read can still fail;
-            # committing each flag inside the scan would leave an OPEN conflict pointing
-            # at a document that the outer handler subsequently marks FAILED.
             scan = _scan_conflicts_with_prepared(
                 db,
                 document,
@@ -287,9 +267,6 @@ def ingest_uploaded_document(
             )
 
             if has_duplicate:
-                # A byte/format-normalised duplicate is not a contradiction, so it
-                # must not create an OPEN flag. It also must not become a second live
-                # source that crowds retrieval/citations with the same content.
                 document.review_status = DocumentReviewStatus.REJECTED
                 document.reviewed_by = None
                 document.reviewed_at = utcnow()
@@ -312,10 +289,6 @@ def ingest_uploaded_document(
             db.commit()
 
             if final_vector_metadata.is_current or has_duplicate:
-                # Commit the authoritative DB state while Qdrant is still quarantined,
-                # then publish the final retrieval metadata under the same scope lock.
-                # Duplicates need this sync too because their review status changed to
-                # REJECTED after the initial Qdrant write.
                 try:
                     update_document_vector_metadata(
                         document_id,
@@ -326,12 +299,6 @@ def ingest_uploaded_document(
                         is_current=final_vector_metadata.is_current,
                     )
                 except Exception:
-                    # The clean/duplicate decision is already committed. A timed-out
-                    # set_payload may or may not have applied, but either outcome is
-                    # safe: clean content is authorised, while duplicate points were
-                    # already indexed with is_current=false. Do not rewrite MySQL to
-                    # FAILED and create a fail-open cross-store contradiction. The
-                    # metadata audit will retry/report any availability drift.
                     logger.exception(
                         "Final vector metadata sync is pending for document %s.",
                         document_id,
@@ -359,8 +326,6 @@ def ingest_uploaded_document(
         failed = update_document_status(db, document.id, DocumentStatus.FAILED)
 
         if vector_write_attempted:
-            # set_payload may have reached Qdrant even when the client observed a
-            # timeout. Reassert the quarantine so FAILED documents cannot answer.
             try:
                 update_document_vector_metadata(
                     failed.id,
@@ -415,7 +380,6 @@ def _embed_and_index(document: Document, chunks: list, *, is_current: bool | Non
     differently-shaped points. First ingestion passes `is_current=False` to keep the new
     vectors quarantined until the conflict scan clears them.
     """
-    # Batch the chunks so a single Gemini request does not carry too many at once.
     vectors: list[list[float]] = []
     batch_size = 32
 
@@ -428,12 +392,9 @@ def _embed_and_index(document: Document, chunks: list, *, is_current: bool | Non
             )
         )
 
-    # No batching: BM25 runs locally, so there is no request size to keep under.
     try:
         sparse_vectors = embed_documents_sparse([chunk.text for chunk in chunks])
     except SparseEmbeddingError as exc:
-        # Deliberately fatal. Indexing the dense vector alone would leave this document
-        # permanently unreachable by keyword search, with nothing to show that happened.
         raise DocumentIngestionError("Could not compute BM25 sparse vectors.") from exc
 
     index_document_chunks(
@@ -473,10 +434,6 @@ def reindex_document(db: Session, *, document_id: int) -> Document:
         file_bytes = _read_original_file(document.file_path)
         sections = parse_document(document.title, file_bytes)
 
-        # Same category the first ingestion chunked with. Omitting it silently downgraded
-        # every re-indexed document to generic splitting: a legal document lost its
-        # Article/Clause breadcrumbs and a price list lost table_mode, so rows could be cut
-        # mid-table — precisely the documents whose structure retrieval depends on most.
         chunks = chunk_sections(sections, document_category=document.category)
         if not chunks:
             raise DocumentIngestionError("No chunks were produced.")
@@ -571,8 +528,6 @@ def reclassify_document(
     if target_project_id is not None and not isinstance(target_project_id, str):
         raise DocumentIngestionError("project_id must be a project catalogue id or null.")
     if target_project_id and db.get(Project, target_project_id) is None:
-        # Validate before the Qdrant quarantine so a stale UI selection is a harmless
-        # client error, not a half-started correction that takes a healthy document down.
         raise DocumentIngestionError(f"project_id '{target_project_id}' does not exist in the project catalogue.")
 
     category_changed = category != document.category
@@ -588,15 +543,9 @@ def reclassify_document(
             "Choose a supported business category or remove the document."
         )
 
-    # New pending documents deliberately have no Qdrant points.  Their first Admin
-    # approval therefore always builds the index, even when the Admin accepts every LLM
-    # suggestion unchanged.
     requires_reindex = was_pending_review or category_changed or project_changed
     previous_update_values = {field_name: getattr(document, field_name) for field_name in updates}
 
-    # Step 1: stop answering from old chunks before anything else moves. A newly
-    # uploaded PENDING document has no vectors by design, so avoid creating a false
-    # dependency on an existing Qdrant collection just to approve it.
     if not was_pending_review:
         update_document_vector_metadata(
             document.id,
@@ -611,8 +560,6 @@ def reclassify_document(
 
     chunks: list = []
     try:
-        # Parse/chunk before changing persistent metadata. If the source is corrupt, the
-        # phase-1 quarantine remains committed but category/project stay retryable.
         if requires_reindex:
             file_bytes = _read_original_file(document.file_path)
             sections = parse_document(document.title, file_bytes)
@@ -626,10 +573,6 @@ def reclassify_document(
         elif settings.semantic_conflict_detection_enabled:
             comparison_text = _read_original_text(document)
         else:
-            # Preserve the lightweight metadata-only correction path when the
-            # optional semantic detector is disabled.  The deterministic scan
-            # can lazily read the source itself (and test doubles need no
-            # object-storage connection at all).
             comparison_text = None
 
         comparison_document = _comparison_document_with_updates(
@@ -643,9 +586,6 @@ def reclassify_document(
             raw_text=comparison_text,
         )
 
-        # Step 2: serialize against ingestion in the corrected target scope. The lock's
-        # MySQL setup intentionally rolls back/refreshes the Session, so apply metadata
-        # only after entering it and re-locking the row.
         with _conflict_scope_lock(db, document, scope=(target_project_id, str(category))):
             refreshed = get_document(db, document_id, for_update=True)
             if refreshed is None:  # pragma: no cover - deletion also requires this row lock
@@ -683,8 +623,6 @@ def reclassify_document(
                 delete_document_vectors(document.id)
                 _embed_and_index(document, chunks, is_current=False)
 
-            # Step 3: the comparison set changed, so the old scan's verdict says
-            # nothing about this corrected scope any more.
             scan = _scan_conflicts_with_prepared(
                 db,
                 document,
@@ -711,10 +649,6 @@ def reclassify_document(
                 )
             db.commit()
 
-            # The commit above makes corrected metadata/conflict flags authoritative,
-            # but also releases the row lock. Re-lock and refresh before publishing.
-            # A concurrent conflict resolution, visibility change or other quarantine
-            # that won the race can no longer be overwritten with stale ``true``.
             refreshed = get_document(db, document_id, for_update=True)
             if refreshed is None:  # pragma: no cover - deletion also requires this row lock
                 raise DocumentIngestionError(f"Document {document_id} no longer exists.")
@@ -741,9 +675,6 @@ def reclassify_document(
     except Exception as exc:
         db.rollback()
         if was_pending_review and requires_reindex:
-            # The deterministic Qdrant upsert can succeed just before a later conflict
-            # scan/DB step fails. Reassert the persisted PENDING quarantine so retries
-            # never leave approval-shaped payload metadata behind.
             try:
                 persisted = get_document(db, document_id)
                 if persisted is not None:
@@ -1067,19 +998,12 @@ def scan_conflicts_for(
         sibling_text = _read_original_text(sibling)
         sibling_content_key = _content_key(sibling_text)
 
-        # Missing source text is not proof that the new document is conflict-free.
-        # Fail closed so the ingestion handler keeps its vectors quarantined until the
-        # older corpus entry is repaired or deliberately retired.
         if not sibling_content_key:
             raise DocumentIngestionError(
                 f"Cannot verify conflicts because completed document {sibling.id} has no parsed source content."
             )
 
-        # Equal normalised content is a duplicate upload, not a conflict.
         if current_content_key == sibling_content_key:
-            # Exact content is a distinct outcome from both "clean" and "conflict".
-            # Return before writing any deferred flags so an identical upload is
-            # blocked without leaving misleading OPEN conflicts behind.
             return ConflictScanOutcome(duplicate_document_ids=(sibling.id,))
         if _meaningful_content_key(current_text) == _meaningful_content_key(sibling_text):
             return ConflictScanOutcome(duplicate_document_ids=(sibling.id,))
@@ -1108,9 +1032,6 @@ def scan_conflicts_for(
             rule_candidates.append((sibling, price_differences, fact_differences))
             continue
 
-        # When the feature is disabled, retain the old broad same-title behaviour.
-        # In normal operation the judge decides whether a rewrite is a contradiction
-        # or merely a compatible supplement.
         if rule_scope and rule_scope_is_grounded and same_identity and not semantic_enabled:
             rule_candidates.append((sibling, price_differences, fact_differences))
             continue
@@ -1226,23 +1147,14 @@ def _conflict_scope_lock(
 
     scope_project_id, scope_category = scope or (document.project_id, str(document.category))
     if settings.semantic_conflict_detection_enabled:
-        # Semantic facts can contradict across categories and global/project boundaries.
-        # One corpus-wide lock makes the precomputed comparison set stable.
         scope_project_id = "__all_projects__"
         scope_category = "__semantic_all_categories__"
     scope_key = f"{scope_project_id or '__global__'}:{scope_category}"
     digest = hashlib.sha256(scope_key.encode("utf-8")).hexdigest()[:40]
     lock_name = f"salesmate-ingest:{digest}"
 
-    # Every preceding ingestion write is committed at this point. End any read
-    # transaction created by refresh/classification before waiting: under MySQL
-    # REPEATABLE READ it could otherwise keep a snapshot from before another upload
-    # committed while this request waited for GET_LOCK.
     db.rollback()
     db.expire_all()
-    # Reserve the Session's DB connection first. If every concurrent upload acquired
-    # a dedicated advisory-lock connection and only then asked the pool for its scan
-    # connection, the pool could starve with all named locks held.
     db.connection()
 
     with bind.connect() as lock_connection:
@@ -1266,8 +1178,6 @@ def _conflict_scope_lock(
                     lock_name,
                     extra={"event": "document.conflict_lock.release_failed"},
                 )
-                # GET_LOCK belongs to the physical connection. Never return a
-                # connection whose lock release is uncertain back to the pool.
                 lock_connection.invalidate()
 
 
@@ -1586,8 +1496,6 @@ def _business_facts(text: str) -> dict[str, set[str]]:
             continue
 
         anchor = " ".join(re.sub(r"[^a-z0-9<>]+", " ", anchor).split())
-        # A bare table value or a generic heading is too weak an anchor. Require some
-        # actual business wording/code around the value placeholder.
         words = [word for word in anchor.split() if not word.startswith("<value")]
         if not words or len(" ".join(words)) < 3:
             continue
@@ -1620,10 +1528,6 @@ def _has_content_scope_evidence(
     has_shared_price_scope: bool,
     fact_differences: list[tuple[str, set[str], set[str]]],
 ) -> bool:
-    # Unkeyed prices do not tie two project-less documents together. A shared unit
-    # code present on both sides or a shared policy anchor does. A unit appearing on
-    # only one side is a meaningful change only after title/metadata/project already
-    # tied the documents together; by itself it must not join unrelated global files.
     return bool(fact_differences or has_shared_price_scope)
 
 
@@ -1631,8 +1535,6 @@ def _price_facts(text: str) -> dict[str, set[int]]:
     """Extract unit/product identifiers and prices from table-like lines."""
     facts: dict[str, set[int]] = {}
     unkeyed: set[int] = set()
-    # Extracted tables commonly put the unit only in a header such as
-    # "| Mã căn | Giá bán (VNĐ) |". Rows then contain a bare grouped number.
     vnd_table_context = _VND_TABLE_CONTEXT_RE.search(strip_diacritics(text)) is not None
     for line in text.splitlines():
         prices = _line_prices(line, vnd_table_context=vnd_table_context)

@@ -24,8 +24,6 @@ from typing import Any
 
 from backend.core.context import get_request_id
 
-# Attributes present on every LogRecord. Anything outside this set arrived via
-# `extra={...}` at the call site and is what we actually want in the JSON.
 _STANDARD_RECORD_FIELDS = frozenset(
     {
         "args",
@@ -54,8 +52,6 @@ _STANDARD_RECORD_FIELDS = frozenset(
     }
 )
 
-# Substring match, so `aws_secret_access_key` is caught by "secret" and
-# `x-api-key` by "api_key" without needing an exhaustive list.
 _SENSITIVE_KEY_PARTS = (
     "password",
     "token",
@@ -69,8 +65,6 @@ _SENSITIVE_KEY_PARTS = (
 
 _REDACTED = "***REDACTED***"
 
-# Chatty third-party loggers. At DEBUG, httpx logs every outbound call and
-# sqlalchemy.engine every statement, which buries our own lines.
 _NOISY_LIBRARIES = (
     "httpx",
     "httpcore",
@@ -81,9 +75,6 @@ _NOISY_LIBRARIES = (
     "python_multipart",
 )
 
-# The audit logger is a business record, not diagnostics: it keeps its own level
-# so raising LOG_LEVEL to WARNING in production cannot silently switch off the
-# trail the Admin dashboard relies on.
 AUDIT_LOGGER_NAME = "salesmate.audit"
 
 
@@ -128,10 +119,6 @@ class JsonFormatter(logging.Formatter):
         if record.stack_info:
             payload["stack"] = self.formatStack(record.stack_info)
 
-        # ensure_ascii=False keeps Vietnamese messages readable in `docker logs`;
-        # escaped as \uXXXX they are effectively unreadable. default=str stops an
-        # unserialisable extra (UUID, datetime, ORM object) from raising inside
-        # the logging call and taking down the request that emitted it.
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
@@ -174,8 +161,6 @@ def setup_logging() -> None:
     logging.config.dictConfig(
         {
             "version": 1,
-            # False is mandatory: uvicorn's loggers already exist by now, and
-            # True would disable them, throwing away startup tracebacks.
             "disable_existing_loggers": False,
             "filters": {"redact": {"()": RedactingFilter}},
             "formatters": {
@@ -192,8 +177,6 @@ def setup_logging() -> None:
             },
             "root": {"handlers": ["default"], "level": level},
             "loggers": {
-                # Our own access line carries request_id and duration; uvicorn's
-                # carries neither and would duplicate every request.
                 "uvicorn.access": {"handlers": [], "level": "CRITICAL", "propagate": False},
                 "uvicorn.error": {"level": level, "propagate": True, "handlers": []},
                 AUDIT_LOGGER_NAME: {

@@ -43,8 +43,6 @@ def create_conflict(
     therefore never clears evidence already persisted by an earlier detector.
     """
     _validate_analysis_metadata(detection_method, confidence, similarity_score)
-    # Store new pairs in a canonical orientation. Existing legacy rows may use either
-    # orientation, so evidence is reoriented again below before enrichment.
     if document_id_a > document_id_b:
         document_id_a, document_id_b = document_id_b, document_id_a
         evidence = _swap_evidence_sides(evidence)
@@ -68,9 +66,6 @@ def create_conflict(
         .first()
     )
     if latest is not None and latest.status != ConflictStatus.OPEN:
-        # An Admin decision for this exact immutable pair is authoritative. This also
-        # closes the race where a precomputed scan waits behind resolution and would
-        # otherwise recreate the alert immediately after it was closed.
         return latest
 
     existing = latest
@@ -113,8 +108,6 @@ def create_conflict(
         db.commit()
         db.refresh(conflict)
     else:
-        # Assign the primary key and make the row visible to later pair checks in
-        # the same scan, while keeping it part of the caller's transaction.
         db.flush()
     return conflict
 
@@ -138,7 +131,6 @@ def _merged_detection_method(current: str | None, incoming: DetectionMethod) -> 
         return "hybrid"
     if current in _DETECTION_METHODS:
         return "hybrid"
-    # Defensive compatibility for an imported row with unknown legacy provenance.
     return incoming
 
 
@@ -150,9 +142,6 @@ def _merge_evidence(current: dict[str, Any] | None, incoming: dict[str, Any]) ->
 
     merged: dict[str, Any] = dict(current)
     for key, incoming_value in incoming.items():
-        # These are complete versioned detector snapshots, not append-only event lists.
-        # Replacing one detector's namespace prevents a new confidence/version header
-        # from being displayed beside stale quotes from an older analysis.
         if key in {"rule", "semantic"}:
             merged[key] = incoming_value
             continue
@@ -262,9 +251,6 @@ def resolve_conflict(
     if seed is None:
         raise ValueError(f"ConflictFlag with id={conflict_id} not found.")
 
-    # Lock every adjacent flag in deterministic order before locking documents. A
-    # triangle (A-B, A-C, B-C) could otherwise deadlock when one transaction held
-    # document A while waiting for a flag row held by another transaction.
     seed_pair = (seed.document_id_a, seed.document_id_b)
     related_flags = (
         db.query(ConflictFlag)
@@ -307,9 +293,6 @@ def resolve_conflict(
         .with_for_update()
         .all()
     )
-    # Lock pending relations too. A concurrent review may be holding a PENDING row
-    # while it retires the target; filtering APPROVED before waiting would use a stale
-    # result and let this resolver reactivate the just-retired document.
     retired_document_ids = {
         relation.target_document_id
         for relation in retirement_relations
@@ -349,15 +332,6 @@ def resolve_conflict(
         for document in documents
     }
 
-    # "Delete the old document / prefer the new one": mark it BLOCKED rather than
-    # DELETE. The flag row still references this document via a foreign key, so a
-    # hard delete would violate the constraint; BLOCKED both removes it from the
-    # knowledge base and preserves the audit trail.
-    #
-    # `is_current` has to come down too. BLOCKED alone is invisible to retrieval:
-    # rag_service filters on visibility/review_status/is_current and never looks at
-    # `status`, so a document rejected here would go on grounding answers as if the
-    # Admin had never decided anything.
     superseded.status = DocumentStatus.BLOCKED
     superseded.is_current = False
 
@@ -366,9 +340,6 @@ def resolve_conflict(
     conflict.resolved_at = resolved_at
     conflict.resolved_by = resolved_by
 
-    # A previous decision may already have blocked the other endpoint of a related
-    # edge. Neither document can ever be selected again, so leaving that edge OPEN
-    # creates an unresolvable warning in the Admin queue.
     _resolve_open_conflicts_between_blocked_documents(
         db,
         newly_blocked_document_id=superseded.id,
@@ -377,8 +348,6 @@ def resolve_conflict(
         resolved_at=resolved_at,
     )
 
-    # A document can contradict more than one sibling. Resolving one edge in that
-    # graph must not activate it while another OPEN edge still needs an Admin choice.
     has_other_open_conflict = (
         db.query(ConflictFlag.id)
         .filter(
@@ -447,9 +416,6 @@ def _resolve_open_conflicts_between_blocked_documents(
             Document.id.in_(other_ids),
             Document.status == DocumentStatus.BLOCKED,
         )
-        # This must be a locking/current read under MySQL REPEATABLE READ. A
-        # concurrent resolution may have blocked the other endpoint after this
-        # transaction's initial snapshot but before it acquired the shared edge.
         .order_by(Document.id)
         .with_for_update()
         .all()

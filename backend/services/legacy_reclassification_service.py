@@ -151,9 +151,6 @@ def list_reclassification_candidates(
         Document.file_path.is_not(None),
     )
     if legacy_only and hasattr(Document, "classification_version"):
-        # A version marker alone is not enough: deployments predating conflict-fact
-        # extraction may carry an older non-null LLM version, and interrupted/imported
-        # rows can carry the current version while the JSON payload is still null.
         query = query.filter(
             or_(
                 Document.classification_version.is_(None),
@@ -288,15 +285,12 @@ def apply_document_reclassification(
     requires_reindex = old_category != target_category or old_project_id != target_project_id
     was_blocked = _enum_value(document.status) == DocumentStatus.BLOCKED.value
 
-    # Parse and chunk before touching state. Embedding/indexing still happens later, but a
-    # malformed source or impossible category cannot unnecessarily quarantine a healthy doc.
     chunks = None
     if requires_reindex:
         chunks = chunk_sections(original.sections, document_category=classification.category)
         if not chunks:
             raise LegacyReclassificationError("The proposed category produced no indexable chunks.")
 
-    # Phase 1: retrieval is quarantined before MySQL metadata starts moving.
     update_document_vector_metadata(
         document.id,
         review_status=_enum_value(document.review_status),
@@ -329,15 +323,10 @@ def apply_document_reclassification(
             delete_document_vectors(document.id)
             _embed_and_index(document, chunks, is_current=False)
 
-        # Persist the proposed metadata only after structural vector rebuilding succeeds.
-        # `classification_version` deliberately remains the previous value so a later
-        # conflict scan or Qdrant metadata failure leaves the row in the retry queue.
         staged_snapshot_sha256 = _document_snapshot_sha256(document)
         db.commit()
 
         if was_blocked:
-            # Reclassifying a duplicate/security-blocked document must never turn it into
-            # an active source. Structural changes are reflected in its quarantined vectors.
             document = _finalize_vector_publish(
                 db,
                 document_id=document_id,
@@ -387,9 +376,6 @@ def apply_document_reclassification(
                 decision_snapshot_sha256 = _document_snapshot_sha256(document)
                 db.commit()
 
-                # Re-lock and refresh after the commit. A conflict resolver may have
-                # quarantined this document in the gap; publishing the freshly loaded
-                # row while holding its lock can never overwrite that newer decision.
                 document = _finalize_vector_publish(
                     db,
                     document_id=document_id,
@@ -443,9 +429,6 @@ def _finalize_vector_publish(
         "Document metadata changed before vector synchronisation; preview it again.",
     )
 
-    # Keep the row lock while publishing. A later conflict/relation decision either
-    # committed before this lock (and is reflected above) or waits and publishes its own
-    # newer state after this transaction releases the lock.
     update_document_vector_metadata(
         document.id,
         review_status=_enum_value(document.review_status),
@@ -455,8 +438,6 @@ def _finalize_vector_publish(
         is_current=bool(document.is_current),
     )
 
-    # Provenance means "the complete backfill reached retrieval", not merely "the model
-    # returned JSON". A failed re-index/sync therefore remains selectable as legacy.
     document.classification_version = DOCUMENT_CLASSIFICATION_VERSION
     db.commit()
     db.refresh(document)
@@ -633,16 +614,11 @@ def _apply_classification(
     document.conflict_facts = [fact.model_dump(mode="json") for fact in classification.conflict_facts]
     document.classification_confidence = classification.confidence
     document.classification_reason = classification.reason
-    # MySQL DATETIME columns in this schema store whole seconds. Hashing a pre-commit
-    # microsecond value and comparing it with the persisted second-precision value made
-    # every legitimate apply look like a concurrent edit.
     applied_at = utcnow().replace(microsecond=0)
     document.classified_at = applied_at
     if hasattr(document, "classification_requires_admin_review"):
         document.classification_requires_admin_review = classification.requires_admin_review
 
-    # REJECTED on a blocked duplicate is a lifecycle decision, not a verdict on the new
-    # metadata. Preserve it so a metadata backfill cannot erase the quarantine reason.
     if _enum_value(document.status) != DocumentStatus.BLOCKED.value:
         document.review_status = DocumentReviewStatus.APPROVED
     document.reviewed_by = admin_id
@@ -858,6 +834,4 @@ def _safe_preview_error(exc: Exception) -> str:
         return AI_SERVICE_QUOTA_PUBLIC_MESSAGE
     if isinstance(exc, (DocumentIngestionError, LegacyReclassificationError)):
         return str(exc)
-    # Provider/SDK/storage exceptions stay in server logs; the API must not expose keys,
-    # endpoints or source paths embedded in an exception message.
     return "Could not classify the stored original. Check server logs."

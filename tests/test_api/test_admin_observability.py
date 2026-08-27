@@ -157,7 +157,6 @@ def test_observability_reads_durable_mysql_traces_and_usage(client, db_session, 
                 total_tokens=380,
                 created_at=now,
             ),
-            # This control-plane call has no pipeline trace and must still count.
             LlmUsageEvent(
                 usage_id="usage-classification",
                 operation="gemini_generation",

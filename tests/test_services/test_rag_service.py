@@ -48,8 +48,6 @@ def qdrant(monkeypatch):
     monkeypatch.setattr(rag_service, "embed_query", lambda query: [0.1, 0.2, 0.3])
     monkeypatch.setattr(settings, "qdrant_collection", "test_documents")
     monkeypatch.setattr(settings, "hybrid_search_enabled", False)
-    # The developer's .env may enable hosted reranking. Unit tests choose explicitly when
-    # to exercise that path and must never make a real network call by accident.
     monkeypatch.setattr(settings, "rerank_enabled", False)
     return fake_client
 
@@ -83,7 +81,6 @@ def _is_current(call) -> bool:
     raise AssertionError("Không có filter is_current")
 
 
-# --- Filter RBAC --------------------------------------------------------------------
 
 
 def test_internal_clearance_sees_internal_and_public(qdrant):
@@ -183,7 +180,6 @@ def test_retrieval_excludes_unclassified_other_documents(qdrant):
     assert excluded[0].match.value == "other"
 
 
-# --- Truy vấn ------------------------------------------------------------------------
 
 
 def test_overfetches_before_reranking(qdrant):
@@ -235,7 +231,6 @@ def test_skips_points_without_content(qdrant):
     assert len(result) == 1
 
 
-# --- Re-rank -------------------------------------------------------------------------
 
 
 def test_identifier_match_outranks_higher_vector_score(qdrant):
@@ -262,7 +257,6 @@ def test_pure_vector_order_when_query_has_no_identifier(qdrant):
     assert [hit["document_id"] for hit in result] == [2, 1]
 
 
-# --- Context selection ---------------------------------------------------------------
 
 
 def test_exact_identifier_is_a_final_safety_layer_over_fuzzy_scores(qdrant):
@@ -358,7 +352,6 @@ def test_context_budget_keeps_whole_chunks_and_always_keeps_best_hit(qdrant, mon
     assert result[0]["content"] == "A" * 25
 
 
-# --- Rerank bằng Cohere (cross-encoder) ----------------------------------------------
 
 
 @pytest.fixture
@@ -370,8 +363,6 @@ def cohere_rerank(qdrant, monkeypatch):
 
     def _fake_rerank(query, documents, *, top_n=None):
         calls.append({"query": query, "documents": documents, "top_n": top_n})
-        # Đảo ngược thứ tự Qdrant trả về: cross-encoder xếp lại hoàn toàn theo
-        # relevance của cặp query+passage, không dựa vào điểm vector ban đầu.
         return [(index, 1.0 - index * 0.1) for index in reversed(range(len(documents)))]
 
     monkeypatch.setattr(rag_service, "cohere_rerank", _fake_rerank)
@@ -423,7 +414,6 @@ def test_cohere_failure_falls_back_to_heuristic(qdrant, monkeypatch):
 
     result = rag_service.retrieve("Giá căn 2PN?", DocumentVisibility.INTERNAL)
 
-    # Rơi về heuristic identifier-overlap: '2PN' vẫn phải thắng điểm vector cao hơn.
     assert result[0]["document_id"] == 2
 
 
@@ -496,7 +486,6 @@ def test_cohere_rerank_applies_to_hybrid_results(hybrid_qdrant, monkeypatch):
     assert [hit["document_id"] for hit in result] == [2, 1]
 
 
-# --- Trạng thái rỗng và lỗi ----------------------------------------------------------
 
 
 def test_missing_collection_returns_empty_list(qdrant):
@@ -552,7 +541,6 @@ def test_dense_only_names_the_dense_vector(qdrant):
     assert "prefetch" not in qdrant.query_calls[0]
 
 
-# --- Hybrid: hai kênh + RRF -----------------------------------------------------------
 
 
 def test_hybrid_query_builds_prefetch_and_rrf_fusion(hybrid_qdrant):
@@ -598,7 +586,6 @@ def test_hybrid_keeps_rrf_scores_but_exact_identifier_gets_final_priority(hybrid
     result = rag_service.retrieve("giá căn 2PN", DocumentVisibility.INTERNAL)
 
     assert [hit["document_id"] for hit in result] == [2, 1]
-    # Điểm RRF đi thẳng ra ngoài, không bị rescale kiểu cosine.
     assert result[0]["score"] == 0.016
 
 
@@ -628,11 +615,6 @@ def test_disabled_flag_never_embeds_the_sparse_query(qdrant, monkeypatch):
     assert "prefetch" not in qdrant.query_calls[0]
 
 
-# --- Integration: engine Qdrant thật, chạy in-memory ---------------------------------
-#
-# FakeQdrantClient ở trên chỉ chứng minh ta GỌI đúng tham số, không chứng minh Qdrant
-# HIỂU chúng — filter sai cấu trúc hay dùng sai API query_points vẫn pass hết. Local
-# mode chạy đúng engine truy vấn nên bịt được khoảng trống đó mà không cần Docker.
 
 
 @pytest.fixture
@@ -721,7 +703,6 @@ def test_live_carries_page_for_citation(live_qdrant):
     assert result[0]["title"] == "bang-gia.pdf"
 
 
-# --- Integration: hybrid + RRF chạy thật trên engine Qdrant ---------------------------
 
 
 @pytest.fixture

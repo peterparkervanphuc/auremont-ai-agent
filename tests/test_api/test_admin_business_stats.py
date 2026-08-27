@@ -62,8 +62,6 @@ def test_business_dashboard_excludes_admin_and_e2e_activity():
         db.flush()
         db.add_all(
             [
-                # A new question in a long-running session belongs to today, not
-                # to the day that session was originally opened.
                 Message(
                     session_id=old_active_session.id,
                     sender="sale",
@@ -76,7 +74,6 @@ def test_business_dashboard_excludes_admin_and_e2e_activity():
                     content="Câu hỏi kỳ trước",
                     created_at=now - timedelta(days=20),
                 ),
-                # Only the latest feedback for an answer is represented in the donut.
                 Feedback(
                     message_id=answer.id,
                     user_id=sale.id,
@@ -158,8 +155,6 @@ def test_document_coverage_uses_llm_subdivision_metadata_and_keeps_parent_scope(
         now = utcnow()
         db.add_all(
             [
-                # The explicit project continues to receive coverage while the
-                # canonicalized metadata also maps this file to the Hải Âu row.
                 Document(
                     title="HaiAu policy.pdf",
                     project_id=parent.id,
@@ -169,7 +164,6 @@ def test_document_coverage_uses_llm_subdivision_metadata_and_keeps_parent_scope(
                     review_status="approved",
                     is_current=True,
                 ),
-                # A company-wide upload with precise scope is no longer discarded.
                 Document(
                     title="HaiAu overview.pdf",
                     project_id=None,
@@ -179,7 +173,6 @@ def test_document_coverage_uses_llm_subdivision_metadata_and_keeps_parent_scope(
                     review_status="approved",
                     is_current=True,
                 ),
-                # Completed but not approved is visible as pending, never ready.
                 Document(
                     title="HaiAu price.pdf",
                     project_id=None,
@@ -191,8 +184,6 @@ def test_document_coverage_uses_llm_subdivision_metadata_and_keeps_parent_scope(
                     classification_version="llm-v1",
                     created_at=now - timedelta(minutes=3),
                 ),
-                # Only the newest non-ready record controls the action state. An
-                # older review must not leave a false amber cell after a failure.
                 Document(
                     title="HaiAu old floor review.pdf",
                     project_id=None,
@@ -215,8 +206,6 @@ def test_document_coverage_uses_llm_subdivision_metadata_and_keeps_parent_scope(
                     classification_version="llm-v1",
                     created_at=now - timedelta(minutes=1),
                 ),
-                # A legacy, non-current pending record has no actionable LLM
-                # review provenance and therefore must not stay amber forever.
                 Document(
                     title="HaiAu legacy payment.pdf",
                     project_id=None,
@@ -228,8 +217,6 @@ def test_document_coverage_uses_llm_subdivision_metadata_and_keeps_parent_scope(
                     classification_version=None,
                     created_at=now,
                 ),
-                # Only the exact project_id can make a completed approved row green;
-                # metadata-only matches remain visible for correction in the drill-down.
                 Document(
                     title="HaiAu approved payment.pdf",
                     project_id=hai_au.id,
@@ -251,7 +238,6 @@ def test_document_coverage_uses_llm_subdivision_metadata_and_keeps_parent_scope(
                     classification_version="llm-v1",
                     created_at=now,
                 ),
-                # Exact canonical matching must not bleed into another subdivision.
                 Document(
                     title="Unknown floor plan.pdf",
                     project_id=None,
@@ -261,7 +247,6 @@ def test_document_coverage_uses_llm_subdivision_metadata_and_keeps_parent_scope(
                     review_status="approved",
                     is_current=True,
                 ),
-                # Shared parent/group metadata is not an alias for every child row.
                 Document(
                     title="Metropolitan overview.pdf",
                     project_id=None,
@@ -289,10 +274,6 @@ def test_document_coverage_uses_llm_subdivision_metadata_and_keeps_parent_scope(
             "legal_document",
             "payment_schedule",
         }
-        # Exact subdivision metadata still relates these categories to Hai Au, but
-        # their null/different project_id means project-scoped RAG cannot retrieve
-        # an approved row. A provenance-bearing LLM suggestion remains amber so the
-        # Admin can see and repair it; it never claims to be retrieval-ready.
         assert coverage["hai-au"]["categories"]["subdivision_info"] == "unavailable"
         assert coverage["hai-au"]["categories"]["sales_policy"] == "unavailable"
         assert coverage["hai-au"]["categories"]["price_list"] == "pending_review"
@@ -314,11 +295,11 @@ def test_document_coverage_uses_llm_subdivision_metadata_and_keeps_parent_scope(
         scoped_documents = TestClient(app).get("/api/v1/documents?coverage_scope=hai-au")
         assert scoped_documents.status_code == 200, scoped_documents.text
         scoped_titles = {row["title"] for row in scoped_documents.json()}
-        assert "HaiAu policy.pdf" in scoped_titles  # parent-scoped document
-        assert "HaiAu overview.pdf" in scoped_titles  # project-less subdivision document
-        assert "HaiAu failed floor.pdf" in scoped_titles  # actionable failure
-        assert "HaiAu approved payment.pdf" in scoped_titles  # exact retrieval scope
-        assert "Unknown floor plan.pdf" not in scoped_titles  # no fuzzy/substring leakage
+        assert "HaiAu policy.pdf" in scoped_titles
+        assert "HaiAu overview.pdf" in scoped_titles
+        assert "HaiAu failed floor.pdf" in scoped_titles
+        assert "HaiAu approved payment.pdf" in scoped_titles
+        assert "Unknown floor plan.pdf" not in scoped_titles
 
         unknown_scope = TestClient(app).get("/api/v1/documents?coverage_scope=not-a-project")
         assert unknown_scope.status_code == 404

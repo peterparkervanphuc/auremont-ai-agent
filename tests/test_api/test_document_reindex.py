@@ -154,8 +154,6 @@ def test_reclassifying_clears_the_answer_cache(client, monkeypatch, document):
 
     client.post(f"/api/v1/documents/{document.id}/reclassify", json={"category": "price_list"})
 
-    # Clear once before quarantine so old cached answers cannot bypass it, then again
-    # after the slow re-index in case a request repopulated the cache meanwhile.
     assert cleared == [True, True]
 
 

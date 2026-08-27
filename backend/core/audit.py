@@ -36,11 +36,6 @@ _audit = logging.getLogger("salesmate.audit")
 
 DEFAULT_TRUNCATE_LIMIT = 200
 
-# `logging` raises KeyError if `extra` carries a name LogRecord already uses, and
-# the whole event is then lost. `filename` is the one that bites in practice —
-# it is a natural name for a document upload and also LogRecord's source file.
-# Colliding names are prefixed rather than dropped, so no field is ever silently
-# discarded.
 _RESERVED_RECORD_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {
     "message",
     "asctime",
@@ -64,14 +59,10 @@ def log_event(event: str, **fields: object) -> None:
     erasing the event.
     """
     try:
-        # The event name is both the message and a queryable field: the console
-        # formatter then reads naturally, and the JSON has a stable `event` key.
         _audit.info(event, extra={"event": event, "audit": True, **_safe_fields(fields)})
     except Exception:  # pragma: no cover - defensive; logging must never propagate
         _audit.warning("Audit event failed to emit", extra={"event": "audit.failed", "failed_event": event})
 
-    # Imported here, not at module scope: backend.core.audit_sink imports the
-    # models, which import Base, and several modules import this one very early.
     from backend.core.audit_sink import persist_event
 
     persist_event(event, fields)

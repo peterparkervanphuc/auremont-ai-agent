@@ -42,9 +42,6 @@ _VECTOR_METADATA_FIELDS = (
     "is_current",
 )
 
-# A category is structural metadata: ingestion chooses legal/table/general chunking from
-# it.  It is audited alongside the other payload fields, but must never be "repaired" by
-# payload-only sync because that would make stale chunks look consistent.
 _PAYLOAD_SYNC_FIELDS = tuple(field for field in _VECTOR_METADATA_FIELDS if field != "category")
 
 _CLASSIFICATION_FIELDS = (
@@ -93,8 +90,6 @@ class VectorDocumentSnapshot:
             try:
                 chunk_index = int(raw_index)  # type: ignore[arg-type]  # guarded by the except below
             except (TypeError, ValueError):
-                # A malformed/missing index must not make otherwise useful duplicate
-                # detection crash.  It sorts after every valid ingestion chunk.
                 chunk_index = 2**31 - 1
             self.chunk_hashes.append(
                 (
@@ -458,9 +453,6 @@ def build_metadata_audit_report(
                 )
             )
 
-        # There is no safe payload-only choice when MySQL itself marks both sides of
-        # an OPEN conflict current. In particular, do not turn a correctly quarantined
-        # Qdrant endpoint back on; an Admin must resolve/correct the MySQL decision.
         if document_id in unsafe_conflict_document_ids:
             continue
 
@@ -773,9 +765,6 @@ def _hash_groups(pairs: Iterable[tuple[int, str | None]]) -> dict[str, tuple[int
 
 
 def _document_id(value: Any) -> int | None:
-    # Qdrant payload matches are type-strict. Coercing "30" or 30.5 to integer here
-    # would later build an integer repair filter that matches no point while reporting
-    # success. Only the canonical payload type written by ingestion is accepted.
     if type(value) is not int:
         return None
     return value if value > 0 else None
@@ -861,7 +850,5 @@ def _json_value(value: Any) -> Any:
 
 
 def _safe_error(exc: Exception) -> str:
-    # Reports should explain which source failed without printing a traceback, object
-    # content, credentials, or an unbounded provider error body.
     text = " ".join(str(exc).split())
     return f"{type(exc).__name__}: {text[:300]}" if text else type(exc).__name__

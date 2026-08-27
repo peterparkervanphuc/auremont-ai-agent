@@ -12,8 +12,6 @@ below an endpoint sees the same request id without having to pass it around.
 
 from contextvars import ContextVar, Token
 
-# Empty string rather than None: log records always carry the field, so a
-# formatter never has to special-case its absence.
 request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
 

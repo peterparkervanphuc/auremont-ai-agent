@@ -117,7 +117,6 @@ def test_claim_for_sale_is_race_safe(db_session, customer):
     assert first is not None
     assert first.sale_id == 1
     assert first.status == SessionStatus.SALE_HANDLING
-    # Already claimed by the first call -> the WHERE status='waiting_sale' matches nothing.
     assert second is None
 
 
@@ -131,7 +130,6 @@ def test_waiting_time_is_measured_from_the_handoff_not_session_creation(db_sessi
     from backend.utils.time import utcnow
 
     session = get_or_create_live_session(db_session, customer_id=customer.id)
-    # Simulate a session created long ago, chatting with the AI in the meantime.
     session.created_at = utcnow() - timedelta(hours=11)
     db_session.commit()
 
@@ -154,7 +152,6 @@ def test_claimed_customer_session_excluded_from_sale_self_consult_list(db_sessio
     db_session.commit()
     claim_for_sale(db_session, session.id, sale_id=sale.id)
 
-    # Same sale_id as a real self-consult session would have, but it must not appear here.
     assert list_sessions_for_sale(db_session, sale_id=sale.id) == []
 
 
@@ -179,13 +176,10 @@ def test_full_handoff_flow(as_customer, as_sale, sale, other_sale, customer, stu
 
     ai_session_id = customer_client.post("/api/v1/customer/sessions", json={}).json()["id"]
 
-    # Something the customer said to the AI, before any handoff — the Sale must never see it.
     customer_client.post(
         f"/api/v1/customer/sessions/{ai_session_id}/messages", json={"content": "Ngân sách của tôi là 2 tỷ"}
     )
 
-    # An explicit request for a person triggers handoff. Price/floor-plan questions stay
-    # in self-service and are covered separately by test_customer_hitl_gate.py.
     handoff = customer_client.post(
         f"/api/v1/customer/sessions/{ai_session_id}/messages",
         json={"content": "Tôi muốn gặp chuyên viên tư vấn"},
@@ -195,11 +189,9 @@ def test_full_handoff_flow(as_customer, as_sale, sale, other_sale, customer, stu
     assert body["status"] == "waiting_sale"
     assert body["sender"] == "agent"
 
-    # The handoff went to a DIFFERENT session — the customer's live thread.
     live_session_id = customer_client.get("/api/v1/customer/sessions/live").json()["id"]
     assert live_session_id != ai_session_id
 
-    # Sale A sees the LIVE session in the queue (never the AI one), claims it; Sale B is late.
     sale_a_client = as_sale(sale)
     inbox = sale_a_client.get("/api/v1/sale/live-inbox").json()
     assert [row["session_id"] for row in inbox] == [live_session_id]
@@ -210,17 +202,12 @@ def test_full_handoff_flow(as_customer, as_sale, sale, other_sale, customer, stu
     sale_b_client = as_sale(other_sale)
     assert sale_b_client.post(f"/api/v1/sale/live-inbox/{live_session_id}/claim").status_code == 409
 
-    # `app.dependency_overrides` is shared app-global state, not per-TestClient — logging
-    # in as Sale B above just overwrote it, so Sale A has to "log back in" before acting again.
     sale_a_client = as_sale(sale)
 
-    # Claiming removes it from the waiting queue but must NOT make it vanish entirely —
-    # Sale A can find it again under "mine" after navigating away or logging back in.
     assert sale_a_client.get("/api/v1/sale/live-inbox").json() == []
     mine = sale_a_client.get("/api/v1/sale/live-inbox/mine").json()
     assert [row["session_id"] for row in mine] == [live_session_id]
 
-    # The whole point: the AI conversation is not reachable by the Sale at all.
     assert sale_a_client.get(f"/api/v1/sale/live-inbox/{ai_session_id}/messages").status_code == 404
     assert sale_a_client.post(f"/api/v1/sale/live-inbox/{ai_session_id}/claim").status_code in (404, 409)
 
@@ -233,27 +220,22 @@ def test_full_handoff_flow(as_customer, as_sale, sale, other_sale, customer, stu
     assert reply.status_code == 201, reply.text
     assert reply.json()["sender"] == "sale"
 
-    # The customer reads that reply on the live thread, which reports the live status.
     status_check = customer_client.get(f"/api/v1/customer/sessions/{live_session_id}")
     assert status_check.json()["status"] == "sale_handling"
     messages = customer_client.get(f"/api/v1/customer/sessions/{live_session_id}/messages").json()
     assert any("Chào anh/chị" in m["content"] for m in messages)
 
-    # Their message on the live thread is stored for the Sale, with no AI reply.
     after_reply = customer_client.post(
         f"/api/v1/customer/sessions/{live_session_id}/messages", json={"content": "Dạ em cảm ơn"}
     )
     assert after_reply.json() is None
 
-    # Meanwhile the AI thread keeps working — it was never handed over, so it never went
-    # silent. Two independent conversations is exactly the intended model.
     still_ai = customer_client.post(
         f"/api/v1/customer/sessions/{ai_session_id}/messages", json={"content": "Dự án có tiện ích gì?"}
     )
     assert still_ai.json() is not None
     assert still_ai.json()["status"] == "bot_handling"
 
-    # Sale ends the live chat -> that thread goes back to bot_handling and drops off "mine".
     ended = sale_a_client.post(f"/api/v1/sale/live-inbox/{live_session_id}/end")
     assert ended.status_code == 201, ended.text
     assert sale_a_client.get("/api/v1/sale/live-inbox/mine").json() == []
@@ -282,9 +264,6 @@ def test_customer_can_self_service_return_to_ai_while_waiting(as_customer, custo
 def test_anonymous_visitor_asking_for_a_human_stays_in_self_service(db_session, stub_pipeline):
     """An anonymous visitor can ask the AI about Sale contact without a registration wall."""
     app.dependency_overrides[get_db] = lambda: db_session
-    # The process-wide per-IP bucket is intentionally shared in production, but every
-    # TestClient uses the same synthetic `testclient` IP. Isolate this behavior test from
-    # unrelated anonymous requests made earlier in the full suite.
     app.dependency_overrides[anonymous_rate_limit] = lambda: None
     client = TestClient(app)
     try:

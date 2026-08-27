@@ -9,9 +9,6 @@ from backend.services.chunking_service import DocumentChunk
 
 logger = logging.getLogger(__name__)
 
-# Vector names in the collection. Both channels of hybrid retrieval live on the same
-# point, so RRF fuses two rankings over one set of documents rather than joining across
-# collections.
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "sparse"
 
@@ -43,10 +40,6 @@ def _ensure_payload_indexes(client, collection_name: str) -> None:
         field_name="is_current",
         field_schema=models.PayloadSchemaType.BOOL,
     )
-    # `delete_document_vectors` and the re-index path both filter on this — missing it
-    # doesn't fail loudly at write time (only reads/deletes hit the filter), so it's easy
-    # to add a new document_id-filtered query and not notice the index gap until a delete
-    # 503s in production.
     client.create_payload_index(
         collection_name=collection_name,
         field_name="document_id",
@@ -84,8 +77,6 @@ def ensure_collection() -> None:
     vectors = collection.config.params.vectors
     sparse_vectors = collection.config.params.sparse_vectors
 
-    # A pre-hybrid collection reports `vectors` as a single VectorParams rather than a
-    # mapping, which is exactly the state that needs re-indexing.
     dense_params = vectors.get(DENSE_VECTOR) if isinstance(vectors, dict) else None
     if dense_params is None:
         raise VectorStoreError(
@@ -140,7 +131,6 @@ def index_document_chunks(
 
     points = [
         models.PointStruct(
-            # Deterministic ID: the same document/chunk index never creates a duplicate.
             id=str(
                 uuid.uuid5(
                     uuid.NAMESPACE_URL,

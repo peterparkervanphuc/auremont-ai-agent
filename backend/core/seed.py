@@ -36,8 +36,6 @@ SEED_USERS = [
 ]
 
 
-# `id` doubles as the value sent to the inventory API, so it must match the data
-# served by INVENTORY_API_URL (README §6.2.1 uses `ocean-park-3` throughout).
 SEED_PROJECTS = [
     {
         "project_id": "ocean-park-3",
@@ -71,8 +69,6 @@ def seed_projects() -> None:
         )
     except Exception:  # pragma: no cover - a failed seed must not block startup
         db.rollback()
-        # WARNING, not ERROR: a seeding failure must not block startup, and on a
-        # fresh, not-yet-migrated DB this is expected.
         logger.warning("Seed du an that bai — bo qua.", exc_info=True, extra={"event": "seed.projects.failed"})
     finally:
         db.close()
@@ -94,7 +90,6 @@ def seed_users() -> None:
     try:
         for seed in SEED_USERS:
             ensure_seed_user(db, **seed)
-        # Log usernames only — never log the `password` field from SEED_USERS.
         logger.info(
             "Seeded %d test accounts.",
             len(SEED_USERS),
@@ -105,8 +100,6 @@ def seed_users() -> None:
             },
         )
     except Exception:  # pragma: no cover - a failed seed must not block startup
-        # The `users` table may not exist yet if migrations have not finished.
-        # This is a developer convenience, not a critical path, so only log it.
         db.rollback()
         logger.warning("Seed tai khoan test that bai — bo qua.", exc_info=True, extra={"event": "seed.users.failed"})
     finally:

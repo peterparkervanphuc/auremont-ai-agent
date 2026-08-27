@@ -41,7 +41,6 @@ class _RegisterPayload:
         "0912-345-678",
         "+84912345678",
         "84912345678",
-        # Every mobile prefix that survived the 2018 renumbering.
         "0387654321",
         "0587654321",
         "0787654321",
@@ -72,13 +71,11 @@ def test_an_email_survives_as_one_piece():
 @pytest.mark.parametrize(
     "kept",
     [
-        # The figures the query field exists to preserve.
         "căn 2PN giá 3,6 tỷ đồng",
         "diện tích 68,2 m²",
         "chiết khấu 5% khi thanh toán sớm",
         "thanh toán theo tiến độ 8 đợt",
         "mã căn OP3-BE1-1205",
-        # A landline is not a mobile and is not a person's contact detail here.
         "hotline 02439743333",
     ],
 )

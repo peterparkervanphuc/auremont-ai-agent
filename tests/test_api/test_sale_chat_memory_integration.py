@@ -122,9 +122,7 @@ def test_second_turn_prompt_carries_the_first_turns_question_and_answer(client, 
     assert "LỊCH SỬ HỘI THOẠI" in second_prompt
     assert "Sale: Gia can 2PN?" in second_prompt
     assert "Bạn: Can 2PN gia 3.6 ty dong." in second_prompt
-    # The current question must still be the one actually being answered now.
     assert "CÂU HỎI CỦA SALE:\nCon 3PN thi sao?" in second_prompt
-    # Oldest-first: the prior turn's line precedes the current question.
     assert second_prompt.index("Sale: Gia can 2PN?") < second_prompt.index("CÂU HỎI CỦA SALE:\nCon 3PN thi sao?")
 
 

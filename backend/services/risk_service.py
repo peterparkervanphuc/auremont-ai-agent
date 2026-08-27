@@ -18,22 +18,15 @@ import re
 
 from backend.utils.text import strip_diacritics
 
-# Money with a unit. Matched against the ALREADY diacritic-stripped string (see
-# `detect_commitment_risk`), so "3,6 tỷ" arrives as "3,6 ty" and "600 triệu" as "600 trieu".
 _MONEY_WITH_UNIT = re.compile(
     r"\d[\d.,]*\s*(ty|ti|trieu|nghin|ngan|vnd|dong|d)\b",
     re.IGNORECASE,
 )
 
-# A bare price with no unit: "3600000000". Nine digits or more is almost certainly an
-# apartment price rather than a unit code or phone number.
 _BARE_LARGE_NUMBER = re.compile(r"\b\d{9,}\b")
 
-# Percentages: discounts, interest rates, payment schedules — all numbers a customer will
-# hold you to.
 _PERCENTAGE = re.compile(r"\d[\d.,]*\s*%")
 
-# Wording that promises something or creates a business obligation.
 _COMMITMENT_KEYWORDS = (
     "cam kết",
     "đảm bảo",

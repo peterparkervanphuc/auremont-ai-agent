@@ -119,7 +119,6 @@ def test_the_full_breakdown_lists_every_fired_signal_with_its_points(client_as, 
         "Muốn xem nhà / đặt lịch / xin bảng giá": 25,
         "Đã có số điện thoại": 10,
     }
-    # Highest-weight signal first, so the strongest evidence is what a Sale reads first.
     assert body["signals"][0]["label"] == "Đã nêu ngân sách"
     assert body["llm_reason"] == "Khách hỏi kỹ về pháp lý và muốn xem nhà tuần này."
 

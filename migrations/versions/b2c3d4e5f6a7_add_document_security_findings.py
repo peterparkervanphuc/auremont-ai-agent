@@ -20,8 +20,6 @@ def upgrade() -> None:
     op.add_column("documents", sa.Column("block_reason", sa.String(length=50), nullable=True))
     op.add_column("documents", sa.Column("security_findings", sa.JSON(), nullable=True))
     op.create_index(op.f("ix_documents_block_reason"), "documents", ["block_reason"], unique=False)
-    # Old rows did not retain the scanner verdict. Mark them honestly instead of guessing
-    # from filenames or overloading the business-classification explanation.
     op.execute(
         sa.text("UPDATE documents SET block_reason = 'legacy_unknown' WHERE status = 'blocked'")
     )

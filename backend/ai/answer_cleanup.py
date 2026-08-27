@@ -1,15 +1,10 @@
-"""Deterministic post-processing of generated answers.
-
-Everything here exists because prompting alone proved unreliable. Instructions the model
-ignores intermittently are enforced in code instead, where the behaviour is testable.
-"""
+import re
 
 from backend.services import answer_images_service
 from backend.utils.text import strip_diacritics
 
 
 def wants_images_for_prompt(query: str) -> bool:
-    """Re-exported so `prompts` does not import the image service directly."""
     return answer_images_service.wants_images(query)
 
 
@@ -29,12 +24,6 @@ _IMAGE_DENIAL_MARKERS = (
 
 
 def drop_image_denials(answer: str, images: list[dict]) -> str:
-    """Strip lines claiming there are no images, when there demonstrably are.
-
-    Only runs when photos are attached, so an honest "chưa có ảnh cho hạng mục này" on a
-    question that found none is left untouched. If every line is a denial, a plain factual
-    line replaces them rather than returning an empty bubble.
-    """
     if not images:
         return answer
 
@@ -50,14 +39,6 @@ def drop_image_denials(answer: str, images: list[dict]) -> str:
     return f"- Đang hiển thị {len(images)} ảnh {images[0].get('project_name') or 'dự án'} bên dưới."
 
 
-# The opposite failure: the image tool (answer_images_service.collect_images, called from
-# _image_tool in the pipeline) found nothing — resolving the right project from a vague
-# follow-up ("cho tôi xem hình khu này") depends on retrieval/history folding correctly,
-# which is itself probabilistic and sometimes comes up empty — yet the model still writes
-# a confident "ảnh đang hiển thị ngay trên màn hình" line anyway. The customer sees an
-# empty message bubble under a claim that photos are right there. The prompt's own "ẢNH:
-# catalogue không có ảnh nào khớp yêu cầu này" instruction is supposed to prevent this but,
-# same as every other prompt-only rule in this module, is not reliably followed.
 _FALSE_IMAGE_CONFIRMATION_MARKERS = (
     "dang hien thi",
     "da hien thi",
@@ -72,12 +53,6 @@ _FALSE_IMAGE_CONFIRMATION_MARKERS = (
 
 
 def drop_false_image_confirmations(answer: str, images: list[dict]) -> str:
-    """Strip lines falsely claiming photos are on screen, when none were actually attached.
-
-    Mirrors `drop_image_denials` in the opposite direction. Only runs when `images` is
-    empty, so a normal answer that legitimately mentions a project's on-screen presence
-    for some other reason is untouched whenever photos really are attached.
-    """
     if images:
         return answer
 
@@ -91,3 +66,46 @@ def drop_false_image_confirmations(answer: str, images: list[dict]) -> str:
         return cleaned
 
     return "Hiện tại chưa có ảnh phù hợp với yêu cầu này ạ."
+
+
+_SPELLED_NUMBERS = {
+    "mot": 1,
+    "hai": 2,
+    "ba": 3,
+    "bon": 4,
+    "tu": 4,
+    "nam": 5,
+    "sau": 6,
+    "bay": 7,
+    "tam": 8,
+    "chin": 9,
+    "muoi": 10,
+}
+
+_TOTAL_CUE = (
+    r"(?:tổng\s+cộng|tổng\s+số|tất\s+cả|(?:hiện\s+)?(?:đang\s+)?có\s+tổng"
+    r"|tìm\s+được|tìm\s+thấy|hiện\s+có|hiện\s+còn|hiện\s+đang\s+có)"
+)
+_UNIT_COUNT_PATTERN = re.compile(
+    rf"(?P<cue>\b{_TOTAL_CUE}\s+)(?<![\d,.])(?P<count>\d{{1,3}}|[^\W\d_]+)(?P<tail>\s+căn\b)",
+    re.IGNORECASE,
+)
+
+
+def correct_unit_count(answer: str, unit_count: int) -> str:
+    if unit_count <= 0 or not answer:
+        return answer
+
+    def replace(match: re.Match[str]) -> str:
+        raw = match.group("count")
+        if raw.isdigit():
+            stated = int(raw)
+        else:
+            stated = _SPELLED_NUMBERS.get(strip_diacritics(raw).lower(), -1)
+            if stated < 0:
+                return match.group(0)
+        if stated == unit_count:
+            return match.group(0)
+        return f"{match.group('cue')}{unit_count}{match.group('tail')}"
+
+    return _UNIT_COUNT_PATTERN.sub(replace, answer, count=1)

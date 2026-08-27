@@ -33,8 +33,6 @@ def gallery_by_slug() -> dict[str, list[str]]:
         return {}
 
     base_url = get_settings().project_images_base_url.rstrip("/")
-    # slug -> filename -> URL, so a second path for a photo already seen replaces it
-    # rather than being appended alongside.
     grouped: dict[str, dict[str, str]] = {}
     for key in json.loads(MANIFEST_PATH.read_text(encoding="utf-8")).get("images", []):
         slug, _, rest = key.partition("/")
@@ -42,8 +40,6 @@ def gallery_by_slug() -> dict[str, list[str]]:
             continue
         filename = rest.rsplit("/", 1)[-1]
         by_filename = grouped.setdefault(slug, {})
-        # A bare `<slug>/<file>` entry never displaces the categorised copy of the same
-        # photo; the categorised one always displaces the bare one.
         if filename in by_filename and "/" not in rest:
             continue
         by_filename[filename] = f"{base_url}/{key}"

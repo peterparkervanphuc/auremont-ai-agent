@@ -70,7 +70,6 @@ def _steps(run: dict, name: str) -> list[dict]:
     return [step for step in run["steps"] if step["name"] == name]
 
 
-# --- Trace duoc ghi ra -----------------------------------------------------------------
 
 
 def test_a_run_is_recorded_with_its_steps(trace_file, monkeypatch):
@@ -112,7 +111,6 @@ def test_mysql_metrics_can_run_without_jsonl_tracing(tmp_path, monkeypatch):
     assert persisted[0]["steps"]
 
 
-# --- "Dung chi log final answer" -------------------------------------------------------
 
 
 def test_routing_decisions_are_recorded(trace_file, monkeypatch):
@@ -195,7 +193,6 @@ def test_route_after_verify_records_the_decision(trace_file, monkeypatch):
     assert route["reason"] == "verifier_declined"
 
 
-# --- An toan ---------------------------------------------------------------------------
 
 
 def test_answer_text_never_reaches_the_trace(trace_file, monkeypatch):
@@ -212,7 +209,6 @@ def test_answer_text_never_reaches_the_trace(trace_file, monkeypatch):
 def test_a_write_failure_does_not_break_the_answer(tmp_path, monkeypatch):
     """Het dia hay mount chi doc thi mat quan sat, khong duoc mat cau tra loi."""
     monkeypatch.setattr(settings, "tracing_enabled", True)
-    # Mot thu muc, khong phai file — moi lan ghi deu that bai.
     monkeypatch.setattr(settings, "trace_file", str(tmp_path))
     _stub_pipeline(monkeypatch, verdicts=[_verdict(0.9)])
 

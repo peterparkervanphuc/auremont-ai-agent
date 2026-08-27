@@ -23,21 +23,7 @@ class ParsedSection:
 
     text: str
     page: int | None
-    content_type: str = "prose"  # "prose" | "table"
-    # (character offset into `text`, Y position in PDF points measured from the page's
-    # TOP) breakpoints, sorted by offset ascending — empty for DOCX, which has no page
-    # geometry at all. Lets a downstream chunk look up roughly where on the page its own
-    # text starts, so a citation can scroll a PDF viewer to that spot instead of just the
-    # top of the page (see chunking_service._estimate_y_position and
-    # CitationList.tsx's `withPageAnchor`, which is where this actually gets used).
-    #
-    # Deliberately a side channel rather than a change to how `text` itself is extracted:
-    # `text` still comes from the exact same `page.get_text("text")` call as before, so
-    # chunking_service's section-boundary regexes see byte-for-byte what they always have.
-    # This is computed from a SEPARATE `page.get_text("blocks")` call and correlated back
-    # onto `text` by searching for each block's own content in it — best-effort, since the
-    # two extraction modes don't guarantee identical whitespace; a block that can't be
-    # located is simply dropped from this list rather than raising.
+    content_type: str = "prose"
     block_offsets: tuple[tuple[int, float], ...] = ()
 
 
@@ -117,8 +103,6 @@ def _extract_tables(page: "fitz.Page", page_no: int) -> tuple[list[ParsedSection
     bboxes: list[fitz.Rect] = []
 
     for table in finder.tables:
-        # Guard against 1xN false positives, e.g. a ruled box drawn around a single
-        # paragraph rather than an actual table.
         if table.row_count < 2 or table.col_count < 2:
             continue
 
@@ -160,7 +144,7 @@ def _extract_prose_excluding(page: "fitz.Page", table_bboxes: list["fitz.Rect"])
 
     lines_out: list[str] = []
     for block in page.get_text("dict")["blocks"]:
-        if block.get("type") != 0:  # skip image blocks
+        if block.get("type") != 0:
             continue
 
         block_rect = fitz.Rect(block["bbox"])
@@ -195,7 +179,7 @@ def _block_offsets(page: "fitz.Page", page_text: str) -> tuple[tuple[int, float]
     breakpoints: list[tuple[int, float]] = []
     for block in page.get_text("blocks"):
         x0, y0, x1, y1, block_text, block_no, block_type = block
-        if block_type != 0:  # 0 = text block; images/other types have no text to anchor
+        if block_type != 0:
             continue
         first_line = block_text.strip().splitlines()[0].strip() if block_text.strip() else ""
         if not first_line:

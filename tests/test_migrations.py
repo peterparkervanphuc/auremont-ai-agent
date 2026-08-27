@@ -32,7 +32,6 @@ from backend.models import (  # noqa: F401  (đăng ký bảng vào Base.metadat
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# 8 bảng nghiệp vụ; hitl_logs là audit trail bắt buộc của luồng HITL.
 EXPECTED_TABLES = {
     "users",
     "projects",
@@ -56,14 +55,8 @@ def migrated_db(tmp_path):
     url = f"sqlite:///{db_path}"
 
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
-    # migrations/env.py gọi fileConfig(config.config_file_name), mà fileConfig mặc
-    # định disable_existing_loggers=True — nó vô hiệu hóa MỌI logger đã tạo trước
-    # đó, khiến các test chạy sau không bắt được log nào nữa. Bỏ trống tên file
-    # cấu hình để env.py giữ nguyên logging của process (đây là cách dùng Alembic
-    # theo kiểu programmatic; nội dung migration không bị ảnh hưởng).
     config.config_file_name = None
     config.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
-    # env.py ưu tiên `sqlalchemy.url` từ Config, nên test không đụng tới .env thật.
     config.set_main_option("sqlalchemy.url", url)
 
     engine = create_engine(url)

@@ -21,11 +21,6 @@ def strip_diacritics(text: str) -> str:
     return "".join(char for char in decomposed if not unicodedata.combining(char))
 
 
-# Inventory records arrive from an API outside this codebase and their short label fields
-# (unit code, type, status) are interpolated straight into the Generate and Verifier
-# prompts. A line break in one of those values is enough to forge what looks like a new
-# prompt section, so they are flattened before they get near a prompt. 120 chars is far
-# more than any real unit code needs, while stopping one field from crowding out context.
 _EXTERNAL_FIELD_MAX_CHARS = 120
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -42,19 +37,12 @@ def sanitize_external_field(value: str) -> str:
     return " ".join(flattened.split())[:_EXTERNAL_FIELD_MAX_CHARS]
 
 
-# Asterisks/underscores wrapping a span with no line break: **bold**, *italic*, __bold__.
 _MD_EMPHASIS = re.compile(r"(\*{1,3}|_{1,3})(?=\S)(.+?)(?<=\S)\1", re.DOTALL)
-# Leading bullet at any indent level: "  *   ", "- ", "+ " -> "- "
 _MD_BULLET = re.compile(r"^[ \t]*[*+-][ \t]+", re.MULTILINE)
-# ATX heading: "### Tiện ích" -> "Tiện ích"
 _MD_HEADING = re.compile(r"^[ \t]*#{1,6}[ \t]*", re.MULTILINE)
-# Markdown link/image: [label](url) -> label
 _MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 _MD_CODE_FENCE = re.compile(r"^[ \t]*```.*$", re.MULTILINE)
 _EXCESS_BLANK_LINES = re.compile(r"\n{3,}")
-# Models occasionally emit a bullet immediately after the preceding full stop (`.- `),
-# even when instructed to put each item on its own line. The UI can only render a real
-# list when the line break exists, so repair this harmless formatting slip centrally.
 _JOINED_BULLET = re.compile(r"(?<=[.!?])\s*-\s+(?=\S)")
 
 
@@ -76,14 +64,11 @@ def strip_markdown(text: str) -> str:
     cleaned = _MD_CODE_FENCE.sub("", text)
     cleaned = _MD_LINK.sub(r"\1", cleaned)
     cleaned = _MD_HEADING.sub("", cleaned)
-    # Loop until stable: "***text***" needs several passes to peel off all nested layers.
     for _ in range(3):
         stripped = _MD_EMPHASIS.sub(r"\2", cleaned)
         if stripped == cleaned:
             break
         cleaned = stripped
-    # Normalise bullets after emphasis has been stripped, otherwise "*   **A**" would
-    # still leave a stray asterisk behind.
     cleaned = _MD_BULLET.sub("- ", cleaned)
     cleaned = _JOINED_BULLET.sub("\n- ", cleaned)
     cleaned = _EXCESS_BLANK_LINES.sub("\n\n", cleaned)

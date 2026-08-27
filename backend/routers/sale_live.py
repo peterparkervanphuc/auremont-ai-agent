@@ -56,8 +56,6 @@ router = APIRouter(
     dependencies=[Depends(require_role(UserRole.SALE, UserRole.ADMIN))],
 )
 
-# Left in the transcript so the customer sees why the conversation goes quiet on the Sale
-# side and knows Auremont AI is available again — see `end` below.
 _HANDOFF_ENDED_MESSAGE = (
     "Chuyên viên đã kết thúc phiên hỗ trợ trực tiếp. Bạn có thể tiếp tục hỏi Auremont AI bất cứ lúc nào nhé!"
 )
@@ -127,9 +125,6 @@ def _lead_reason(lead: Lead | None) -> str | None:
     return " · ".join(labels) if labels else None
 
 
-# Every key in lead_scoring_service._RULE_WEIGHTS needs a label here, or a fired signal is
-# invisible in the detail panel — a tier with unexplainable evidence defeats the reason this
-# panel exists (see LeadDetailResponse).
 _SIGNAL_LABELS = {
     "stated_budget": "Đã nêu ngân sách",
     "budget_over_1bn": "Ngân sách từ 1 tỷ trở lên",
@@ -322,17 +317,9 @@ async def suggest(
     if last_customer_message is None:
         return SaleSuggestResponse(draft="")
 
-    # The customer's AI conversation is a separate session the Sale cannot open (see
-    # `_owned_live_session`), but the draft is written by the pipeline, not read by the
-    # Sale, so it still gets that context to avoid asking things the customer already
-    # answered. Only this generated draft crosses over — and the Sale edits it before it is
-    # ever sent, so nothing is disclosed that they don't choose to say themselves.
     ai_session = get_latest_customer_session(db, session.customer_id) if session.customer_id else None
     prior = list_messages_for_session(db, ai_session.id) if ai_session else []
 
-    # Everything except the message being used as the query itself — same "history is
-    # what came before" contract as customer_chat.py/sale_chat.py, just sliced out of an
-    # already-fetched list here instead of fetched separately before persisting a new one.
     history = history_for_pipeline([*prior, *(m for m in messages if m is not last_customer_message)])
     result = agent_pipeline.run_pipeline(
         last_customer_message.content,

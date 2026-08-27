@@ -129,9 +129,6 @@ def _matching_project_ids(
 def _project_aliases(entry: ProjectCatalogEntry) -> set[str]:
     name = entry["name"]
     aliases = {_metadata_key(entry["id"]), _metadata_key(name)}
-    # Catalogue names commonly use "The Beverly - Vinhomes Ocean Park".  The LLM
-    # correctly extracts the concise subdivision "The Beverly", so keep the explicit
-    # prefix as an exact alias rather than using risky substring/fuzzy matching.
     if " - " in name:
         aliases.add(_metadata_key(name.split(" - ", 1)[0]))
     return {alias for alias in aliases if alias}

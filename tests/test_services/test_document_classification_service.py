@@ -243,8 +243,6 @@ def test_invalid_llm_metadata_is_rejected_by_schema():
             expiry_date=date(2026, 8, 1),
         )
 
-    # Keep unit types on a controlled business vocabulary. Free-form model output such
-    # as "2PNConstructor" must never become coverage/conflict metadata.
     with pytest.raises(ValidationError, match="unit_types"):
         _classification(unit_types=["2PNConstructor"])
 

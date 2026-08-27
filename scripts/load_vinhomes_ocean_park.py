@@ -9,8 +9,6 @@ import re
 import sys
 from pathlib import Path
 
-# REPO_ROOT is P-110 — all seed data sources must live INSIDE the repo (seed-data/),
-# never point outside the machine: another machine cloning the repo would have nothing but P-110/.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 

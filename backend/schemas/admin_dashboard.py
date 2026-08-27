@@ -25,8 +25,6 @@ class SaleAccountCreate(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, value: str) -> str:
-        # bcrypt only considers up to 72 bytes. Reject longer input instead of
-        # silently creating a credential that behaves differently at login.
         if len(value.encode("utf-8")) > 72:
             raise ValueError("Mật khẩu không được vượt quá 72 byte.")
         if not any(character.isalpha() for character in value) or not any(character.isdigit() for character in value):
@@ -335,11 +333,7 @@ class LeadStatsResponse(BaseModel):
     trend: list[LeadTrendPoint]
     registered: int = 0
     anonymous: int = 0
-    # The lead-CAPTURE KPI: leads whose account carries a phone number. This is the figure
-    # that says whether requiring a phone at the gate was worth its cost in conversions.
     contactable: int = 0
     contact_rate: float = 0.0
-    # Drift detector: if this climbs after a weight change, the weights inflated rather than
-    # the leads improving.
     avg_score: float = 0.0
     llm_enrichment: LeadEnrichmentStats = LeadEnrichmentStats()

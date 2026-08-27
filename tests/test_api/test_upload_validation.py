@@ -26,7 +26,7 @@ def test_a_real_docx_is_accepted():
     [
         b"<!DOCTYPE html><script>alert(1)</script>",
         b"#!/bin/sh\nrm -rf /",
-        b"MZ\x90\x00",  # a Windows executable
+        b"MZ\x90\x00",
         b"",
     ],
     ids=["html", "shell-script", "executable", "empty"],

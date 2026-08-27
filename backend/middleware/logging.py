@@ -18,8 +18,6 @@ logger = logging.getLogger(__name__)
 
 REQUEST_ID_HEADER = "x-request-id"
 
-# The Docker HEALTHCHECK hits this every 30s. Logged at INFO it would be the
-# overwhelming majority of all log lines and hide real traffic.
 _QUIET_PATHS = frozenset({"/health"})
 
 
@@ -45,17 +43,11 @@ class RequestContextMiddleware:
             return
 
         headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])}
-        # Reuse an inbound id so a trace started by a gateway or the frontend
-        # stays joined across services.
         request_id = headers.get(REQUEST_ID_HEADER) or uuid.uuid4().hex
 
-        # Also on scope state: the global exception handler runs outside this
-        # middleware, where the ContextVar has already been reset.
         scope.setdefault("state", {})["request_id"] = request_id
 
         token = set_request_id(request_id)
-        # 500 is the honest default — if the app dies before sending anything,
-        # that is exactly what Starlette's ServerErrorMiddleware will return.
         status_code = 500
         started = time.perf_counter()
 
@@ -88,7 +80,6 @@ class RequestContextMiddleware:
                     "status_code": status_code,
                     "duration_ms": duration_ms,
                     "client_ip": client[0] if client else None,
-                    # Never log `authorization` or `cookie` from these headers.
                     "user_agent": headers.get("user-agent"),
                 },
             )

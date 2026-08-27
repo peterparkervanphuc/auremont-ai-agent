@@ -19,7 +19,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-# The field response budget from CLAUDE.md: a Sale is standing in front of a customer.
 LATENCY_BUDGET_MS = 3000.0
 
 
@@ -29,8 +28,6 @@ class GradeResult:
 
     grader: str
     passed: bool
-    # Only set when `passed` is False, and phrased so a reader can act on it without
-    # opening the trace.
     detail: str = ""
 
 
@@ -151,9 +148,6 @@ def build_report(runs: list[dict[str, Any]]) -> dict[str, Any]:
     """
     graded = [grade_run(run) for run in runs]
 
-    # Grouped by the name each grader puts on its own GradeResult, not by the function
-    # name: the two differ (`grade_` prefix), and matching on the function name silently
-    # produced an all-zero breakdown while the pass rate stayed correct.
     per_grader: dict[str, dict[str, Any]] = {}
     for grader_name in dict.fromkeys(grade.grader for run_grade in graded for grade in run_grade.grades):
         results = [grade for run_grade in graded for grade in run_grade.grades if grade.grader == grader_name]
@@ -177,7 +171,6 @@ def build_report(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "failed": sum(1 for run_grade in graded if not run_grade.passed),
         "pass_rate": round(sum(1 for g in graded if g.passed) / len(graded), 4) if graded else 0.0,
         "outcomes": dict(outcomes),
-        # The breakdown the slide calls for: what kind of failure, and how many of each.
         "failure_modes": dict(failure_modes),
         "graders": per_grader,
         "latency_ms": {

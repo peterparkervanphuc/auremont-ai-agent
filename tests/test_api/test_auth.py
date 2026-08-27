@@ -51,7 +51,6 @@ def _login(client: TestClient, username: str) -> dict:
 def test_login_returns_tokens_and_role(client, users):
     body = _login(client, "adm1")
     assert body["access_token"] and body["refresh_token"]
-    # Frontend đọc role từ payload JWT để routing SALE/ADMIN.
     assert body["user"]["role"] == "admin"
 
 
@@ -83,7 +82,6 @@ def test_access_token_cannot_be_used_to_refresh(client, users):
 def test_refresh_rejects_garbage_and_unknown_users(client, users):
     assert client.post("/api/v1/auth/refresh", json={"refresh_token": "khong-phai-jwt"}).status_code == 401
 
-    # Token ký hợp lệ nhưng user đã bị xoá khỏi hệ thống.
     orphan = create_access_token(subject="nguoi-khong-ton-tai", role="sale")
     assert client.post("/api/v1/auth/refresh", json={"refresh_token": orphan}).status_code == 401
 

@@ -63,8 +63,6 @@ async def create_sale_account(
             is_active=payload.is_active,
         )
     except IntegrityError as exc:
-        # The database uniqueness constraint remains the final guard if two
-        # admins submit the same account between the checks above.
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -207,8 +205,6 @@ async def get_sales_board(
                 active_chat_sessions=active_counts[sale.id],
                 handled_sessions=handled,
                 interaction_rate=round(interacted_counts[sale.id] / handled * 100, 1) if handled else None,
-                # There is no deal/contract model yet. Returning null is materially safer
-                # than presenting a made-up close rate as a business KPI.
                 conversion_rate=None,
                 last_activity_at=last_activity,
             )

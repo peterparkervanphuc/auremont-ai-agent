@@ -28,19 +28,14 @@ from backend.models.audit_log import AuditLog
 
 logger = logging.getLogger(__name__)
 
-# Promoted to their own indexed columns; everything else goes to `payload`.
 _COLUMN_FIELDS = ("user_id", "username")
 
 
 def persist_event(event: str, fields: dict) -> None:
     """Write one audit row. Swallows every error by design — see module docstring."""
-    if SessionLocal is None:  # no database configured (e.g. some unit tests)
+    if SessionLocal is None:
         return
 
-    # Everything sits inside the try, session construction included: opening a
-    # session hits the connection pool and raises when MySQL is unreachable, so
-    # building it above the try would let a database outage break the request
-    # this function is only supposed to describe.
     session = None
     try:
         session = SessionLocal()
@@ -55,8 +50,6 @@ def persist_event(event: str, fields: dict) -> None:
         )
         session.commit()
     except Exception:
-        # warning, not error: the stdout audit line was already emitted, so this
-        # degrades the trail rather than losing the event outright.
         logger.warning(
             "Could not persist audit event to MySQL",
             exc_info=True,
@@ -64,8 +57,6 @@ def persist_event(event: str, fields: dict) -> None:
         )
     finally:
         if session is not None:
-            # close() rolls back any uncommitted state; both are best-effort
-            # because a broken connection can raise here too.
             try:
                 session.close()
             except Exception:
@@ -84,8 +75,6 @@ def _json_safe(fields: dict) -> dict:
             json.dumps(value)
             safe[key] = value
         except Exception:
-            # Broad on purpose: str()/repr() can raise too, and one bad value
-            # must never cost us the whole event.
             try:
                 safe[key] = str(value)
             except Exception:
@@ -98,5 +87,4 @@ def _as_int(value: object) -> int | None:
 
 
 def _as_str(value: object) -> str | None:
-    # Truncated to the column width; a longer value must not abort the write.
     return value[:50] if isinstance(value, str) else None

@@ -21,7 +21,6 @@ BASE_URL = os.environ.get("E2E_BASE_URL", "http://localhost:8000")
 API = f"{BASE_URL}/api/v1"
 PASSWORD = "pass1234"
 
-# Đúng các đường dẫn frontend/src gọi — nếu backend đổi, test này gãy trước người dùng.
 FRONTEND_ENDPOINTS = [
     ("POST", "/auth/login"),
     ("POST", "/auth/logout"),
@@ -43,8 +42,6 @@ def _backend_is_up() -> bool:
         return False
 
 
-# Lý do skip giữ ASCII: console Windows dùng cp1252, ký tự tiếng Việt trong
-# reason sẽ làm pytest nổ UnicodeEncodeError khi in bảng kết quả.
 pytestmark = pytest.mark.skipif(
     not _backend_is_up(),
     reason=f"Backend not running at {BASE_URL} - start it with `docker compose up -d`.",
@@ -61,8 +58,6 @@ def accounts():
         username = f"e2e_{role}_{tag}"
         result = httpx.post(
             f"{BASE_URL}/__test__/users",
-            # Tránh .local: EmailStr coi đây là tên miền dành riêng và từ chối,
-            # khiến /auth/login nổ 500 khi serialize UserResponse.
             json={"username": username, "email": f"{username}@example.com", "password": PASSWORD, "role": role},
             timeout=10,
         )
@@ -103,12 +98,8 @@ def test_sale_consultation_journey(sale_headers):
         f"{API}/sale/sessions/{session_id}/messages",
         json={"content": "Giá căn 2PN?"},
         headers=sale_headers,
-        # The live journey includes retrieval plus multiple external Gemini calls;
-        # provider latency can legitimately exceed the shorter CRUD timeout.
         timeout=60,
     )
-    # A provider failure may still surface as 500; when the pipeline succeeds, verify
-    # the rest of the persisted-message and feedback journey as well.
     if answer.status_code == 201:
         message_id = answer.json()["id"]
 
@@ -144,8 +135,6 @@ def test_admin_document_journey(admin_headers):
     listed = httpx.get(f"{API}/documents", headers=admin_headers, timeout=15).json()
     assert document_id in [d["id"] for d in listed]
 
-    # Legacy /ingest only registers a PENDING row; it must not be publicised as if
-    # parse/chunk/embed/conflict processing had completed.
     visibility = httpx.patch(
         f"{API}/documents/{document_id}/visibility",
         json={"visibility": "public"},
@@ -181,7 +170,6 @@ def test_roles_stay_separated(sale_headers, admin_headers):
     assert admin_session.status_code == 201
     admin_session_id = admin_session.json()["id"]
 
-    # Phiên của admin không được lộ sang danh sách của sale, và ngược lại.
     sale_sessions = httpx.get(f"{API}/sale/sessions", headers=sale_headers, timeout=15).json()
     assert admin_session_id not in [s["id"] for s in sale_sessions]
     assert (
@@ -206,7 +194,6 @@ def test_token_refresh_keeps_the_session_alive(accounts):
     assert me.status_code == 200
     assert me.json()["username"] == accounts["sale"]
 
-    # Access token không được dùng để tự gia hạn vô hạn.
     assert (
         httpx.post(f"{API}/auth/refresh", json={"refresh_token": login["access_token"]}, timeout=15).status_code == 401
     )

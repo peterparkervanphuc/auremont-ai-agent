@@ -190,7 +190,5 @@ def test_registering_carries_the_anonymous_score_onto_the_account(anonymous_clie
     assert lead.visitor_token is None
     assert lead.score >= before
     assert db_session.query(Lead).filter(Lead.visitor_token == token).first() is None
-    # Handing over a phone number IS the moment the lead becomes reachable, so the badge
-    # must reflect it now rather than waiting for the customer to type again.
     assert lead.signals["flags"]["has_phone"] is True
     assert lead.tier == LeadTier.HOT

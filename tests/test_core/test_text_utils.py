@@ -23,7 +23,6 @@ def test_removes_every_markdown_marker():
     assert "*" not in cleaned
     assert "#" not in cleaned
     assert "](" not in cleaned
-    # Nhãn của link phải ở lại, chỉ URL bị gỡ.
     assert "bảng giá gốc" in cleaned
     assert "https://" not in cleaned
 

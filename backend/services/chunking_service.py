@@ -4,9 +4,6 @@ from dataclasses import dataclass
 from backend.services.parser_service import ParsedSection
 from backend.utils.text import strip_diacritics
 
-# PDFs in MinIO are primarily sales policies and legal documents.  Their text is
-# extracted line-by-line, often without useful blank paragraphs, so section-aware
-# boundaries are more reliable than a fixed character window.
 SECTION_BOUNDARY_RE = re.compile(
     r"\n\s*\n|(?=\n\s*(?:CHƯƠNG\s+[IVXLCDM0-9]+\b|ĐIỀU\s+\d+\b|"
     r"[IVXLCDM]+\.\s+|\d+\.\s+|[a-zđ]\.\s+))",
@@ -21,11 +18,7 @@ class DocumentChunk:
     index: int
     text: str
     page: int | None
-    content_type: str = "prose"  # "prose" | "table", carried from ParsedSection
-    # Y position in PDF points from the page's top, for scrolling a citation's PDF
-    # viewer straight to this chunk instead of just the top of its page — see
-    # _estimate_y_position. None when the section carries no position data (DOCX, or a
-    # PDF page whose blocks couldn't be correlated back onto its text).
+    content_type: str = "prose"
     y_position: float | None = None
 
 
@@ -140,7 +133,6 @@ def _y_for_offset(offset: int, block_offsets: tuple[tuple[int, float], ...]) -> 
     return y
 
 
-# Regexes recognising the additional heading levels
 ROMAN_HEADING_RE = re.compile(r"^[IVXLCDM]+\.\s+[^\n]+$", re.IGNORECASE)
 NUMBER_HEADING_RE = re.compile(r"^\d+\.\s+[^\n]+$")
 ALPHA_HEADING_RE = re.compile(r"^[a-zđ]\.\s+[^\n]+$", re.IGNORECASE)
@@ -150,8 +142,6 @@ TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 TABULAR_ROW_RE = re.compile(r"^\s*\S.*(?:\t|\s{2,})\S.*$")
 BULLET_RE = re.compile(r"^\s*(?:[-•*]|\(?[a-zđ]\)|\d+\))\s+", re.IGNORECASE)
 
-# These patterns run against diacritic-free lowercase text. Vietnamese legal
-# documents are structured by Chương/Mục -> Điều -> Khoản -> Điểm.
 LEGAL_ARTICLE_RE = re.compile(r"^dieu\s+(\d+[a-z]?)\s*[.:\-]?\s*(.*)$", re.IGNORECASE)
 LEGAL_CHAPTER_RE = re.compile(r"^(chuong|phan|muc|tieu muc)\s+([ivxlcdm0-9]+)\b.*$", re.IGNORECASE)
 LEGAL_CLAUSE_RE = re.compile(r"^(\d+)\s*[.)]\s+\S.*$")
@@ -176,26 +166,20 @@ def _split_text(
     result: list[str] = []
     current = ""
 
-    # Storage for the 3-level context
     roman_header = ""
     number_header = ""
     active_header = ""
 
     for block in blocks:
-        # Level 1: Roman numeral sections (I., II.)
         if ROMAN_HEADING_RE.match(block) or CHAPTER_HEADING_RE.match(block):
             if current:
                 result.append(current)
                 current = ""
             roman_header = block
-            number_header = ""  # Reset the lower level when entering a new Roman section
+            number_header = ""
             continue
 
-        # Level 2: numbered sections (1., 2.)
         if NUMBER_HEADING_RE.match(block) or ARTICLE_HEADING_RE.match(block):
-            # Start a fresh chunk under the new clause.  Otherwise a large
-            # preceding section could consume the context and leave the next
-            # chunk with a discount/payment value but no clause label.
             if current:
                 result.append(current)
                 current = ""
@@ -206,11 +190,9 @@ def _split_text(
             if current:
                 result.append(current)
                 current = ""
-            # Keep the numeric level and add the nested legal/policy clause.
             number_header = f"{number_header} > {block}" if number_header else block
             continue
 
-        # Build the full active header as a breadcrumb
         headers = [h for h in (roman_header, number_header) if h]
         active_header = " > ".join(headers) if headers else ""
 
@@ -273,7 +255,6 @@ def _append_block(
         separator = "\n\n" if current else ""
         available = chunk_chars - len(current) - len(separator)
 
-        # The current chunk is full: flush it and open a new one.
         if available <= 0:
             result.append(current)
             current = ""
@@ -282,7 +263,6 @@ def _append_block(
         piece, remaining = _take_prefix(remaining, available)
         current = f"{current}{separator}{piece}" if current else piece
 
-        # Text still does not fit, so close the current chunk.
         if remaining:
             result.append(current)
             current = ""
@@ -300,7 +280,6 @@ def _start_chunk(
     """Start a new chunk, repeating the heading and overlap within the allowed limit."""
     header = active_header.strip()
 
-    # An over-long heading must still not push the chunk past its limit.
     if len(header) >= chunk_chars:
         return header[:chunk_chars]
 
@@ -318,8 +297,6 @@ def _take_prefix(text: str, limit: int) -> tuple[str, str]:
     if len(text) <= limit:
         return text, ""
 
-    # Do not cut a bullet/list item or an extracted table row in half.  This is
-    # especially important for discount and payment-schedule tables in CSBH PDFs.
     newline_boundary = text.rfind("\n", 0, limit + 1)
     sentence_boundary = max(
         text.rfind(". ", 0, limit + 1),
@@ -329,14 +306,12 @@ def _take_prefix(text: str, limit: int) -> tuple[str, str]:
     space_boundary = text.rfind(" ", 0, limit + 1)
     boundary = max(newline_boundary, sentence_boundary + 1, space_boundary)
 
-    # A single over-long word or line: force a hard cut to avoid an infinite loop.
     if boundary <= 0:
         boundary = limit
 
     prefix = text[:boundary].strip()
     remainder = text[boundary:].strip()
 
-    # Guard against the boundary landing on leading whitespace.
     if not prefix:
         prefix = text[:limit].strip()
         remainder = text[limit:].strip()
@@ -381,8 +356,6 @@ def _split_logical_block(block: str, *, table_mode: bool = False) -> list[str]:
             if BULLET_RE.match(line)
             else "text"
         )
-        # Consecutive rows/items stay together.  A new row/item after prose starts
-        # a fresh logical unit so it can never be split in the middle by default.
         if current and kind != current_kind and (kind != "text" or current_kind != "text"):
             groups.append(current)
             current = []
@@ -549,8 +522,6 @@ def _is_heading_line(line: str) -> bool:
         return True
     if ROMAN_HEADING_RE.match(line):
         return True
-    # Numeric/alpha clauses are headings only when they are short labels.  A
-    # full legal sentence beginning with "1." remains content, not a breadcrumb.
     return len(line) <= 100 and (NUMBER_HEADING_RE.match(line) is not None or ALPHA_HEADING_RE.match(line) is not None)
 
 

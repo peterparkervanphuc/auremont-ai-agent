@@ -229,8 +229,6 @@ class TestFailuresStayQuarantined:
         assert stored.is_current is False
         assert stored.category == DocumentCategory.OTHER
 
-        # The correction itself was not committed, so an Admin can retry the same
-        # request after repairing the parser/source instead of hitting "already set".
         monkeypatch.setattr(ingestion_service, "parse_document", lambda _title, _bytes: ["section"])
         retried = reclassify_document(
             db_session,

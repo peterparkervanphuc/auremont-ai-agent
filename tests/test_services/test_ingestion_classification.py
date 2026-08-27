@@ -62,8 +62,6 @@ def _mock_external_services(
     text: str,
     classification: DocumentClassification | None = None,
 ):
-    # Most legacy ingestion tests exercise the optional trusted auto-approval path.
-    # Dedicated tests below cover the production-default manual approval gate.
     monkeypatch.setattr(settings, "classification_require_admin_approval_before_indexing", False)
     classification = classification or DocumentClassification(
         category=DocumentCategory.SALES_POLICY,
@@ -166,7 +164,6 @@ def test_ingestion_saves_sales_policy_suggestion(
     assert result.classification_version == "llm-v3-grounded-facts"
     assert result.classified_at is not None
 
-    # Ingestion hiện vẫn tự publish metadata sau khi LLM trả kết quả hợp lệ.
     assert result.review_status == DocumentReviewStatus.APPROVED
     assert result.reviewed_by is None
 
@@ -1679,8 +1676,6 @@ def test_different_periods_still_conflict_until_retrieval_is_time_aware(db_sessi
         lambda document: "ZU1-0101 | 4.0 ty" if document.id == old.id else "",
     )
 
-    # RAG chưa lọc theo applicable_period. Nếu không flag, cả bản tháng 7 và tháng 8
-    # vẫn is_current và có thể cùng được dùng để trả lời.
     assert (
         len(
             ingestion_service.flag_conflicts_for(

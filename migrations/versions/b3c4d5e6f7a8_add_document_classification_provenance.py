@@ -21,8 +21,6 @@ def upgrade() -> None:
     """Persist the LLM review signal and server-owned classifier version."""
 
     with op.batch_alter_table("documents") as batch_op:
-        # NULL intentionally means "legacy classifier did not record this signal".
-        # Backfilling false would incorrectly assert that old rows were considered safe.
         batch_op.add_column(sa.Column("classification_requires_admin_review", sa.Boolean(), nullable=True))
         batch_op.add_column(sa.Column("classification_version", sa.String(length=30), nullable=True))
         batch_op.create_index(

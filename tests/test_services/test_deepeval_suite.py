@@ -135,8 +135,6 @@ def test_run_case_scores_the_pipelines_own_answer(monkeypatch):
     assert result["case_id"] == case.case_id
     assert result["passed"] is True
     assert result["metrics"]["Faithfulness"]["score"] == 0.82
-    # The judge must see what the pipeline actually produced, not the golden expectation —
-    # prose and cards both, since a unit code is only ever on a card.
     assert result["answer"] in metric.measured[0].actual_output
     assert "OP3-BE1-1205" in metric.measured[0].actual_output
     assert case.answer_text in result["answer"]
@@ -156,7 +154,6 @@ def test_delivered_answer_includes_the_listing_cards():
                 "price_range": "3,6 tỷ",
                 "unit_code": "OP3-BE1-1205",
                 "status": "còn trống",
-                # Resolved from the catalogue after the fact, so not part of the answer.
                 "image_urls": ["https://cdn/photo.jpg"],
             }
         ]
@@ -352,7 +349,6 @@ def test_a_partial_run_is_not_reported_as_green(monkeypatch, tmp_path):
     report = json.loads((tmp_path / "deepeval_report.json").read_text(encoding="utf-8"))
     assert code == 1, "a truncated run exited green"
     assert report["complete"] is False
-    # The partial report is still written: it names whatever did get graded.
     assert report["runs"] == 2
     assert report["pass_rate"] == 1.0
 
@@ -380,13 +376,11 @@ def test_pacer_spaces_calls_out_to_the_allowed_rate(monkeypatch):
     """Waiting before a call is the whole point: a 429 costs more than the pause avoiding
     it, and the first call must not pay for a window nothing has used yet."""
     slept: list[float] = []
-    # Read once to stamp the first call, then twice more on the second: elapsed, then the
-    # new stamp. The 0.1s gap leaves 0.9s of the one-second window still to wait out.
     clock = iter([0.0, 0.1, 0.1])
     monkeypatch.setattr(deepeval_suite.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(deepeval_suite.time, "sleep", slept.append)
 
-    pacer = deepeval_suite._Pacer(rpm=60)  # one call per second
+    pacer = deepeval_suite._Pacer(rpm=60)
     pacer.wait()
     pacer.wait()
 
@@ -472,5 +466,4 @@ def test_quota_wait_uses_the_delay_the_api_asked_for():
     )
 
     assert deepeval_suite._quota_wait_seconds(error) == 9.0
-    # Found through a wrapping exception too, the way service layers re-raise.
     assert deepeval_suite._quota_wait_seconds(RuntimeError("wrapped")) == deepeval_suite._FALLBACK_QUOTA_WAIT_SECONDS

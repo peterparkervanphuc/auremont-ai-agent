@@ -89,7 +89,6 @@ def test_the_inbox_carries_the_tier_and_the_number_to_dial(client, db_session):
     assert entries[0]["lead_tier"] == "hot"
     assert entries[0]["lead_score"] == 80
     assert entries[0]["customer_phone"] == "0912345678"
-    # The label prefers the real name now that registration actually stores one.
     assert entries[0]["customer_label"] == "Khách Thử"
     assert "ngân sách" in entries[0]["lead_reason"]
 

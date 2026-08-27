@@ -14,8 +14,6 @@ from backend.core.logging_config import setup_logging
 from backend.core.seed import seed_projects, seed_users
 from backend.middleware.logging import RequestContextMiddleware
 
-# Importing the models registers them on Base.metadata (ORM relationships +
-# Alembic autogenerate).
 from backend.models import (  # noqa: F401
     chat_session,
     conflict_flag,
@@ -59,21 +57,13 @@ async def lifespan(app: FastAPI):
         settings.app_env,
         extra={"event": "app.startup", "app_name": settings.app_name, "app_env": settings.app_env},
     )
-    # The schema is owned by Alembic (`alembic upgrade head`), not create_all:
-    # create_all only adds missing tables and never ALTERs existing ones, so a
-    # column added later would silently be absent until a query blew up at runtime.
     seed_users()
     seed_projects()
-    # Project images + catalogue: runs after seeding because it upserts on top of
-    # the seeded project. Never raises — see backend/core/bootstrap_data.py.
     load_demo_data()
     yield
     logger.info("Dang tat ung dung.", extra={"event": "app.shutdown"})
 
 
-# Import time, not lifespan: uvicorn configures logging before importing this
-# module, so ours has to run afterwards to win. The test suite also imports the
-# app without entering lifespan.
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -85,10 +75,6 @@ app = FastAPI(
 )
 
 settings = get_settings()
-# Starlette wraps middleware in reverse order of registration, so whatever is
-# added last ends up outermost. RequestContextMiddleware is registered first so
-# it sits *inside* CORS: the contextvar is then set in the same task as the
-# endpoint, and CORS preflight rejections do not generate access-log noise.
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -96,12 +82,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    # Without this the browser cannot read the id back, so a frontend bug report
-    # cannot quote the id needed to find the matching server logs.
     expose_headers=["X-Request-ID"],
 )
 
-# Internal (Sale/Admin)
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(projects.router, prefix="/api/v1")
@@ -118,10 +101,8 @@ app.include_router(admin_sales.router, prefix="/api/v1")
 app.include_router(admin_observability.router, prefix="/api/v1")
 app.include_router(admin_settings.router, prefix="/api/v1")
 
-# Public (anonymous visitors + logged-in CUSTOMER accounts) — see backend/routers/customer_chat.py
 app.include_router(customer_chat.router, prefix="/api/v1")
 
-# Seeding endpoint for E2E — registered ONLY in development. See backend/routers/dev_seed.py.
 if settings.app_env == "development":
     app.include_router(dev_seed.router)
 
@@ -131,7 +112,6 @@ async def health():
     return {"status": "ok", "env": settings.app_env}
 
 
-# --------------------------------------------------------------------------- error handling
 
 
 def _request_id_of(request: Request) -> str:
@@ -169,7 +149,6 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
-        # Dropping these would break OAuth2: auth.py sets WWW-Authenticate on 401.
         headers=getattr(exc, "headers", None),
     )
 

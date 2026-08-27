@@ -25,8 +25,6 @@ class DocumentVisibility(StrEnum):
 class UserRole(StrEnum):
     SALE = "sale"
     ADMIN = "admin"
-    # A public visitor who registered/logged in through the customer chat gate. Always
-    # retrieves at DocumentVisibility.PUBLIC clearance — see agent_pipeline.run_pipeline.
     CUSTOMER = "customer"
 
 
@@ -86,8 +84,8 @@ class FeedbackType(StrEnum):
     """A Sale's rating of an Agent answer — feeds the Admin Tab 2 dashboard."""
 
     HELPFUL = "helpful"
-    WRONG = "wrong"  # the answer was incorrect
-    INCOMPLETE = "incomplete"  # the answer was missing information
+    WRONG = "wrong"
+    INCOMPLETE = "incomplete"
 
 
 class DocumentCategory(StrEnum):

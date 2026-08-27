@@ -44,17 +44,11 @@ from backend.utils.text import strip_diacritics
 
 logger = logging.getLogger(__name__)
 
-# Over-fetch from Qdrant, then re-rank and trim back to top_k. Vector search is fast but
-# coarse; re-ranking a wider set gives the genuinely right passage a chance to surface.
 OVERFETCH_FACTOR = 4
 
-# Weight of the keyword signal during re-ranking. Kept low because the vector score
-# remains the primary signal.
 IDENTIFIER_WEIGHT = 0.2
 
 _TOKEN_PATTERN = re.compile(r"\w+", re.UNICODE)
-# Preserve separators inside business identifiers so ``2PN`` and ``2PN+1`` remain
-# different constraints, as do a full unit code and any coincidentally shared component.
 _STRONG_IDENTIFIER_PATTERN = re.compile(r"[^\W_]+(?:[-.][^\W_]+)*(?:\+[^\W_]*)?", re.UNICODE)
 _BEDROOM_IDENTIFIER_PATTERN = re.compile(
     r"^(?P<count>\d+)(?:pn|br)(?P<plus>\+(?:1)?)?$",
@@ -95,9 +89,6 @@ def _build_query_filter(
     )
     project_scope: list[models.Condition] | None = None
     if scoped_project_ids:
-        # Project-scoped documents OR company/global documents. Uploading a general
-        # buying guide without a project assignment must not make it disappear from every
-        # project conversation, while documents assigned to another project remain out.
         project_match = (
             models.MatchValue(value=scoped_project_ids[0])
             if len(scoped_project_ids) == 1
@@ -109,9 +100,6 @@ def _build_query_filter(
         ]
 
     excluded_ids = list(dict.fromkeys(project_id for project_id in excluded_project_ids or [] if project_id))
-    # `other` means the classifier could not map the source to a supported knowledge-base
-    # purpose. Keep this defense even if stale DB/Qdrant metadata accidentally marks such a
-    # document approved and current.
     exclusions: list[models.Condition] = [
         models.FieldCondition(
             key="category",
@@ -119,8 +107,6 @@ def _build_query_filter(
         )
     ]
     if excluded_ids:
-        # Null/global documents do not match this condition and remain available.  Only
-        # chunks assigned to a subdivision the customer explicitly rejected are removed.
         exclusions.append(
             models.FieldCondition(
                 key="project_id",
@@ -153,20 +139,9 @@ def _points_to_hits(points: Iterable[Any], *, fused: bool) -> list[dict]:
                 "document_id": payload.get("document_id"),
                 "title": payload.get("title") or "",
                 "content": content,
-                # page travels along so the Generate step can cite down to a page number.
                 "page": payload.get("page"),
-                # Y position (PDF points from the page's top) for scrolling a citation's
-                # PDF viewer straight to this chunk — see chunking_service.py and
-                # CitationList.tsx's withPageAnchor. None for DOCX or an older chunk
-                # indexed before this field existed.
                 "y_position": payload.get("y_position"),
-                # project_id travels along so a reply built from an unscoped, cross-project
-                # search (no project_id filter above) can tell "these docs actually agree on
-                # one project" apart from "retrieval grabbed unrelated projects" — see
-                # agent_pipeline._generate's citation filtering.
                 "project_id": payload.get("project_id"),
-                # Qdrant cosine lives in [-1, 1]; rescale to [0, 1] so it reads well on
-                # the Admin dashboard. A fused (hybrid) score is already normalised.
                 "score": point.score if fused else (point.score + 1.0) / 2.0,
             }
         )
@@ -212,18 +187,12 @@ def retrieve(
         try:
             sparse_query_vector = embed_query_sparse(query)
         except SparseEmbeddingError:
-            # Degrade rather than fail: the keyword channel sharpens retrieval, but the
-            # dense channel alone still answers the question. A Sale waiting in front of
-            # a customer must not lose their answer to a model-cache problem.
             logger.warning(
                 "BM25 query embedding failed; retrieving with the dense channel only.",
                 exc_info=True,
                 extra={"event": "retrieval.sparse_embed.failed", "project_id": project_id},
             )
 
-    # Defense in depth: ingestion also keeps pending suggestions at is_current=false, but
-    # requiring approval here prevents a stale/corrupt vector payload with is_current=true
-    # from grounding an answer before an Admin reviews a weak classification.
     query_filter = _build_query_filter(
         visibility=visibility,
         project_id=project_id,
@@ -234,18 +203,12 @@ def retrieve(
 
     client = get_qdrant_client()
     try:
-        # If nobody has uploaded a document yet the collection does not exist. That is a
-        # normal state right after deployment, not a fault.
         if not client.collection_exists(settings.qdrant_collection):
             return []
 
         if sparse_query_vector is not None:
             response = client.query_points(
                 collection_name=settings.qdrant_collection,
-                # The filter is repeated on each branch on purpose. RRF ranks whatever
-                # each branch returns, so a branch that fetched documents the asker may
-                # not read would spend its ranking slots on them and push readable ones
-                # out before the outer filter ever removes them.
                 prefetch=[
                     models.Prefetch(
                         query=query_vector,
@@ -269,17 +232,12 @@ def retrieve(
             response = client.query_points(
                 collection_name=settings.qdrant_collection,
                 query=query_vector,
-                # Required now that the collection holds named vectors: without it
-                # Qdrant cannot tell which vector to search.
                 using=DENSE_VECTOR,
                 query_filter=query_filter,
                 limit=candidate_limit,
                 with_payload=True,
             )
     except Exception as exc:
-        # Most important handoff point: the RetrievalError raised here is caught and
-        # entirely swallowed by agent_pipeline._retrieve. This log line is the ONLY
-        # record that Qdrant genuinely failed.
         logger.exception(
             "Qdrant query failed.",
             extra={
@@ -290,10 +248,6 @@ def retrieve(
         )
         raise RetrievalError("Could not query Qdrant.") from exc
 
-    # RRF scores are sums of 1/(k + rank) across the two channels, not similarities, so
-    # the cosine rescale below would be meaningless on them. Only the ordering matters
-    # downstream — nothing compares this number against a threshold — so fused scores are
-    # passed through untouched.
     fused = sparse_query_vector is not None
 
     hits = _points_to_hits(response.points, fused=fused)
@@ -342,10 +296,6 @@ def _rerank(query: str, hits: list[dict], fused: bool = False) -> list[dict]:
             tracing.step("rerank", ranker="cohere", candidate_count=len(hits))
             return reranked
 
-        # Recorded, not just logged. A Cohere Trial key allows 10 calls/minute, so under
-        # any real concurrency this path is taken constantly — and the only outward sign
-        # is that ranking quietly gets worse. Without this step the Admin trace shows a
-        # perfectly normal run and nothing anywhere says the cross-encoder never ran.
         tracing.step("rerank", ranker="heuristic", candidate_count=len(hits), degraded=True)
         return _rerank_heuristic(query, hits, fused=fused)
 
@@ -368,9 +318,6 @@ def _rerank_cohere(query: str, hits: list[dict]) -> list[dict] | None:
         )
         return None
 
-    # Treat hosted output as untrusted tool data. A stale SDK/API response containing an
-    # invalid or duplicate index must degrade to the local ranker, not select the wrong
-    # passage or crash retrieval with IndexError.
     if not _valid_rerank_results(scored, candidate_count=len(hits)):
         logger.warning(
             "Cohere returned invalid rerank indexes; falling back to the identifier heuristic.",
@@ -539,8 +486,6 @@ def _content_tokens(text: str) -> set[str]:
 def _near_duplicate(left: set[str], right: set[str]) -> bool:
     if left == right:
         return bool(left)
-    # Very short passages share generic words too easily. Exact equality above still
-    # catches duplicated headings and one-line facts without creating false positives.
     if min(len(left), len(right)) < 8:
         return False
     union = left | right

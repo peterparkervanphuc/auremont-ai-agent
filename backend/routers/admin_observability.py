@@ -197,9 +197,6 @@ def _token_metrics(
         today - timedelta(days=offset): {"input": 0, "output": 0} for offset in range(period_days)
     }
 
-    # Provider usage is the source of truth and includes classification/conflict LLM
-    # calls that never enter the chat pipeline. usage_id lets us merge legacy JSONL
-    # traces below without double-counting newer pipeline calls.
     usage_rows = db.query(LlmUsageEvent).filter(LlmUsageEvent.created_at >= cutoff).all()
     persisted_usage_ids = {row.usage_id for row in usage_rows}
     for row in usage_rows:

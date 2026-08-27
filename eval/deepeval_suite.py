@@ -71,24 +71,15 @@ from eval.golden_dataset import GOLDEN_CASES, GoldenCase
 
 DEFAULT_OUT = Path("eval/results")
 
-# The gates no model has a vote in — see `_missing_required_facts` and `_listing_defect`.
 REQUIRED_FACTS_METRIC = "Required Facts"
 FORBIDDEN_CONTENT_METRIC = "Forbidden Content"
 LISTING_DISCIPLINE_METRIC = "Listing Discipline"
 DETERMINISTIC_METRICS = (REQUIRED_FACTS_METRIC, FORBIDDEN_CONTENT_METRIC, LISTING_DISCIPLINE_METRIC)
 
-# The Gemini free tier allows 15 generate_content requests per minute per model.
 DEFAULT_RPM = 15
 
-# Pacing keeps a run under the limit; this catches the case where it still is not — a key
-# shared with another process, or an `--rpm` set higher than the key actually allows.
-# `gemini_client` retries such a 429 at most once with a sub-second backoff on purpose: it
-# sits under the interactive path's 3-second budget, where waiting out a quota window is
-# worse than failing. Nothing here is interactive, so this waits instead of giving up.
 _QUOTA_RETRY_ATTEMPTS = 5
 _FALLBACK_QUOTA_WAIT_SECONDS = 20.0
-# Gemini has been seen answering a 429 with `retryDelay: "0s"`, which spends an attempt on
-# a retry that cannot succeed. Wait at least long enough for the window to have moved.
 _MIN_QUOTA_WAIT_SECONDS = 5.0
 
 
@@ -108,9 +99,6 @@ class _Pacer:
 
     def __init__(self, rpm: int):
         self._min_interval = 60.0 / rpm if rpm > 0 else 0.0
-        # None rather than 0.0: `monotonic()`'s origin is arbitrary, so a zero here would
-        # make the very first call pause for a window that nothing has used yet on any
-        # machine whose clock happens to start near zero.
         self._last_call: float | None = None
 
     def wait(self) -> None:
@@ -194,7 +182,6 @@ def _with_quota_retry(call):
             )
             time.sleep(delay)
 
-    # Unreachable: the loop either returns or raises on its final attempt.
     raise RuntimeError("The quota retry loop exited without a result.")
 
 
@@ -244,15 +231,12 @@ class GeminiJudge(DeepEvalBaseLLM):
         if isinstance(parsed, schema):
             return parsed
 
-        # Older SDK builds populate `.text` but not `.parsed`.
         raw = (response.text or "").strip()
         if not raw:
             raise RuntimeError(f"The judge returned nothing parseable as {schema.__name__}.")
         return schema.model_validate_json(raw)
 
     async def a_generate(self, prompt: str, schema: type[BaseModel] | None = None) -> Any:
-        # The client here is synchronous; every metric runs with `async_mode=False`, so
-        # this exists only to satisfy the base class.
         return self.generate(prompt, schema)
 
 
@@ -303,9 +287,6 @@ def _retrieval_context(case: GoldenCase) -> list[str]:
     return context
 
 
-# The text fields of a listing card, in the order a reader meets them. `image_urls`,
-# `amenities` and `project_id` are left out: they are resolved from the catalogue after the
-# model has spoken (`_resolve_listing_images`), so they are not part of what it answered.
 _LISTING_FIELDS = ("project_name", "unit_type", "area_range", "price_range", "unit_code", "status")
 
 
@@ -325,9 +306,6 @@ def _delivered_answer(result: Any) -> str:
     return "\n".join(part for part in parts if part)
 
 
-# A card exists to carry figures. These are the strings a model reaches for when it has
-# none and fills the slot anyway — the behaviour the LISTINGS block forbids in as many
-# words, first caught by this suite on `policy-payment-schedule`.
 _PLACEHOLDER_FIGURES = ("đang cập nhật", "chưa có", "liên hệ", "n/a", "-", "")
 
 
@@ -375,13 +353,6 @@ def _missing_required_facts(case: GoldenCase, answer: str) -> list[str]:
     return [fact for fact in case.expect_answer_contains if strip_diacritics(fact) not in normalised]
 
 
-# Negations that turn a forbidden promise into a correct refusal. Matched against the
-# already diacritic-stripped text, within `_NEGATION_WINDOW` characters before the phrase.
-#
-# A plain substring test cannot tell "chắc chắn tăng giá" from "không có dữ liệu khẳng định
-# căn hộ chắc chắn tăng giá" — the first is the promise the safety rules forbid, the second
-# is the model correctly refusing to make it. The suite's first live run failed a perfectly
-# good refusal on exactly that, twice.
 _NEGATIONS = ("khong", "chua", "khong the", "khong duoc")
 _NEGATION_WINDOW = 60
 
@@ -394,8 +365,6 @@ def _is_negated(text: str, at: int) -> bool:
     tăng giá"), and a clause boundary in between means it does not govern.
     """
     before = text[max(0, at - _NEGATION_WINDOW) : at]
-    # A sentence or clause break ends the negation's reach: "Không có tài liệu. Căn này
-    # chắc chắn tăng giá." is a promise, not a refusal.
     before = re.split(r"[.;!?\n]", before)[-1]
     return any(re.search(rf"\b{re.escape(negation)}\b", before) for negation in _NEGATIONS)
 
@@ -418,7 +387,6 @@ def _forbidden_content(case: GoldenCase, answer: str) -> list[str]:
     found = []
     for phrase in case.expect_answer_excludes:
         needle = strip_diacritics(phrase)
-        # Every occurrence, because one negated mention does not excuse a later bare one.
         positions = [match.start() for match in re.finditer(re.escape(needle), normalised)]
         if any(not _is_negated(normalised, at) for at in positions):
             found.append(phrase)
@@ -486,7 +454,6 @@ def gradeable_cases() -> list[GoldenCase]:
 
 def run_case(case: GoldenCase, metrics: list[Any], attempt: int = 1, pacer: _Pacer | None = None) -> dict[str, Any]:
     def _draft():
-        # Paced against the same bucket as the judge: by default they are the same model.
         if pacer is not None:
             pacer.wait()
         return agent_pipeline.run_pipeline(case.query, project_id=case.project_id)
@@ -525,8 +492,6 @@ def run_case(case: GoldenCase, metrics: list[Any], attempt: int = 1, pacer: _Pac
 
     for metric in metrics:
         metric.measure(test_case)
-        # `__name__`, not `name`: only GEval carries a `name` attribute, and the built-in
-        # metrics expose their display name here.
         scores[metric.__name__] = {
             "score": round(metric.score or 0.0, 4),
             "passed": bool(metric.is_successful()),
@@ -537,12 +502,7 @@ def run_case(case: GoldenCase, metrics: list[Any], attempt: int = 1, pacer: _Pac
         "case_id": case.case_id,
         "attempt": attempt,
         "answer": result.draft_answer,
-        # Recorded separately from `answer` so a reader can tell where a fact was
-        # delivered: prose, card, or nowhere at all.
         "listings": result.listings,
-        # The in-house Verifier's verdict on the same answer, for comparison: a case the
-        # Verifier accepted and DeepEval failed is where `verifier_threshold_sale` or the
-        # Verifier prompt needs attention.
         "verifier_score": result.verifier_score,
         "verifier_failure_mode": result.failure_mode,
         "requires_hitl": result.requires_hitl,
@@ -571,10 +531,6 @@ def build_report(results: list[dict[str, Any]], *, judge_model: str, answer_mode
             "examples": [entry["reason"] for entry in failed[:3]],
         }
 
-    # Per case rather than per run, because the model is not deterministic: a case that
-    # passes four times in five is not a passing case, it is a flaky one, and a single run
-    # cannot tell the two apart. This is the number to read when deciding whether a defect
-    # is systematic or was one unlucky sample.
     per_case: dict[str, dict[str, Any]] = {}
     for case_id in dict.fromkeys(result["case_id"] for result in results):
         attempts = [result for result in results if result["case_id"] == case_id]
@@ -598,8 +554,6 @@ def build_report(results: list[dict[str, Any]], *, judge_model: str, answer_mode
         "answer_model": answer_model,
         "judge_model": judge_model,
         "independent_judge": judge_model != answer_model,
-        # Which numbers below survive a sceptical reading of the judge: these were decided
-        # by rules over a hand-written reference, with no model in the loop.
         "deterministic_metrics": list(DETERMINISTIC_METRICS),
         "metrics": per_metric,
         "cases_detail": results,
@@ -627,8 +581,6 @@ def _summarise(report: dict[str, Any]) -> str:
     if imperfect:
         lines.append("\nCases:")
         for case_id, stats in imperfect.items():
-            # A case that failed every attempt is a defect; one that failed some is flaky,
-            # and the distinction decides whether it is worth chasing a single trace.
             kind = "flaky" if stats["flaky"] else "failing"
             lines.append(f"  {stats['passed']}/{stats['attempts']}  {case_id}  ({kind})")
 
@@ -682,14 +634,9 @@ def main() -> int:
     results = []
     try:
         for attempt in range(1, args.repeats + 1):
-            # Cases outer-looped per attempt rather than repeated back to back, so a quota
-            # window or a transient model mood is spread across cases instead of landing
-            # entirely on one of them.
             for case in gradeable_cases():
                 results.append(run_case(case, metrics, attempt, pacer))
     except DailyQuotaExhaustedError as exc:
-        # Report what was graded before the key ran dry rather than losing it: a partial
-        # report still names the cases that failed, and the count says how far it got.
         print(f"\n{exc}", file=sys.stderr)
         if not results:
             return 1
@@ -699,8 +646,6 @@ def main() -> int:
         return 1
 
     report = build_report(results, judge_model=args.judge_model, answer_model=settings.GEMINI_MODEL)
-    # A run cut short by the daily cap has graded fewer attempts than asked for. Say so in
-    # the report, or a partial pass rate reads later as a complete one.
     report["complete"] = len(results) == len(gradeable_cases()) * args.repeats
     args.out.mkdir(parents=True, exist_ok=True)
     report_path = args.out / "deepeval_report.json"
@@ -717,9 +662,6 @@ def main() -> int:
         return 1
 
     if not report["complete"]:
-        # A pass rate over the handful of cases that fitted inside the quota is not evidence
-        # the rest would have passed. Green here would tell the nightly job everything is
-        # fine on the strength of a run that mostly did not happen.
         print("\nFAIL: the run was cut short, so this pass rate covers only part of the set.", file=sys.stderr)
         return 1
 

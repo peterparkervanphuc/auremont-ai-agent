@@ -101,7 +101,6 @@ def test_newly_latched_reports_only_the_signals_this_turn_added():
     assert repeat.newly_latched == ()
 
 
-# ── The LLM's ceiling ──
 
 
 def _soft(**kwargs) -> scoring.LeadSoftSignals:
@@ -157,7 +156,6 @@ def test_confidence_is_coerced_onto_the_zero_to_one_scale(raw, expected):
     assert scoring.LeadSoftSignals(confidence=raw).confidence == pytest.approx(expected)
 
 
-# ── The cost brake ──
 
 
 def test_enrichment_is_skipped_outside_the_decision_band():

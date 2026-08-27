@@ -19,8 +19,6 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Add project-document classification fields and document relationships."""
-    # Batch mode makes the migration run on SQLite too. SQLite cannot add a
-    # foreign key constraint to an existing table with ALTER TABLE.
     with op.batch_alter_table("documents") as batch_op:
         batch_op.add_column(sa.Column("subdivision_names", sa.JSON(), nullable=True))
         batch_op.add_column(sa.Column("building_codes", sa.JSON(), nullable=True))

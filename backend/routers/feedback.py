@@ -16,9 +16,6 @@ from backend.repositories.feedback import (
 from backend.repositories.message import get_message
 from backend.schemas.feedback import FailedQuestion, FeedbackCreate, FeedbackResponse
 
-# Feedback is a Sale-facing loop (CLAUDE.md 5.2e) feeding the Admin dashboard — a CUSTOMER
-# account has no feedback UI and must not reach these routes at all. Without the role floor
-# here, `get_current_user` alone let any authenticated customer probe Sale conversations.
 router = APIRouter(
     prefix="/feedback",
     tags=["Feedback"],
@@ -68,9 +65,6 @@ async def get_feedback_for_message(
     db: Session = Depends(get_db),
     user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN)),
 ) -> list[Feedback]:
-    # Admin reads any message's feedback — monitoring answer quality across the team is
-    # their job (CLAUDE.md Tab 2), and `/top-failed` already exposes it team-wide.
-    # A Sale stays confined to their own conversations.
     if user.role != UserRole.ADMIN:
         _owned_message(db, message_id, user)
     return list_feedback_for_message(db, message_id)

@@ -64,7 +64,6 @@ class TestPersistence:
 
         (row,) = rows(audit_db)
         assert row.payload == {"verifier_score": 0.91, "requires_hitl": True}
-        # Promoted fields are not duplicated into the payload.
         assert "user_id" not in row.payload
 
     def test_the_request_id_ties_the_row_to_its_stdout_lines(self, audit_db):
@@ -99,12 +98,12 @@ class TestPersistence:
 
         monkeypatch.setattr(audit_sink, "SessionLocal", explode)
 
-        log_event("auth.login.success", user_id=1)  # must not raise
+        log_event("auth.login.success", user_id=1)
 
     def test_no_database_configured_is_not_an_error(self, monkeypatch):
         monkeypatch.setattr(audit_sink, "SessionLocal", None)
 
-        log_event("auth.login.success", user_id=1)  # must not raise
+        log_event("auth.login.success", user_id=1)
 
 
 class TestTransactionIndependence:
@@ -138,7 +137,7 @@ class TestTransactionIndependence:
     def test_the_event_survives_a_request_that_raises(self, app_client, audit_db):
         response = app_client.post("/login-fail")
 
-        assert response.status_code == 401  # behaviour unchanged
+        assert response.status_code == 401
         assert [r.event for r in rows(audit_db)] == ["auth.login.failure"]
 
     def test_writing_an_event_does_not_commit_pending_business_work(self, app_client, audit_db):

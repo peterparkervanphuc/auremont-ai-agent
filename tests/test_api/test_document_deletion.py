@@ -83,5 +83,4 @@ def test_document_survives_when_the_vector_store_is_down(client, db_session, mon
 
 def test_deleting_an_unknown_document_returns_404(client, deleted_vectors):
     assert client.delete("/api/v1/documents/9999").status_code == 404
-    # Không đụng tới Qdrant khi tài liệu không tồn tại.
     assert deleted_vectors == []

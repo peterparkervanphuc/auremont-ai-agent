@@ -23,7 +23,6 @@ def _raise(*args, **kwargs):
     raise _SimulatedError("simulated infrastructure failure")
 
 
-# --------------------------------------------------------------------------- cache
 
 
 def test_cache_lookup_failure_is_logged_and_returns_a_miss(monkeypatch, caplog):
@@ -47,7 +46,6 @@ def test_cache_store_failure_is_logged_and_swallowed(monkeypatch, caplog):
     assert any(getattr(r, "event", None) == "cache.store.failed" for r in caplog.records)
 
 
-# --------------------------------------------------------------------------- verifier
 
 
 def test_judge_failure_is_logged_at_error_and_still_fails_closed(monkeypatch, caplog):
@@ -78,10 +76,10 @@ def test_a_judge_with_no_verdict_is_logged_and_fails_closed(monkeypatch, caplog)
 @pytest.mark.parametrize(
     ("raw_score", "expected"),
     [
-        (None, 0.0),  # judges routinely emit null
-        ("0.85", 0.85),  # and strings
-        (85, 0.85),  # and the wrong scale
-        (1.5, 1.0),  # a slight overshoot is clamped, not rescaled
+        (None, 0.0),
+        ("0.85", 0.85),
+        (85, 0.85),
+        (1.5, 1.0),
         (-1, 0.0),
     ],
 )
@@ -97,7 +95,6 @@ def test_the_weaker_dimension_decides_the_score():
     assert verifier_service.VerifierResult(faithfulness=0.2, relevancy=1.0).score == pytest.approx(0.2)
 
 
-# --------------------------------------------------------------------------- pipeline
 
 
 def test_pipeline_crash_is_logged_and_still_returns_the_standard_message(monkeypatch, caplog):
@@ -113,8 +110,6 @@ def test_pipeline_crash_is_logged_and_still_returns_the_standard_message(monkeyp
     with caplog.at_level(logging.ERROR, logger="backend.services.agent_pipeline"):
         result = run_pipeline("gia can 2PN?", project_id="ocean-park-3")
 
-    # Compare against the constant, not a hardcoded string, so rewording the
-    # user-facing message cannot silently break this guard.
     assert result.draft_answer == GENERATION_ERROR_MESSAGE
     assert result.verifier_score == 0.0
     assert result.requires_hitl is False
@@ -124,7 +119,6 @@ def test_pipeline_crash_is_logged_and_still_returns_the_standard_message(monkeyp
     assert record.exc_info is not None
 
 
-# --------------------------------------------------------------------------- auth
 
 
 def test_rejected_token_is_logged_without_ever_including_the_token(caplog):
@@ -142,7 +136,6 @@ def test_rejected_token_is_logged_without_ever_including_the_token(caplog):
     assert "eyJhbGciOiJIUzI1NiJ9" not in caplog.text
 
 
-# --------------------------------------------------------------------------- inventory
 
 
 def test_unparseable_price_is_logged_at_debug_and_left_blank(caplog):

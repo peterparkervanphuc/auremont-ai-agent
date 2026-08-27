@@ -43,7 +43,6 @@ def test_access_log_carries_the_same_request_id_as_the_response(client, caplog):
 
     access = next(r for r in caplog.records if getattr(r, "event", None) == "http.access")
     assert response.headers["x-request-id"] == "trace-xyz"
-    # The formatter reads the contextvar, which is still bound when the line is emitted.
     assert access.levelno == logging.WARNING
 
 
@@ -60,7 +59,6 @@ def test_server_errors_are_logged_at_error_level(raw_client, caplog):
     with caplog.at_level(logging.ERROR, logger="backend.middleware.logging"):
         raw_client.get("/api/v1/boom-test-route-that-does-not-exist/../..")
 
-    # Nothing should crash; the point is the level mapping is exercised safely.
     assert True
 
 

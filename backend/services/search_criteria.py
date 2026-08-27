@@ -49,14 +49,8 @@ def session_key(session_id: int) -> str:
     return f"search:session:{session_id}"
 
 
-# How many previous states "quay lại bộ lọc cũ" can walk back through. Same reasoning as
-# memory_service.MAX_ITEMS_PER_FIELD: this exists to undo a step or two, not to be a
-# time-travel debugger, and an unbounded stack would grow with every turn of a long chat.
 MAX_HISTORY_SNAPSHOTS = 5
 
-# Pair-wise diagnosis grows quadratically. Real conversations normally carry no more
-# than six active filters; above eight, the single-filter pass still gives useful advice
-# without letting an accidentally bloated Redis value turn one request into a large loop.
 MAX_DIAGNOSIS_CONSTRAINTS = 8
 
 
@@ -64,9 +58,9 @@ class Strength(StrEnum):
     """How binding a criterion is — the split cases.md calls out as the thing that decides
     whether a search returns nothing or returns the wrong thing."""
 
-    HARD = "hard"  # thiếu là loại
-    SOFT = "soft"  # dùng để chấm điểm và xếp hạng
-    EXCLUDED = "excluded"  # có là loại
+    HARD = "hard"
+    SOFT = "soft"
+    EXCLUDED = "excluded"
 
 
 class Source(StrEnum):
@@ -82,8 +76,6 @@ class Source(StrEnum):
     INFERRED = "inferred"
 
 
-# Fields that can actually filter an InventoryUnit. Anything outside this set is
-# advisory only — see SearchCriteria.required_features.
 FIELD_UNIT_TYPES = "unit_types"
 FIELD_UNIT_CODES = "unit_codes"
 FIELD_SUBDIVISIONS = "subdivisions"
@@ -180,10 +172,10 @@ class SearchCriteria:
 class Intent(StrEnum):
     """What the person is doing to their criteria this turn."""
 
-    REFINE = "refine"  # mặc định: ghi đè field được nhắc, giữ nguyên phần còn lại
-    DROP = "drop"  # "bỏ yêu cầu X"
-    RESET = "reset"  # "xoá toàn bộ bộ lọc"
-    UNDO = "undo"  # "quay lại bộ lọc cũ"
+    REFINE = "refine"
+    DROP = "drop"
+    RESET = "reset"
+    UNDO = "undo"
 
 
 @dataclass(frozen=True)
@@ -199,9 +191,6 @@ class CriteriaDelta:
     household_size: int | None = None
     purpose: str | None = None
     sort_by: str | None = None
-    # A vague phrase we could not turn into any number and had nothing to anchor to, e.g.
-    # "tìm căn giá mềm" as the opening question. The caller asks one short question back
-    # rather than inventing a bound — cases.md §22.
     unresolved_vague: tuple[str, ...] = ()
 
     def is_empty(self) -> bool:
@@ -235,16 +224,9 @@ class ZeroResultDiagnosis:
     relax_options: tuple[RelaxOption, ...]
 
 
-# --------------------------------------------------------------------------- parsing
 
-# Reuses inventory_service's patterns rather than redefining them: those are already
-# battle-tested against real Sale phrasing, and two copies would drift apart. Only the
-# vague-language and intent patterns below are new.
 from backend.services import inventory_service as _inv  # noqa: E402
 
-# Words that turn a normally-SOFT criterion into a hard requirement. Without these,
-# "phải có ít nhất 80m2" and a passing mention of "80m2" would bind identically, and the
-# person who said "phải" would get units that ignore them.
 _MANDATORY_PATTERN = re.compile(r"\b(phải|bắt buộc|nhất định|chỉ lấy|chỉ xem|chỉ muốn)\b", re.IGNORECASE)
 
 _RESET_PATTERN = re.compile(
@@ -273,14 +255,6 @@ _LOCATION_EXCLUDE_PREFIX = re.compile(
     re.IGNORECASE,
 )
 
-# Adjustment phrasing: "tăng giá lên 5 tỷ", "giảm xuống 3 tỷ", "nâng lên 80m2".
-#
-# These are invisible to inventory_service's patterns, which only know absolute bounds
-# ("dưới X", "trên X", "X-Y") — and reasonably so, since a stateless lookup has nothing to
-# adjust. Refinement is exactly where they appear, and missing them was the actual failure
-# behind cases.md §20: "giữ nguyên điều kiện, tăng giá lên 5 tỷ" parsed no price at all
-# and silently kept the old ceiling, which reads to the person as the assistant ignoring
-# them. Raising sets the ceiling, lowering sets it too — both mean "the new limit is X".
 _RAISE_PATTERN = re.compile(
     r"\b(?:tăng|nâng|lên|tang|nang)\s*(?:giá|gia|ngân sách|ngan sach|lên|len|tới|toi|đến|den)?\s*"
     r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr)\b",
@@ -297,18 +271,10 @@ _AREA_ADJUST_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# "tầm 3 tỷ", "khoảng 3 tỷ", "tầm khoảng 3 tỷ" — a centre point, not a bound.
 _VAGUE_AROUND_PATTERN = re.compile(
     r"\b(?:tầm|khoảng|tam|khoang|cỡ|co)\s*(?:khoảng\s*)?(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr)\b",
     re.IGNORECASE,
 )
-# A bare area with no comparator: "tìm căn 80m2", "căn 80m2 có không".
-#
-# inventory_service has no pattern for this because a bare figure is ambiguous — it could
-# mean "around 80" or "at least 80" — and guessing wrong on a one-shot lookup silently
-# returns the wrong units. Here it is worth parsing anyway, because the result is only
-# ever SOFT (it ranks, never excludes), so a wrong guess costs ordering rather than
-# hiding a unit. Read as a floor: someone naming an area usually wants at least that much.
 _BARE_AREA_PATTERN = re.compile(r"\b(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
 
 _VAGUE_CHEAPER_PATTERN = re.compile(r"\b(giá mềm|gia mem|rẻ hơn|re hon|rẻ chút|giá tốt hơn|mềm hơn)\b", re.IGNORECASE)
@@ -348,19 +314,10 @@ _SORT_PATTERNS = (
     (re.compile(r"\b(chi phí tổng thấp nhất|chi phi tong thap nhat)\b", re.IGNORECASE), "total_cost_asc"),
 )
 
-# A vague price with nothing to anchor it to. ±15% is wide enough to be useful and narrow
-# enough to still mean something — a person saying "tầm 3 tỷ" will look at 3.4 but not 4.5.
 _VAGUE_PRICE_TOLERANCE = 0.15
-# "rẻ hơn" with an existing ceiling means "meaningfully below what I said", not "one đồng
-# less". 20% is a step a person notices without collapsing the result set to nothing.
 _CHEAPER_FACTOR = 0.8
-# "rộng hơn" against an existing floor. Smaller than the price step: area preferences are
-# usually finer-grained, and units cluster tightly by area within a unit type.
 _BIGGER_FACTOR = 1.15
 
-# Feature words worth carrying into the prompt. None of these filter inventory (see
-# SearchCriteria) — they exist so the model can check them against retrieved documents
-# and so "bỏ yêu cầu hồ bơi" has something concrete to remove.
 _FEATURE_WORDS = (
     "hồ bơi",
     "bể bơi",
@@ -419,8 +376,6 @@ _FEATURE_WORDS = (
     "người khuyết tật",
 )
 
-# Subjective view preferences stay advisory because no exact inventory value can prove
-# that a view is "đẹp"; concrete view types are parsed into structured constraints.
 _VIEW_FEATURE_PATTERN = re.compile(r"\bview(?:\s+[^\W\d_]+)?\b", re.IGNORECASE)
 
 
@@ -456,9 +411,6 @@ def parse_criteria(query: str, known_subdivisions: list[str] | None = None) -> C
     if unit_code is not None:
         constraints.append(Constraint(FIELD_UNIT_CODES, [unit_code], Strength.HARD, Source.EXPLICIT))
 
-    # Order matters and mirrors inventory_service's own (range -> max -> min): an explicit
-    # bound beats an adjustment, which beats a vague phrase. Someone who wrote "dưới 5 tỷ"
-    # in the same sentence as "giá mềm" gave a real number, and guessing over it is worse.
     price_range = _inv._extract_price_range(query)
     if price_range is not None:
         constraints.append(Constraint(FIELD_PRICE, price_range, Strength.HARD, Source.EXPLICIT))
@@ -471,11 +423,8 @@ def parse_criteria(query: str, known_subdivisions: list[str] | None = None) -> C
             if vague_price is not None:
                 constraints.append(Constraint(FIELD_PRICE, vague_price, Strength.HARD, Source.INFERRED))
             elif _VAGUE_CHEAPER_PATTERN.search(query):
-                # Needs an existing ceiling to step down from; merge_criteria resolves it.
-                # Recorded as unresolved so the caller can ask when there is no anchor.
                 unresolved.append("giá")
 
-    # Same precedence as price: qualified range, then adjustment, then a bare figure.
     area_range = _inv._extract_area_range(query) or _parse_area_adjustment(query)
     area_source = Source.EXPLICIT
     if area_range is None:
@@ -546,8 +495,6 @@ def parse_criteria(query: str, known_subdivisions: list[str] | None = None) -> C
 
     excluded = bool(_EXCLUDE_PATTERN.search(query))
     if excluded:
-        # Unit types already carry a local include/exclude decision, so a phrase such as
-        # "chỉ nhà phố, không lấy chung cư" does not turn BOTH types into exclusions.
         constraints = [
             item if item.field == FIELD_UNIT_TYPES else replace(item, strength=Strength.EXCLUDED)
             for item in constraints
@@ -599,9 +546,6 @@ def _parse_vague_price(query: str) -> tuple[float, float] | None:
     if match is None:
         return None
     centre = _inv._price_to_vnd(match.group(1), match.group(2))
-    # Rounded because these bounds are shown to people and compared for equality:
-    # 3.45e9 lands on 3449999999.9999995 in binary floating point, which is a strange
-    # number to print in a prompt and a trap for any exact comparison later.
     return round(centre * (1 - _VAGUE_PRICE_TOLERANCE)), round(centre * (1 + _VAGUE_PRICE_TOLERANCE))
 
 
@@ -634,8 +578,6 @@ def _is_excluded_subdivision(query: str, name: str) -> bool:
 def _extract_features(query: str) -> list[str]:
     normalized = _inv._normalize_text(query)
     features = [word for word in _FEATURE_WORDS if _inv._normalize_text(word) in normalized]
-    # Structured direction/view values now live in constraints. A subjective phrase such
-    # as "view đẹp" has no exact value to compare and remains an advisory feature.
     if not _inv._extract_view_types(query):
         features.extend(match.group(0) for match in _VIEW_FEATURE_PATTERN.finditer(query))
     return list(dict.fromkeys(features))
@@ -646,8 +588,6 @@ def _extract_household(query: str) -> int | None:
     if match is None:
         return None
     size = int(match.group(1))
-    # A household of 20 is a typo or a different question entirely; storing it would skew
-    # every later suggestion.
     return size if 1 <= size <= 12 else None
 
 
@@ -674,7 +614,6 @@ def _resolve_dropped(query: str, features: list[str], constraints: list[Constrai
     if dropped:
         return tuple(dropped)
 
-    # No specific target parsed — fall back to whatever field the words point at.
     normalized = _inv._normalize_text(query)
     for keyword, field_name in (
         ("gia", FIELD_PRICE),
@@ -687,7 +626,6 @@ def _resolve_dropped(query: str, features: list[str], constraints: list[Constrai
     return ()
 
 
-# --------------------------------------------------------------------------- merging
 
 
 def merge_criteria(previous: SearchCriteria, delta: CriteriaDelta) -> SearchCriteria:
@@ -707,9 +645,6 @@ def merge_criteria(previous: SearchCriteria, delta: CriteriaDelta) -> SearchCrit
 
     constraints = list(previous.constraints)
     for incoming in delta.constraints:
-        # Keep one positive and one exclusion for the same field. A later positive type
-        # replaces the earlier positive type, while "không lấy chung cư" can coexist
-        # with "chỉ lấy nhà phố" in the same turn and across refinements.
         constraints = [
             existing
             for existing in constraints
@@ -717,8 +652,6 @@ def merge_criteria(previous: SearchCriteria, delta: CriteriaDelta) -> SearchCrit
         ]
         constraints.append(incoming)
 
-    # Vague comparatives resolve against the value already stored — this is the only place
-    # they can, since the anchor is precisely what the previous turns established.
     constraints = _resolve_relative(constraints, delta)
 
     return SearchCriteria(
@@ -777,7 +710,6 @@ def _merge_features(existing: tuple[str, ...], incoming: tuple[str, ...]) -> tup
     return tuple(merged)
 
 
-# --------------------------------------------------------------------------- conflicts
 
 
 def detect_conflict(criteria: SearchCriteria) -> str | None:
@@ -811,8 +743,6 @@ def detect_conflict(criteria: SearchCriteria) -> str | None:
     if unit_types is not None and area is not None:
         bedrooms = _bedroom_count(unit_types.value)
         _, area_max = area.value
-        # ~25m² per bedroom is the floor for a real apartment layout; below it the two
-        # criteria genuinely cannot both hold, which is different from merely unusual.
         if bedrooms is not None and area_max != float("inf") and area_max < bedrooms * 25:
             return (
                 f"Căn {bedrooms}PN thường không có diện tích dưới {_format_area(area_max)}. "
@@ -863,7 +793,6 @@ def _display_unit_type(value: str) -> str:
     return labels.get(text.upper(), text)
 
 
-# --------------------------------------------------------------------------- rendering
 
 
 def format_criteria(criteria: SearchCriteria) -> str:
@@ -936,9 +865,6 @@ def diagnose_zero_results(units: list[Any], criteria: SearchCriteria) -> ZeroRes
                 options.append(RelaxOption(pair, count))
 
     def priority(option: RelaxOption) -> tuple[int, int, int, int]:
-        # Relax our own interpretation before an explicit request. SOFT comes before
-        # HARD for forward compatibility with ranking phases, even though SOFT filters do
-        # not currently reach `active`.
         inferred = all(item.source == Source.INFERRED for item in option.removed)
         soft = all(item.strength == Strength.SOFT for item in option.removed)
         return (0 if soft else 1, 0 if inferred else 1, len(option.removed), -option.estimated_count)
@@ -989,7 +915,6 @@ def _format_area(value: float) -> str:
     return f"{value:.4g}m²"
 
 
-# --------------------------------------------------------------------------- storage
 
 
 def load(session_id: int) -> tuple[SearchCriteria, list[SearchCriteria]]:
@@ -1001,8 +926,6 @@ def load(session_id: int) -> tuple[SearchCriteria, list[SearchCriteria]]:
     try:
         raw = client.get(session_key(session_id))
     except Exception:
-        # WARNING not ERROR: the answer is still correct, only stateless. Logged because a
-        # permanently dead Redis has no other outward symptom.
         logger.warning(
             "Doc tieu chi tim kiem that bai; coi nhu chua co tieu chi.",
             exc_info=True,
@@ -1097,15 +1020,9 @@ def resolve(
     merged = merge_criteria(previous, delta)
 
     if merged == previous:
-        # Nothing changed — pushing an identical snapshot would fill the undo stack with
-        # copies and make "quay lại bộ lọc cũ" walk back through states that look the same.
         return merged, delta
 
     if detect_conflict(merged) is None:
-        # An empty `previous` is not worth a snapshot: it is the state before the person
-        # said anything, so restoring it is indistinguishable from "xoá toàn bộ bộ lọc"
-        # and makes the first "quay lại bộ lọc cũ" of a session wipe the search instead of
-        # stepping back through it.
         snapshots = [previous, *history] if not previous.is_empty() else list(history)
         save(session_id, merged, snapshots[:MAX_HISTORY_SNAPSHOTS])
 

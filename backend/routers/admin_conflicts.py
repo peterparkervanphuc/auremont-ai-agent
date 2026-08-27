@@ -78,8 +78,6 @@ async def get_conflicts(db: Session = Depends(get_db)) -> list[ConflictDetailRes
     for flag in flags:
         document_a = documents.get(flag.document_id_a)
         document_b = documents.get(flag.document_id_b)
-        # A broken FK should not turn the entire alert centre into a 500. The FK is
-        # enforced in normal deployments, so this only protects old/imported databases.
         if document_a is None or document_b is None:
             logger.error(
                 "Conflict %s refers to a missing document.",
@@ -94,9 +92,6 @@ async def get_conflicts(db: Session = Depends(get_db)) -> list[ConflictDetailRes
                 document_id_a=flag.document_id_a,
                 document_id_b=flag.document_id_b,
                 description=flag.description,
-                # The column is `Mapped[str]` but only ever holds the three documented
-                # values (see models/conflict_flag.py). Pydantic re-validates the Literal
-                # when this response is constructed, so an unexpected row still fails loudly.
                 detection_method=cast(ConflictDetectionMethod, flag.detection_method),
                 confidence=flag.confidence,
                 similarity_score=flag.similarity_score,
@@ -137,8 +132,6 @@ async def resolve_conflict_flag(
         )
     except ValueError as exc:
         db.rollback()
-        # keep_document_id is not one of the flag's two documents -> bad request
-        # payload, not a "not found" condition.
         if "not part of conflict" in str(exc):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         if (
@@ -155,9 +148,6 @@ async def resolve_conflict_flag(
             detail="Conflict could not be prepared for resolution.",
         ) from exc
 
-    # Phase 1 is strictly fail-closed: write the new review metadata for both
-    # endpoints but quarantine both. A timeout can therefore never publish an Admin
-    # decision that has not yet committed in MySQL.
     try:
         for document in (superseded, kept):
             attempted_vector_ids.add(document.id)
@@ -170,9 +160,6 @@ async def resolve_conflict_flag(
                 is_current=False,
             )
     except VectorStoreError as exc:
-        # Restore Qdrant while the MySQL row locks are still held. Rolling back first
-        # would let a second Admin commit a newer choice that this compensation could
-        # then overwrite with stale metadata.
         try:
             _restore_vector_metadata(previous_vector_metadata, attempted_vector_ids)
         finally:
@@ -185,18 +172,12 @@ async def resolve_conflict_flag(
     try:
         db.commit()
     except SQLAlchemyError as exc:
-        # COMMIT may have reached MySQL even when its acknowledgement was lost. Never
-        # reactivate the old state in that ambiguous case; both Qdrant endpoints are
-        # already quarantined and an audit/retry can safely reconcile availability.
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Conflict endpoints remain quarantined because the MySQL commit outcome could not be confirmed.",
         ) from exc
 
-    # Phase 2 reads the winner again under a fresh row lock. A relation or another
-    # conflict may have retired it between phases, so only this fresh committed state
-    # is allowed to activate Qdrant.
     try:
         refreshed_winner = get_document(db, kept.id, for_update=True)
         if refreshed_winner is None:
@@ -212,8 +193,6 @@ async def resolve_conflict_flag(
         )
         db.commit()
     except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
-        # The MySQL decision is already committed. Leaving Qdrant quarantined is the
-        # safe failure mode; never compensate back to the pre-resolution winner.
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -221,9 +200,6 @@ async def resolve_conflict_flag(
         ) from exc
 
     db.refresh(conflict)
-    # The superseded document just stopped being retrievable. Without this, cached answers
-    # keep quoting the version the Admin has just ruled against — exactly the contradiction
-    # the conflict flag was raised to end.
     clear_cache()
     return ConflictFlagResponse.model_validate(conflict).model_copy(update={"severity": _severity(conflict)})
 
@@ -239,9 +215,6 @@ def _restore_vector_metadata(
     )
     active_ids = sorted(selected_ids - set(quarantined_ids))
 
-    # Do not reactivate any previously-current document unless every previously
-    # quarantined document was restored successfully. If a timeout leaves the failed
-    # winner active, restoring the old loser too would expose both conflicting copies.
     quarantine_restored = True
     for document_id in quarantined_ids:
         metadata = previous_vector_metadata[document_id]

@@ -66,8 +66,6 @@ def upgrade() -> None:
     op.create_index("ix_leads_tier", "leads", ["tier"])
     op.create_index("ix_leads_scored_at", "leads", ["scored_at"])
 
-    # batch_alter_table because tests/test_migrations.py runs this on SQLite, which cannot
-    # ALTER a table in place.
     with op.batch_alter_table("users") as batch_op:
         batch_op.add_column(sa.Column("full_name", sa.String(length=255), nullable=True))
         batch_op.add_column(sa.Column("phone", sa.String(length=20), nullable=True))

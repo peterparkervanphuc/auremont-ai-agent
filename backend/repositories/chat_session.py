@@ -17,8 +17,6 @@ def create_session(db: Session, sale_id: int, schema: ChatSessionCreate) -> Chat
     session = ChatSession(
         sale_id=sale_id,
         title=schema.title,
-        # customer_name and project_id used to be dropped here: the schema accepted
-        # them but they were never written to the DB, so every session returned null.
         customer_name=schema.customer_name,
         project_id=schema.project_id,
     )
@@ -253,9 +251,6 @@ def claim_for_sale(db: Session, session_id: int, sale_id: int) -> ChatSession | 
     update and this returns `None`, which the router turns into a 409 telling that Sale
     someone else got there first.
     """
-    # `Session.execute` is annotated as returning Result, but a DML statement returns a
-    # CursorResult — the only one carrying `rowcount`, which is what makes this an atomic
-    # claim rather than a read-then-write race.
     result = cast(
         CursorResult,
         db.execute(
@@ -263,8 +258,6 @@ def claim_for_sale(db: Session, session_id: int, sale_id: int) -> ChatSession | 
             .where(
                 ChatSession.id == session_id,
                 ChatSession.status == SessionStatus.WAITING_SALE,
-                # A Sale can only ever be handed a LIVE row; an AI conversation is not
-                # claimable even if some caller passes its id.
                 ChatSession.channel == SessionChannel.LIVE,
             )
             .values(sale_id=sale_id, status=SessionStatus.SALE_HANDLING)

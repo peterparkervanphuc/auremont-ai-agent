@@ -18,7 +18,7 @@ def test_needs_inventory_matches_a_budget_threshold():
     _PRICE_THRESHOLD_PATTERN: without it this falls through to document retrieval, which
     has nothing shaped like "under 5 billion" to match."""
     assert needs_inventory("tư vấn cho tôi căn hộ dưới 5 tỷ")
-    assert needs_inventory("con can nao duoi 5 ty khong")  # no diacritics
+    assert needs_inventory("con can nao duoi 5 ty khong")
     assert needs_inventory("có căn nào trên 3 tỷ không")
     assert needs_inventory("tối đa 4,5 tỷ thì xem được căn nào")
 
@@ -89,7 +89,7 @@ def test_inventory_field_questions_reach_live_mockapi():
 
 def test_needs_registration_gate_matches_closing_questions():
     assert needs_registration_gate("Cho mình xin bảng giá chi tiết với ạ")
-    assert needs_registration_gate("con can gui bang gia chi tiet khong")  # no diacritics
+    assert needs_registration_gate("con can gui bang gia chi tiet khong")
 
 
 def test_needs_registration_gate_ignores_general_questions():
@@ -98,7 +98,7 @@ def test_needs_registration_gate_ignores_general_questions():
 
 def test_wants_human_agent_matches_explicit_asks():
     assert wants_human_agent("Cho mình gặp người thật được không")
-    assert wants_human_agent("cho gap chuyen vien tu van")  # no diacritics
+    assert wants_human_agent("cho gap chuyen vien tu van")
 
 
 def test_wants_human_agent_ignores_general_questions():
@@ -128,7 +128,7 @@ def test_conversation_meta_query_matches_questions_about_the_transcript():
     assert is_conversation_meta_query("tôi vừa hỏi về phân khu nào")
     assert is_conversation_meta_query("bạn vừa nói gì vậy")
     assert is_conversation_meta_query("tóm tắt lại cuộc trò chuyện giúp tôi")
-    assert is_conversation_meta_query("toi vua hoi ve phan khu nao")  # no diacritics
+    assert is_conversation_meta_query("toi vua hoi ve phan khu nao")
 
 
 def test_conversation_meta_query_ignores_project_questions():

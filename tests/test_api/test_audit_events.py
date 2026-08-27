@@ -128,6 +128,5 @@ def test_hitl_confirm_is_audited_without_the_confirmed_content(sale_client, stub
     record = next(r for r in capture_audit if r.event == "hitl.confirm")
     assert record.message_id == agent_message["id"]
     assert record.content_len == len(secret_price_text)
-    # `edited` is the auditable fact; the text itself must not be stored.
     assert record.edited is True
     assert secret_price_text not in str(record.__dict__)

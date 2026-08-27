@@ -73,9 +73,6 @@ def test_resolve_listing_images_attaches_real_gallery_photos_and_amenities(monke
                 id="the-sapphire-2",
                 name="The Sapphire 2",
                 details={
-                    # Filenames must actually tag the "2PN" unit type — select_listing_images
-                    # no longer falls back to attaching just any gallery photo (see
-                    # test_answer_images.py for the dedicated coverage of that behaviour).
                     "images": {
                         "gallery": [
                             "http://minio/sapphire-2/can-ho-2pn-a.jpg",
@@ -99,7 +96,6 @@ def test_resolve_listing_images_attaches_real_gallery_photos_and_amenities(monke
             "image_urls": ["http://minio/sapphire-2/can-ho-2pn-a.jpg", "http://minio/sapphire-2/can-ho-2pn-b.jpg"],
             "amenities": ["Hồ bơi", "Sân tennis"],
             "project_id": "the-sapphire-2",
-            # Catalogue-only card: no live inventory record behind it, so both stay "".
             "unit_code": "",
             "status": "",
         }

@@ -39,7 +39,6 @@ logger = logging.getLogger(__name__)
 
 ANALYSIS_VERSION = "rules-1"
 
-# Signal -> points, ordered by how strongly each predicts a real purchase conversation.
 _RULE_WEIGHTS: dict[str, int] = {
     "stated_budget": 30,
     "budget_over_1bn": 5,
@@ -55,26 +54,14 @@ _RULE_WEIGHTS: dict[str, int] = {
 }
 
 MAX_SCORE = 100
-# Capped below the WARM threshold on purpose — see the module docstring.
 SOFT_MAX = 30
 
-# Signals that are utterances: true on the turn they are said, meaningless afterwards unless
-# remembered. Latched into `leads.signals` so the score accumulates instead of flickering when
-# the next message is "cảm ơn ạ".
 LATCHING_SIGNALS = ("stated_budget", "budget_over_1bn", "closing_intent", "wants_human", "named_unit_code")
 
 _ONE_BILLION = 1_000_000_000
 _ENGAGED_TURNS = 6
 _MIN_FILTERS = 3
 
-# `memory_service`'s price-question gate rejects the WHOLE string, which is right for its own
-# purpose (a wrongly remembered budget reshapes every later answer) but too blunt here: "cho
-# mình xin bảng giá căn 2PN, ngân sách tầm 3.5 tỷ" is one of the most common things a serious
-# buyer writes, and the "bảng giá căn" half suppresses the budget half. Running the same
-# extractor per clause keeps all three of its gates intact while letting a clean clause count.
-#
-# Deliberately NOT splitting on "." — Vietnamese money is written "3.5 tỷ", and splitting
-# there turns one budget into two unreadable fragments.
 _CLAUSE_SPLIT = re.compile(r"[,;\n]+|(?<=[a-zA-ZÀ-ỹ])[!?]+")
 
 
@@ -121,7 +108,6 @@ class LeadSoftSignals(BaseModel):
             number = float(value)
         except (TypeError, ValueError):
             return 0.0
-        # Models routinely answer "85" when asked for a 0-1 confidence.
         if number > 1.0:
             number = number / 100 if number <= 100 else 1.0
         return min(max(number, 0.0), 1.0)
@@ -188,7 +174,6 @@ def collect_signals(
     flags["wants_human"] = intent.wants_human_agent(query)
     flags["named_unit_code"] = criteria.get(search_criteria.FIELD_UNIT_CODES) is not None
 
-    # These accumulate on SearchCriteria itself, so they need no latch of their own.
     flags["three_filters"] = len(criteria.filtering()) >= _MIN_FILTERS
     flags["purpose_known"] = criteria.purpose is not None
     flags["household_known"] = criteria.household_size is not None
@@ -329,10 +314,6 @@ def combine(
             "flags": signals.flags,
             "weights": {name: points for name, points in _RULE_WEIGHTS.items() if signals.fired(name)},
             "analysis_version": ANALYSIS_VERSION,
-            # The LLM's own one-sentence explanation, kept alongside the rule evidence so a
-            # Sale sees why the model judged what it judged, not just the flags that fired.
-            # `update_lead_score` persists this dict verbatim, so nesting it here is what
-            # gets it into the `leads` row — no migration needed since `signals` is JSON.
             **({"llm_reason": soft.reason} if soft is not None and soft.reason else {}),
         },
         detection_method="rule+llm" if soft is not None else "rule",

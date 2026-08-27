@@ -19,7 +19,6 @@ def _history():
     ]
 
 
-# --- prompts.build_prompt includes history -------------------------------------------
 
 
 def test_build_prompt_includes_history_transcript():
@@ -42,13 +41,10 @@ def test_build_prompt_public_labels_differ_from_internal():
 
     assert "Khách: Có căn 2PN nào không?" in public_prompt
     assert "Em: Dạ hiện có 3 căn 2PN" in public_prompt
-    # The AI's own past turn is labelled "Bạn" for an internal/Sale audience (matching how
-    # SYSTEM_INSTRUCTION addresses the model), not "Em" — the customer-facing label above.
     assert "Bạn: Dạ hiện có 3 căn 2PN" in internal_prompt
     assert "Em:" not in internal_prompt
 
 
-# --- prompts.build_prompt quotes the AI's own last question back (anti "parrot loop") -
 
 
 def test_build_prompt_warns_against_repeating_the_ai_own_question():
@@ -89,7 +85,6 @@ def test_build_prompt_has_no_repeat_warning_with_no_history():
     assert "TUYỆT ĐỐI không lặp lại" not in prompt
 
 
-# --- agent_pipeline._retrieval_query folds in the asker's last turn -------------------
 
 
 def test_retrieval_query_folds_in_last_customer_turn():
@@ -234,7 +229,6 @@ def test_inventory_field_follow_up_keeps_live_tool_routing(monkeypatch):
     assert result["needs_inventory"] is True
 
 
-# --- agent_pipeline._verify judges against the same history-expanded query -----------
 
 
 def test_verify_scores_against_the_history_expanded_query(monkeypatch):
@@ -269,7 +263,6 @@ def test_verify_scores_against_the_history_expanded_query(monkeypatch):
     assert "các khoản chiết khấu này không ạ?" in seen_queries[0]
 
 
-# --- semantic cache is skipped once there is history ----------------------------------
 
 
 def test_cache_check_skips_lookup_when_history_present(monkeypatch):
@@ -290,7 +283,6 @@ def test_cache_check_still_looks_up_with_no_history(monkeypatch):
     assert result == {"used_cache": False}
 
 
-# --- run_pipeline caps history length --------------------------------------------------
 
 
 def test_run_pipeline_caps_history_to_max_messages(monkeypatch):
@@ -301,7 +293,6 @@ def test_run_pipeline_caps_history_to_max_messages(monkeypatch):
     agent_pipeline.run_pipeline("Giá bao nhiêu?", clearance=DocumentVisibility.PUBLIC, history=long_history)
 
     assert len(captured["history"]) == agent_pipeline.MAX_HISTORY_MESSAGES
-    # Kept the most recent ones, not the oldest.
     assert captured["history"][-1]["content"] == "19"
 
 

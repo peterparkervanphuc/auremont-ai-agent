@@ -54,29 +54,19 @@ from backend.services import agent_pipeline, lead_service, memory_service, searc
 
 router = APIRouter(prefix="/customer", tags=["Customer Chat"])
 
-# Canned copy shown instead of a real answer while the visitor is still anonymous — see
-# ARCHITECTURE.md's RBAC section and the product decision behind this router: an anonymous
-# visitor gets general answers and closing-adjacent information through self-service. A
-# registration prompt is reserved for the anonymous turn limit; a logged-in customer can
-# still explicitly request a live Sale.
 _TURN_LIMIT_MESSAGE = (
     "Cảm ơn bạn đã trò chuyện cùng Auremont! Để mình lưu lại đoạn chat này và tư vấn sâu hơn, "
     "bạn vui lòng đăng ký/đăng nhập tài khoản nhé."
 )
-# Shown when frustration with the AI causes a logged-in session to enter WAITING_SALE.
 _HANDOFF_NOTICE_MESSAGE = (
     "Dạ em xin phép kết nối anh/chị với "
     "chuyên viên tư vấn ngay bây giờ ạ. Chuyên viên sẽ đọc lại toàn bộ nội dung mình vừa trao "
     "đổi nên anh/chị không cần nhắc lại từ đầu."
 )
-# Shown when a logged-in customer uses the "Gặp chuyên viên tư vấn" button
-# (request_human below).
 _HANDOFF_DIRECT_REQUEST_MESSAGE = (
     "Dạ vâng, em xin phép kết nối anh/chị với chuyên viên tư vấn ngay bây giờ ạ. Chuyên viên "
     "sẽ đọc lại toàn bộ nội dung mình vừa trao đổi nên anh/chị không cần nhắc lại từ đầu."
 )
-# Shown when the customer explicitly leaves the live handoff — either they asked to (see
-# `return_to_ai` below), or the Sale ended it (`sale_live.end`, mirrored into this session).
 _RETURN_TO_AI_MESSAGE = (
     "Bạn đã quay lại chat với Auremont AI. Bạn có thể tiếp tục hỏi mình bất cứ điều gì về dự án nhé!"
 )
@@ -118,10 +108,6 @@ async def register_customer(
     """Create a CUSTOMER account and, if the visitor was chatting anonymously, claim their
     in-progress session so the conversation continues without losing history."""
     if get_user_by_email(db, payload.email) is not None:
-        # No email: the account is never created, so this row would be a stranger's address
-        # kept forever in a table with no foreign key to delete it by. `reason` answers the
-        # only question anyone asks of this event. (`auth.login.failure` does log a
-        # username, deliberately — that is a staff account and a security trail.)
         log_event("customer.register.failure", reason="email_taken")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
@@ -181,9 +167,6 @@ async def create_customer_chat_session(
     db: Session = Depends(get_db),
     user: User = Depends(require_role(UserRole.CUSTOMER)),
 ) -> CustomerChatSessionResponse:
-    # Idempotent by design: the customer surface is one continuous conversation, not a
-    # list of independent threads. Repeated first-message calls or multiple browser tabs
-    # always converge on the same row.
     return get_or_create_customer_session(db, customer_id=user.id, schema=payload)
 
 
@@ -209,9 +192,6 @@ async def claim_anonymous_chat_session(
 
     canonical = claim_or_merge_anonymous_session(db, anonymous, user.id)
     _remember_customer_history(db, canonical, user.id)
-    # The lead follows the transcript. Easy to miss: this is the returning-customer path,
-    # distinct from the registration one above, and a visitor who logs in rather than
-    # signing up would otherwise leave their accumulated score orphaned on a dead token.
     lead_service.rescore_after_claim(
         db, claim_anonymous_lead(db, visitor_token=payload.visitor_token, customer_id=user.id), user
     )
@@ -294,15 +274,8 @@ async def ask_in_customer_session(
     session = _resolve_customer_asker(db, session, user, x_visitor_token)
     set_title_if_empty(db, session, payload.content)
 
-    # Fetched BEFORE persisting the new customer turn below, specifically so it excludes
-    # that turn — run_pipeline's `history` is "everything before this question", and the
-    # question itself is passed separately.
     history = history_for_pipeline(list_messages_for_session(db, session_id))
 
-    # Long-term memory is scoped to this customer account and loaded BEFORE remembering
-    # the current turn, so the prompt contains durable preferences from earlier turns
-    # rather than duplicating the question that is already supplied separately. Anonymous
-    # visitors have no stable identity, so they deliberately use short-term history only.
     memory_key: str | None = None
     memory_profile = ""
     if session.customer_id is not None:
@@ -313,12 +286,6 @@ async def ask_in_customer_session(
     if memory_key is not None:
         memory_service.remember(memory_key, payload.content, session.project_id, db=db)
 
-    # Scored HERE, above every early return below, because the branches this function takes
-    # afterwards include the two turns a lead is hottest on: the anonymous turn-limit gate
-    # (which never calls the pipeline) and a customer messaging while a Sale already has
-    # them (which returns immediately) — the exact population the live inbox displays.
-    # A hook placed after the branch chain, or inside the pipeline, would score neither.
-    # Never raises; see `lead_service.rescore_for_turn`.
     lead_service.rescore_for_turn(db, session, payload.content)
 
     if session.status != SessionStatus.BOT_HANDLING:
@@ -335,18 +302,8 @@ async def ask_in_customer_session(
     gate: Literal["turn_limit", "closing_intent", "human_request"] | None = None
     used_cache = False
     duration_ms = 0.0
-    # `session.status` is a raw DB string (Column(String), not a native enum type) — wrap it
-    # so a direct attribute assignment below (which pydantic does not validate the way
-    # `model_validate` does) actually stores a `SessionStatus` member, not a bare str.
     new_status = SessionStatus(session.status)
-    # Every gate/handoff branch below is a polite boundary ("that's outside what I can say
-    # here, let me connect you properly") — RESPECTFUL for all of them; only the real
-    # pipeline branch can also land on HAPPY/REGRETFUL, from `result.emotion`.
     emotion: MessageEmotion | None = MessageEmotion.RESPECTFUL
-    # Only the real pipeline branch below ever fills these in — a gate/handoff message is
-    # fixed copy, never a discovery question with options to tap, and a customer being
-    # walked to the registration form or a live Sale should not be invited to start a new
-    # question instead.
     quick_replies: list[str] = []
     listings: list[dict] = []
     suggested_questions: list[str] = []
@@ -357,12 +314,7 @@ async def ask_in_customer_session(
         answer_text = _TURN_LIMIT_MESSAGE
         verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
     elif not is_anonymous and needs_human_handoff(payload.content):
-        # Queue the customer's SEPARATE live session, exactly as the "Gặp chuyên viên tư vấn"
-        # button does (`request_human`). This AI session stays BOT_HANDLING and is never
-        # handed to a Sale, so asking for a human in words leaks no more history than
-        # clicking the button does. `new_status` still reports WAITING_SALE so the caller
-        # sees the handoff was accepted.
-        assert session.customer_id is not None  # not is_anonymous
+        assert session.customer_id is not None
         live = get_or_create_live_session(db, session.customer_id, project_id=session.project_id)
         new_status = SessionStatus.WAITING_SALE
         if live.status == SessionStatus.BOT_HANDLING:
@@ -384,10 +336,6 @@ async def ask_in_customer_session(
         used_cache = result.used_cache
 
         if result.requires_hitl:
-            # Customer chat is a self-service surface. A grounded price answer may trip the
-            # same conservative risk detector used by the Sale co-pilot, but it must not be
-            # replaced by a generic handoff. Keep HITL on the Sale flow; on this route show
-            # the verified PUBLIC-tier answer and do not expose an unconfirmable HITL card.
             answer_text = result.draft_answer
             verifier_score = result.verifier_score
             faithfulness = result.faithfulness
@@ -422,8 +370,6 @@ async def ask_in_customer_session(
         used_cache=used_cache,
         duration_ms=duration_ms,
         query_len=len(payload.content),
-        # A customer types their own phone number into this box ("gọi tôi 09..."), and the
-        # audit table has no foreign key, so the row outlives the account.
         query=redact_and_truncate(payload.content) if settings.log_query_text else None,
     )
 
@@ -484,10 +430,6 @@ async def request_human(
         )
         log_event("customer.handoff.requested", session_id=live.id, customer_id=user.id)
     else:
-        # Already waiting or already live — no-op. Re-show the handoff notice rather than
-        # whatever the customer said most recently, so this button always gets a
-        # consistent, assistant-authored response back regardless of how many times it's
-        # clicked.
         prior_notice = next(
             (m for m in reversed(list_messages_for_session(db, live.id)) if m.sender != MessageSender.CUSTOMER),
             None,

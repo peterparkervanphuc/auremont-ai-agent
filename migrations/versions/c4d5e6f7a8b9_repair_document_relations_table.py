@@ -64,6 +64,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # This revision repairs an object that logically belongs to an older migration.
-    # Removing it on downgrade would recreate the production drift it exists to heal.
     pass

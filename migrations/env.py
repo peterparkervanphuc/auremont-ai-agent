@@ -12,8 +12,6 @@ from sqlalchemy import engine_from_config, pool
 from backend.core.config import get_settings
 from backend.core.mysql_client import Base
 
-# Import để mọi bảng được đăng ký vào Base.metadata trước khi autogenerate chạy;
-# thiếu một dòng ở đây thì Alembic sẽ tưởng bảng đó bị xoá.
 from backend.models import (  # noqa: F401
     audit_log,
     chat_session,
@@ -37,8 +35,6 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    # `sqlalchemy.url` đặt qua Config (test dùng SQLite tạm) được ưu tiên; ngoài
-    # ra luôn lấy từ settings để migration và app dùng chung một nguồn cấu hình.
     override = config.get_main_option("sqlalchemy.url")
     if override:
         return override
@@ -72,9 +68,7 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            # Bắt cả thay đổi kiểu cột, không chỉ thêm/xoá cột.
             compare_type=True,
-            # SQLite không ALTER được cột — batch mode dựng bảng tạm rồi copy.
             render_as_batch=connection.dialect.name == "sqlite",
         )
 

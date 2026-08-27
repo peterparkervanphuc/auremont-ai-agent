@@ -69,8 +69,6 @@ def _period_metrics(
         if agent_messages
         else []
     )
-    # A message may receive more than one feedback row. The latest assessment is
-    # authoritative so one answer never inflates several donut slices at once.
     latest_feedback: dict[int, Feedback] = {}
     for row in sorted(raw_feedback_rows, key=lambda item: (item.created_at, item.id)):
         latest_feedback[row.message_id] = row
@@ -93,10 +91,6 @@ def _period_metrics(
     active_sale_ids.update(
         owner
         for row in sale_messages
-        # Both halves are needed: `session_id` is nullable on the message row, and the
-        # owner it maps to is itself nullable. Bound with a walrus so the `is not None`
-        # guard narrows — a repeated `sale_by_session[...]` lookup reads as a fresh
-        # `int | None` every time and never narrows.
         if row.session_id is not None and (owner := sale_by_session.get(row.session_id)) is not None
     )
 
@@ -182,9 +176,6 @@ async def get_business_dashboard(
     previous_start_day = start_day - timedelta(days=days)
     previous_start_at = _utc_boundary(previous_start_day, zone)
 
-    # Use the same official-team scope for every business metric. Otherwise the
-    # headline session/question totals include Admin and E2E traffic while the
-    # active-Sale card excludes it, producing an internally inconsistent dashboard.
     official_sales = db.query(User).filter(User.role == "sale", ~User.username.like("e2e_sale_%")).all()
     sale_names = {row.id: row.username for row in official_sales}
     official_sale_ids = set(sale_names)
@@ -208,9 +199,6 @@ async def get_business_dashboard(
         if official_sale_ids
         else []
     )
-    # Messages are filtered by their own timestamp and joined to the scoped Sale
-    # sessions. This keeps long-running sessions accurate without loading all
-    # historical sessions into application memory.
     period_message_rows = (
         db.query(Message, ChatSession.sale_id)
         .join(ChatSession, Message.session_id == ChatSession.id)
@@ -310,8 +298,6 @@ async def get_business_dashboard(
             }
         )
 
-    # Keep all documents here: company-wide uploads can still carry precise
-    # ``subdivision_names`` metadata and therefore cover a subdivision row.
     documents = db.query(Document).all()
     document_coverage: list[dict[str, Any]] = []
     coverage_projects = [project for project in projects if not project_id or project.id == project_id]

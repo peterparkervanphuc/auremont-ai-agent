@@ -47,7 +47,6 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Fix Windows console encoding so VN diacritics in prompts print cleanly.
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -58,7 +57,6 @@ if sys.platform == "win32":
 VN_TZ = timezone(timedelta(hours=7))
 GEMINI_HOME = Path.home() / ".gemini"
 
-# Antigravity has shipped under two folder names; prefer the newer IDE one.
 BRAIN_CANDIDATES = (
     GEMINI_HOME / "antigravity-ide" / "brain",
     GEMINI_HOME / "antigravity" / "brain",
@@ -82,9 +80,6 @@ def git(cmd: str) -> str:
         return ""
 
 
-# ---------------------------------------------------------------------------
-# Locating brain/
-# ---------------------------------------------------------------------------
 
 def get_brain_dirs() -> list[Path]:
     """Brain directories to scan, newest layout first."""
@@ -95,9 +90,6 @@ def get_brain_dirs() -> list[Path]:
     return [p for p in BRAIN_CANDIDATES if p.exists()]
 
 
-# ---------------------------------------------------------------------------
-# Path normalization + repo gating
-# ---------------------------------------------------------------------------
 
 def _normalize(p: str) -> str:
     """Lower-case + backslash form, no trailing separator."""
@@ -159,9 +151,6 @@ def _conv_matches_repo(cwds: set[str], repo_root_n: str) -> bool:
     return False
 
 
-# ---------------------------------------------------------------------------
-# Prompt extraction
-# ---------------------------------------------------------------------------
 
 def extract_user_prompt(content: str) -> str:
     """Pull the text between <USER_REQUEST>...</USER_REQUEST>. Fall back to
@@ -175,9 +164,6 @@ def extract_user_prompt(content: str) -> str:
     return cleaned.strip()
 
 
-# ---------------------------------------------------------------------------
-# Reading existing log to avoid duplicates
-# ---------------------------------------------------------------------------
 
 def get_logged_entry_ids(log_file: Path) -> set[str]:
     logged: set[str] = set()
@@ -198,9 +184,6 @@ def get_logged_entry_ids(log_file: Path) -> set[str]:
     return logged
 
 
-# ---------------------------------------------------------------------------
-# Iterating user inputs
-# ---------------------------------------------------------------------------
 
 def iter_user_inputs(brain_dirs: list[Path], cutoff: datetime | None,
                      only_conv: str | None, repo_root_n: str):
@@ -218,7 +201,6 @@ def iter_user_inputs(brain_dirs: list[Path], cutoff: datetime | None,
                 continue
 
             cwds = _conv_cwds(transcript)
-            # If we have a repo root, skip convs that never touched it.
             if repo_root_n and not _conv_matches_repo(cwds, repo_root_n):
                 continue
 
@@ -258,9 +240,6 @@ def iter_user_inputs(brain_dirs: list[Path], cutoff: datetime | None,
                     }
 
 
-# ---------------------------------------------------------------------------
-# Emitting entries
-# ---------------------------------------------------------------------------
 
 def build_entry(msg: dict, repo: str, branch: str, commit: str,
                 student: str) -> dict:
@@ -308,12 +287,10 @@ def main() -> None:
                         help="Don't filter conversations by current repo.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be logged, don't write.")
-    # Legacy positional args from old log_manual.py callers.
     parser.add_argument("summary", nargs="?", help=argparse.SUPPRESS)
     parser.add_argument("model", nargs="?", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    # Legacy manual mode: `log_antigravity.py "my summary" gemini`
     if args.summary and not (args.auto or args.conv_id or args.all):
         _legacy_log(args.summary, args.model or "gemini")
         return
@@ -374,10 +351,6 @@ def main() -> None:
           f"Antigravity IDE.", file=sys.stderr)
 
 
-# ---------------------------------------------------------------------------
-# Legacy manual mode (kept for back-compat with log_manual.py callers and the
-# old .agents/rules instructions). New rules tell the AI not to call this.
-# ---------------------------------------------------------------------------
 
 def _legacy_log(summary: str, model: str) -> None:
     ts = datetime.now(VN_TZ).isoformat()

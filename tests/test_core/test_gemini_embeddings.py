@@ -104,7 +104,6 @@ def test_embed_documents_rejects_wrong_vector_dimension(monkeypatch):
         gemini_client.embed_documents(["chunk"], title="bang-gia.pdf")
 
 
-# --- 429 rate-limit retry (bulk upload blowing through the free-tier embedding quota) ---
 
 
 def test_embed_retries_past_a_rate_limit_and_succeeds(monkeypatch):
@@ -118,7 +117,6 @@ def test_embed_retries_past_a_rate_limit_and_succeeds(monkeypatch):
 
     assert vector == [0.1, 0.2, 0.3]
     assert models.calls == 3
-    # Waited the API's own suggested delay before each of the 2 retried attempts.
     assert sleeps == [7.0, 7.0]
 
 
