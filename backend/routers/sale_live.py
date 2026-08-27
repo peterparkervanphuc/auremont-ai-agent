@@ -214,11 +214,14 @@ async def get_lead_detail(
     own explanation when it has run.
     """
     session = _owned_live_session(db, session_id, user)
-    lead = get_lead_for_customer(db, session.customer_id) if session.customer_id else None
+    customer_id = session.customer_id
+    if not customer_id:
+        return None
+    lead = get_lead_for_customer(db, customer_id)
     if lead is None or lead.scored_at is None:
         return None
 
-    user_row = get_user_by_id(db, session.customer_id) if session.customer_id else None
+    user_row = get_user_by_id(db, customer_id)
     weights = (lead.signals or {}).get("weights") or {}
     signals = [
         LeadSignalDetail(label=_SIGNAL_LABELS[name], points=points)
@@ -228,7 +231,7 @@ async def get_lead_detail(
 
     flags = (lead.signals or {}).get("flags") or {}
     has_phone = bool(user_row is not None and user_row.phone)
-    profile = memory_service.load_profile(memory_service.customer_key(session.customer_id))
+    profile = memory_service.load_profile(memory_service.customer_key(customer_id))
 
     return LeadDetailResponse(
         customer_label=_customer_label(user_row, session),

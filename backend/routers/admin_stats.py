@@ -397,6 +397,8 @@ async def get_lead_stats(
         key = (today - timedelta(days=days - 1 - offset)).isoformat()
         by_day[key] = LeadTrendPoint(date=key)
     for lead in leads:
+        if lead.scored_at is None:
+            continue
         key = lead.scored_at.replace(tzinfo=UTC).astimezone(zone).date().isoformat()
         point = by_day.get(key)
         if point is not None:
