@@ -117,8 +117,49 @@ services:
       timeout: 5s
       retries: 10
 
+  # Internal automation console. It is opt-in so a normal `docker compose up`
+  # remains lightweight; start it with `--profile automation`. The editor is
+  # localhost-only and must sit behind SSO/VPN in production.
+  n8n:
+    # Pin a tested stable release; `latest` can introduce workflow-breaking
+    # changes on an unattended production restart.
+    image: n8nio/n8n:2.32.7
+    container_name: ai20k_n8n
+    profiles: ["automation"]
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_SECURE_COOKIE: "false"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-dev-n8n-key-change-in-production}
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      # The reviewed workflow reads NEWS_INGESTION_KEY from $env. Keep n8n
+      # private (localhost/SSO/VPN); never expose its editor publicly.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # v2 enables task runners by default. Community packages stay disabled so
+      # a workflow import cannot silently install unreviewed executable code.
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "false"
+      N8N_RUNNERS_TASK_TIMEOUT: 60
+      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: 268435456
+      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: 1000
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: 168
+      GENERIC_TIMEZONE: Asia/Bangkok
+      TZ: Asia/Bangkok
+      NEWS_INGESTION_KEY: ${NEWS_INGESTION_KEY:-dev-news-ingestion-key-change-in-production}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   mysql_data:
   qdrant_data:
   minio_data:
   redis_data:
+  n8n_data:

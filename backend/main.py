@@ -24,6 +24,7 @@ from backend.models import (  # noqa: F401
     document_relation,
     hitl_log,
     message,
+    news_article,
     observability,
     project,
     user,
@@ -43,6 +44,7 @@ from backend.routers import (
     documents,
     feedback,
     hitl,
+    news,
     projects,
     sale_chat,
     sale_live,
@@ -117,6 +119,7 @@ app.include_router(admin_stats.router, prefix="/api/v1")
 app.include_router(admin_sales.router, prefix="/api/v1")
 app.include_router(admin_observability.router, prefix="/api/v1")
 app.include_router(admin_settings.router, prefix="/api/v1")
+app.include_router(news.router, prefix="/api/v1")
 
 # Public (anonymous visitors + logged-in CUSTOMER accounts) — see backend/routers/customer_chat.py
 app.include_router(customer_chat.router, prefix="/api/v1")

@@ -25,6 +25,7 @@ from backend.models import (  # noqa: F401  (đăng ký bảng vào Base.metadat
     feedback,
     hitl_log,
     message,
+    news_article,
     observability,
     project,
     user,
@@ -46,6 +47,7 @@ EXPECTED_TABLES = {
     "pipeline_trace_runs",
     "llm_usage_events",
     "customer_conversation_summaries",
+    "news_articles",
 }
 
 

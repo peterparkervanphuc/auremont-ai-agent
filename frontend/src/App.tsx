@@ -27,6 +27,7 @@ import { SettingsTab } from "./routes/admin/SettingsTab";
 import { SalesManagementPage } from "./routes/admin/SalesManagementPage";
 import { ObservabilityPage } from "./routes/admin/ObservabilityPage";
 import { NotFound } from "./routes/NotFound";
+import { NewsPage } from "./routes/NewsPage";
 
 /** Admin gets its own dashboard; Sale and Customer see the chat-oriented home page. */
 function HomeRoute() {
@@ -102,6 +103,8 @@ function AppShell() {
           {/* Detail page for one real sub-project (The Beverly, The Sapphire...), distinct from
               CategoryDetailPage above, which only shows Vinhomes Ocean Park's overview by product type. */}
           <Route path="/inventory/project/:projectId" element={<ProjectOverviewPage />} />
+          {/* Public official-news feed: anonymous, Customer, Sale and Admin share it. */}
+          <Route path="/news" element={<NewsPage />} />
 
           {/* AI -> Sale live handoff queue — Sale and Admin both work it, no per-region
               assignment (see the plan's scope decisions). */}

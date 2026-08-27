@@ -1,0 +1,164 @@
+{
+  "id": "auremontOfficialNews",
+  "name": "Auremont - Official news ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "hours", "hoursInterval": 6 }
+          ]
+        }
+      },
+      "id": "schedule-news-sync",
+      "name": "Every 6 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-920, -140]
+    },
+    {
+      "parameters": {},
+      "id": "on-demand-news-sync",
+      "name": "On demand test",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-920, 20]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  { json: { sourceId: 'vinhomes', listingUrl: 'https://vinhomes.vn/vi/tin-tuc', includePath: '/vi/tin-tuc/' } },\n  { json: { sourceId: 'vingroup-real-estate', listingUrl: 'https://vingroup.net/vi/tin-tuc-su-kien/bat-dong-san/3', includePath: '/vi/tin-tuc-su-kien/bai-viet/' } },\n  { json: { sourceId: 'vinhomes-market', listingUrl: 'https://market.vinhomes.vn/blog/chuyen-muc/tin-tuc', includePath: '/blog/' } },\n];"
+      },
+      "id": "official-sources",
+      "name": "Official sources",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-700, -140]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.listingUrl }}",
+        "options": {
+          "redirect": { "redirect": { "followRedirects": true, "maxRedirects": 5 } },
+          "response": { "response": { "neverError": true, "responseFormat": "text" } },
+          "timeout": 20000
+        }
+      },
+      "id": "fetch-listings",
+      "name": "Fetch listing pages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-470, -140]
+    },
+    {
+      "parameters": {
+        "jsCode": "const sourceItems = $('Official sources').all();\nconst pages = $input.all();\nconst output = [];\nconst decode = (text) => text\n  .replace(/<[^>]*>/g, ' ')\n  .replace(/&nbsp;|&#160;/gi, ' ')\n  .replace(/&amp;/gi, '&')\n  .replace(/&quot;|&#34;/gi, '\"')\n  .replace(/&#39;|&apos;/gi, \"'\")\n  .replace(/\\s+/g, ' ')\n  .trim();\nfor (let index = 0; index < pages.length; index++) {\n  const source = sourceItems[index]?.json;\n  if (!source) continue;\n  const response = pages[index]?.json ?? {};\n  const raw = response.body ?? response.data ?? response;\n  const html = typeof raw === 'string' ? raw : JSON.stringify(raw);\n  const origin = source.listingUrl.match(/^https?:\\/\\/[^/]+/i)?.[0] ?? '';\n  const listingDirectory = source.listingUrl.replace(/[^/]+(?:[?#].*)?$/, '');\n  const seen = new Set();\n  const anchor = /<a\\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>([\\s\\S]*?)<\\/a>/gi;\n  let match;\n  while ((match = anchor.exec(html)) && seen.size < 12) {\n    const href = match[1].trim();\n    let canonicalUrl = href;\n    if (href.startsWith('//')) canonicalUrl = `https:${href}`;\n    else if (href.startsWith('/')) canonicalUrl = `${origin}${href}`;\n    else if (!/^https?:\\/\\//i.test(href)) canonicalUrl = `${listingDirectory}${href}`;\n    canonicalUrl = canonicalUrl.split('#')[0];\n    const pathname = canonicalUrl.replace(/^https?:\\/\\/[^/]+/i, '').split(/[?#]/)[0];\n    if (!pathname.includes(source.includePath)) continue;\n    if (canonicalUrl.replace(/\\/$/, '') === source.listingUrl.replace(/\\/$/, '')) continue;\n    if (source.sourceId === 'vinhomes-market' && pathname.includes('/chuyen-muc/')) continue;\n    if (seen.has(canonicalUrl)) continue;\n    const slugTitle = pathname.split('/').filter(Boolean).slice(-1)[0]?.replace(/[-_]+/g, ' ') ?? '';\n    const fallbackTitle = decode(match[2]) || slugTitle;\n    if (fallbackTitle.length < 5) continue;\n    seen.add(canonicalUrl);\n    output.push({ json: { ...source, canonicalUrl, fallbackTitle } });\n  }\n}\nreturn output;"
+      },
+      "id": "extract-article-links",
+      "name": "Extract article links",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, -140]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.canonicalUrl }}",
+        "options": {
+          "redirect": { "redirect": { "followRedirects": true, "maxRedirects": 5 } },
+          "response": { "response": { "neverError": true, "responseFormat": "text" } },
+          "timeout": 20000
+        }
+      },
+      "id": "fetch-articles",
+      "name": "Fetch article metadata",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, -140]
+    },
+    {
+      "parameters": {
+        "jsCode": "const candidates = $('Extract article links').all();\nconst pages = $input.all();\nconst output = [];\nconst clean = (value = '') => value\n  .replace(/<[^>]*>/g, ' ')\n  .replace(/&nbsp;|&#160;/gi, ' ')\n  .replace(/&amp;/gi, '&')\n  .replace(/&quot;|&#34;/gi, '\"')\n  .replace(/&#39;|&apos;/gi, \"'\")\n  .replace(/\\s+/g, ' ')\n  .trim();\nconst escape = (value) => value.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\nconst meta = (html, name) => {\n  const key = escape(name);\n  const first = html.match(new RegExp(`<meta[^>]+(?:property|name)=[\\\"']${key}[\\\"'][^>]+content=[\\\"']([^\\\"']*)[\\\"']`, 'i'));\n  const reverse = html.match(new RegExp(`<meta[^>]+content=[\\\"']([^\\\"']*)[\\\"'][^>]+(?:property|name)=[\\\"']${key}[\\\"']`, 'i'));\n  return clean(first?.[1] ?? reverse?.[1] ?? '');\n};\nconst projects = ['Vinhomes Ocean Park 3','Vinhomes Ocean Park 2','Vinhomes Ocean Park','The Beverly','The Zurich','The Sapphire','Vinhomes Green Paradise','Vinhomes Global Gate','Vinhomes Grand Park','Vinhomes Smart City','Vinhomes Golden City','Vinhomes Royal Island'];\nfor (let index = 0; index < pages.length; index++) {\n  const candidate = candidates[index]?.json;\n  if (!candidate) continue;\n  const raw = pages[index].json.body ?? pages[index].json.data ?? '';\n  const html = typeof raw === 'string' ? raw : JSON.stringify(raw);\n  const title = meta(html, 'og:title') || meta(html, 'twitter:title') || candidate.fallbackTitle;\n  if (!title || title.length < 5) continue;\n  const summary = meta(html, 'og:description') || meta(html, 'description') || null;\n  const imageUrl = meta(html, 'og:image') || null;\n  const publishedRaw = meta(html, 'article:published_time') || (html.match(/\"datePublished\"\\s*:\\s*\"([^\"]+)\"/i)?.[1] ?? null);\n  const haystack = `${title} ${summary ?? ''}`.toLocaleLowerCase('vi');\n  if (candidate.sourceId === 'vingroup-real-estate' && !/(vinhomes|bất động sản|bat dong san|đô thị|do thi|township|green paradise|ocean park|smart city|grand park)/.test(haystack)) continue;\n  let topic = 'official_update';\n  if (/ưu đãi|khuyến mãi|chính sách bán hàng|chiết khấu/.test(haystack)) topic = 'promotion';\n  else if (/tiến độ|khởi công|bàn giao|thi công/.test(haystack)) topic = 'project_progress';\n  else if (/hạ tầng|đường vành đai|cao tốc|sân bay|cầu /.test(haystack)) topic = 'infrastructure';\n  else if (/tiềm năng|đầu tư|tăng trưởng|thị trường/.test(haystack)) topic = 'market_potential';\n  const projectNames = projects.filter((name) => haystack.includes(name.toLocaleLowerCase('vi')));\n  output.push({ json: { source_id: candidate.sourceId, canonical_url: candidate.canonicalUrl, title: clean(title), summary: summary ? clean(summary).slice(0, 2000) : null, image_url: imageUrl, topic, project_names: projectNames, published_at: publishedRaw } });\n}\nreturn output;"
+      },
+      "id": "normalise-metadata",
+      "name": "Normalise metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, -140]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/v1/integrations/news",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-News-Ingestion-Key", "value": "={{ $env.NEWS_INGESTION_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 20000 }
+      },
+      "id": "send-to-auremont",
+      "name": "Upsert in Auremont",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [490, -140]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "days", "daysInterval": 1, "triggerAtHour": 2 }
+          ]
+        }
+      },
+      "id": "schedule-retention",
+      "name": "Daily retention",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-240, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/v1/integrations/news/retention",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-News-Ingestion-Key", "value": "={{ $env.NEWS_INGESTION_KEY }}" }
+          ]
+        },
+        "options": { "timeout": 20000 }
+      },
+      "id": "run-retention",
+      "name": "Archive expired news",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, 180]
+    }
+  ],
+  "connections": {
+    "Every 6 hours": { "main": [[{ "node": "Official sources", "type": "main", "index": 0 }]] },
+    "On demand test": { "main": [[{ "node": "Official sources", "type": "main", "index": 0 }]] },
+    "Official sources": { "main": [[{ "node": "Fetch listing pages", "type": "main", "index": 0 }]] },
+    "Fetch listing pages": { "main": [[{ "node": "Extract article links", "type": "main", "index": 0 }]] },
+    "Extract article links": { "main": [[{ "node": "Fetch article metadata", "type": "main", "index": 0 }]] },
+    "Fetch article metadata": { "main": [[{ "node": "Normalise metadata", "type": "main", "index": 0 }]] },
+    "Normalise metadata": { "main": [[{ "node": "Upsert in Auremont", "type": "main", "index": 0 }]] },
+    "Daily retention": { "main": [[{ "node": "Archive expired news", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Bangkok",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveExecutionProgress": false,
+    "saveManualExecutions": false
+  },
+  "versionId": "5d1e3c83-3e11-45db-b9d7-1c3a51a99362",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}
