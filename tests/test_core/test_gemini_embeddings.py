@@ -104,8 +104,6 @@ def test_embed_documents_rejects_wrong_vector_dimension(monkeypatch):
         gemini_client.embed_documents(["chunk"], title="bang-gia.pdf")
 
 
-
-
 def test_embed_retries_past_a_rate_limit_and_succeeds(monkeypatch):
     models = FlakyModels(vectors=[[0.1, 0.2, 0.3]], fail_times=2, error=_rate_limit_error("7s"))
     monkeypatch.setattr(gemini_client, "get_gemini_client", lambda: FakeFlakyGeminiClient(models))

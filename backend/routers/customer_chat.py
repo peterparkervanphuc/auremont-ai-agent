@@ -113,9 +113,7 @@ async def register_customer(
 
     if settings.lead_require_phone_on_register and not payload.phone:
         log_event("customer.register.failure", reason="phone_missing")
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Vui lòng nhập số điện thoại"
-        )
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Vui lòng nhập số điện thoại")
 
     user = create_user(
         db,

@@ -123,16 +123,12 @@ def test_a_customer_turn_during_a_live_handoff_is_still_scored(customer_client, 
     These are the sessions a Sale is looking at in the live inbox, so a hook that missed
     them would leave every badge frozen at whatever it was before the handoff.
     """
-    session = ChatSession(
-        customer_id=customer.id, status=SessionStatus.SALE_HANDLING, channel=SessionChannel.LIVE
-    )
+    session = ChatSession(customer_id=customer.id, status=SessionStatus.SALE_HANDLING, channel=SessionChannel.LIVE)
     db_session.add(session)
     db_session.commit()
     db_session.refresh(session)
 
-    response = customer_client.post(
-        f"/api/v1/customer/sessions/{session.id}/messages", json={"content": HOT_MESSAGE}
-    )
+    response = customer_client.post(f"/api/v1/customer/sessions/{session.id}/messages", json={"content": HOT_MESSAGE})
 
     assert response.status_code == 201
     lead = db_session.query(Lead).filter(Lead.customer_id == customer.id).one()

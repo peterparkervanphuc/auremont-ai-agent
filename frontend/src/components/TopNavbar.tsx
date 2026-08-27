@@ -56,7 +56,6 @@ const ADMIN_NAV: AdminNavEntry[] = [
 // the actual sub-zones matching the reference site's menu (no longer grouped by
 // Studio/1BR/2BR like before).
 const OCEAN_PARK_1 = CATALOG[0];
-const OTHER_OCEAN_PARKS = CATALOG.slice(1);
 
 // Zones that own a page at /inventory/<category>/<zone>. The registry is the single
 // source of truth, so a zone added there shows up here without touching this file.
@@ -275,12 +274,6 @@ export function TopNavbar() {
               </div>
             ))}
 
-            {OTHER_OCEAN_PARKS.map((p) => (
-              <span key={p.slug} className="topnav-link topnav-link--disabled" title="Đang cập nhật dữ liệu">
-                {p.name}
-              </span>
-            ))}
-
             {role === "sale" ? (
               // Sale's own chat is a straight consult flow — there's no "talk to a
               // specialist" concept when Sale IS the specialist, so no dropdown here.
@@ -427,11 +420,6 @@ export function TopNavbar() {
                     </NavLink>
                   ))}
                 </div>
-              ))}
-              {OTHER_OCEAN_PARKS.map((p) => (
-                <span key={p.slug} className="topnav-link topnav-link--disabled">
-                  {p.name} · sắp có
-                </span>
               ))}
               {role === "sale" ? (
                 <NavLink

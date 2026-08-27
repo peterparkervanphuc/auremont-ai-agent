@@ -224,7 +224,6 @@ class ZeroResultDiagnosis:
     relax_options: tuple[RelaxOption, ...]
 
 
-
 from backend.services import inventory_service as _inv  # noqa: E402
 
 _MANDATORY_PATTERN = re.compile(r"\b(phải|bắt buộc|nhất định|chỉ lấy|chỉ xem|chỉ muốn)\b", re.IGNORECASE)
@@ -626,8 +625,6 @@ def _resolve_dropped(query: str, features: list[str], constraints: list[Constrai
     return ()
 
 
-
-
 def merge_criteria(previous: SearchCriteria, delta: CriteriaDelta) -> SearchCriteria:
     """Fold one turn's delta into what came before.
 
@@ -710,8 +707,6 @@ def _merge_features(existing: tuple[str, ...], incoming: tuple[str, ...]) -> tup
     return tuple(merged)
 
 
-
-
 def detect_conflict(criteria: SearchCriteria) -> str | None:
     """A Vietnamese sentence naming the contradiction, or None when there is none.
 
@@ -791,8 +786,6 @@ def _display_unit_type(value: str) -> str:
         "NGHIDUONG": "bất động sản nghỉ dưỡng",
     }
     return labels.get(text.upper(), text)
-
-
 
 
 def format_criteria(criteria: SearchCriteria) -> str:
@@ -913,8 +906,6 @@ def _format_price(value: float) -> str:
 
 def _format_area(value: float) -> str:
     return f"{value:.4g}m²"
-
-
 
 
 def load(session_id: int) -> tuple[SearchCriteria, list[SearchCriteria]]:

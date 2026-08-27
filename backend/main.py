@@ -13,7 +13,6 @@ from backend.core.config import get_settings
 from backend.core.logging_config import setup_logging
 from backend.core.seed import seed_projects, seed_users
 from backend.middleware.logging import RequestContextMiddleware
-
 from backend.models import (  # noqa: F401
     chat_session,
     conflict_flag,
@@ -110,8 +109,6 @@ if settings.app_env == "development":
 @app.get("/health")
 async def health():
     return {"status": "ok", "env": settings.app_env}
-
-
 
 
 def _request_id_of(request: Request) -> str:

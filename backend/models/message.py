@@ -29,9 +29,7 @@ class Message(Base):
     listings: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     suggested_questions: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
-    verifier_score: Mapped[float | None] = mapped_column(
-        Float, nullable=True
-    )
+    verifier_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     faithfulness: Mapped[float | None] = mapped_column(Float, nullable=True)
     answer_relevancy: Mapped[float | None] = mapped_column(Float, nullable=True)
     completeness: Mapped[float | None] = mapped_column(Float, nullable=True)

@@ -55,9 +55,7 @@ class Lead(Base):
 
     signals: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
-    detection_method: Mapped[str] = mapped_column(
-        String(20), default="rule", server_default="rule", nullable=False
-    )
+    detection_method: Mapped[str] = mapped_column(String(20), default="rule", server_default="rule", nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     analysis_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
 

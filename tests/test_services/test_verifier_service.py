@@ -49,8 +49,6 @@ def judge(monkeypatch):
     return _stub
 
 
-
-
 def test_score_is_the_weakest_of_the_three_criteria():
     """Điểm tổng là min: mạnh ở hai tiêu chí không cứu được tiêu chí còn lại."""
     assert _verdict(faithfulness=0.95, relevancy=0.9, completeness=0.3).score == 0.3
@@ -70,8 +68,6 @@ def test_completeness_defaults_to_one_when_judge_omits_it():
 
     assert verdict.completeness == 1.0
     assert verdict.score == 0.9
-
-
 
 
 def test_prompt_asks_for_all_three_scores_and_the_verdict(judge):
@@ -101,8 +97,6 @@ def test_failure_mode_and_feedback_survive_to_the_caller(judge):
     assert result.next_action is NextAction.REGENERATE
 
 
-
-
 def test_unknown_failure_mode_degrades_instead_of_dropping_the_scores():
     """Mất phân loại còn hơn mất cả ba điểm số vì một nhãn lạ."""
     verdict = VerifierResult(faithfulness=0.8, relevancy=0.8, completeness=0.8, failure_mode="chua-ro")
@@ -126,8 +120,6 @@ def test_underscore_and_case_variants_are_accepted():
 
 def test_scores_on_a_0_100_scale_are_rescaled():
     assert VerifierResult(faithfulness=85, relevancy=90, completeness=80).score == pytest.approx(0.8)
-
-
 
 
 def test_judge_failure_scores_zero_and_declines(judge, monkeypatch):

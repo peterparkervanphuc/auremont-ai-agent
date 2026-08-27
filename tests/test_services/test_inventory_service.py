@@ -70,8 +70,6 @@ def _text_response(body: str) -> httpx.Response:
     return httpx.Response(200, text=body, request=httpx.Request("GET", MOCK_URL))
 
 
-
-
 @patch("httpx.get")
 def test_filters_by_unit_type_in_question(mock_get):
     """Câu hỏi nhắc '2PN' thì chỉ trả về căn 2PN."""
@@ -571,8 +569,6 @@ def test_omits_auth_header_when_no_api_key(mock_get):
     assert "Authorization" not in mock_get.call_args.kwargs["headers"]
 
 
-
-
 @patch("httpx.get")
 def test_empty_inventory_returns_empty_list(mock_get):
     """Dự án hết sạch hàng là câu trả lời hợp lệ, không phải sự cố API."""
@@ -587,8 +583,6 @@ def test_no_matching_unit_type_returns_empty_list(mock_get):
     mock_get.return_value = _response(MOCK_UNITS)
 
     assert lookup_inventory("ocean-park-3", "còn Penthouse không") == []
-
-
 
 
 @patch("httpx.get")
@@ -641,8 +635,6 @@ def test_missing_unit_type_becomes_none(mock_get):
     assert result[0].price is None
 
 
-
-
 @patch("httpx.get")
 def test_connection_error_becomes_inventory_api_error(mock_get):
     """Đứt mạng — pipeline cần thấy InventoryApiError để báo 'Tạm thời không tra được tồn kho'."""
@@ -693,8 +685,6 @@ def test_missing_config_becomes_inventory_api_error(monkeypatch):
 
     with pytest.raises(InventoryApiError, match="is not configured"):
         lookup_inventory("ocean-park-3", "còn căn nào không")
-
-
 
 
 def test_resolve_uses_star_entry_when_session_has_no_project():

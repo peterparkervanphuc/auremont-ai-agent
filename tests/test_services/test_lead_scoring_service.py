@@ -14,9 +14,7 @@ HOT, WARM = 65, 35
 
 
 def _score(query: str, **kwargs) -> tuple[int, LeadTier, scoring.LeadSignals]:
-    criteria = search_criteria.merge_criteria(
-        search_criteria.SearchCriteria(), search_criteria.parse_criteria(query)
-    )
+    criteria = search_criteria.merge_criteria(search_criteria.SearchCriteria(), search_criteria.parse_criteria(query))
     signals = scoring.collect_signals(query, criteria, **kwargs)
     rule_score = scoring.score_rules(signals)
     return rule_score, scoring.classify(rule_score, hot_threshold=HOT, warm_threshold=WARM), signals
@@ -40,7 +38,7 @@ def test_a_stated_budget_scores_but_a_price_question_does_not():
 
 
 def test_budget_survives_being_written_beside_a_price_request():
-    """"Xin bảng giá, ngân sách tầm X" is how serious buyers actually write.
+    """ "Xin bảng giá, ngân sách tầm X" is how serious buyers actually write.
 
     The whole-string price-question gate suppresses the budget half, so the extractor runs
     per clause. Without this the most common qualified-buyer message scores as a browser.
@@ -101,8 +99,6 @@ def test_newly_latched_reports_only_the_signals_this_turn_added():
     assert repeat.newly_latched == ()
 
 
-
-
 def _soft(**kwargs) -> scoring.LeadSoftSignals:
     return scoring.LeadSoftSignals(**kwargs)
 
@@ -156,8 +152,6 @@ def test_confidence_is_coerced_onto_the_zero_to_one_scale(raw, expected):
     assert scoring.LeadSoftSignals(confidence=raw).confidence == pytest.approx(expected)
 
 
-
-
 def test_enrichment_is_skipped_outside_the_decision_band():
     """Below WARM the soft cap makes a tier change impossible; at HOT there is nothing to buy."""
     signals = scoring.LeadSignals()
@@ -204,9 +198,7 @@ def test_a_missing_soft_pass_carries_no_llm_reason_of_its_own():
 
 def test_a_missing_phone_outranks_the_tier_in_the_next_action():
     """Telling a Sale to "call now" when there is no number to dial is worse than silence."""
-    advice = scoring.suggest_next_action(
-        LeadTier.HOT, has_phone=False, has_budget=True, wants_human=True, turn_count=5
-    )
+    advice = scoring.suggest_next_action(LeadTier.HOT, has_phone=False, has_budget=True, wants_human=True, turn_count=5)
 
     assert "số điện thoại" in advice
 
@@ -219,9 +211,7 @@ def test_the_next_action_names_the_missing_piece_per_tier():
     warm_with_budget = scoring.suggest_next_action(
         LeadTier.WARM, has_phone=True, has_budget=True, wants_human=False, turn_count=3
     )
-    cold = scoring.suggest_next_action(
-        LeadTier.COLD, has_phone=True, has_budget=False, wants_human=False, turn_count=1
-    )
+    cold = scoring.suggest_next_action(LeadTier.COLD, has_phone=True, has_budget=False, wants_human=False, turn_count=1)
 
     assert "gọi ngay" in hot.lower()
     assert "ngân sách" in warm_no_budget

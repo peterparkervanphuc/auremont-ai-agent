@@ -11,9 +11,7 @@ from backend.services.lead_scoring_service import LeadVerdict
 from backend.utils.time import utcnow
 
 
-def get_or_create_lead(
-    db: Session, *, customer_id: int | None = None, visitor_token: str | None = None
-) -> Lead | None:
+def get_or_create_lead(db: Session, *, customer_id: int | None = None, visitor_token: str | None = None) -> Lead | None:
     """The one lead row for this person, created on first sight.
 
     Returns None when neither identifier is supplied — a Sale's own AI-consult session has
@@ -170,7 +168,5 @@ def count_contactable(db: Session, *, since: datetime | None = None) -> tuple[in
     if since is not None:
         query = query.filter(Lead.scored_at >= since)
     total = query.count()
-    with_phone = (
-        query.join(User, User.id == Lead.customer_id).filter(User.phone.isnot(None)).count() if total else 0
-    )
+    with_phone = query.join(User, User.id == Lead.customer_id).filter(User.phone.isnot(None)).count() if total else 0
     return with_phone, total

@@ -134,8 +134,6 @@ def test_negative_project_mention_never_selects_its_gallery():
     assert images == []
 
 
-
-
 def test_amenity_question_attaches_amenity_photos_without_being_asked():
     """The headline case: asking what the amenities ARE now shows them too."""
     images = answer_images_service.collect_images(_FakeDb(), "tiện ích dự án The Palma có gì", "")
@@ -323,8 +321,6 @@ def test_unknown_project_attaches_nothing():
     assert images == []
 
 
-
-
 def test_requested_photos_are_not_capped():
     """Someone who explicitly asked to see the amenities gets all four, not the automatic
     route's three."""
@@ -348,8 +344,6 @@ def test_floor_plan_request_still_narrows_to_floor_plans():
     assert _urls(images) == ["https://cdn/p/the-palma/mat-bang-tang-5.jpg"]
 
 
-
-
 def test_a_broken_catalogue_never_costs_the_answer():
     """Images are a nice-to-have; collect_images swallows its own failures."""
 
@@ -358,7 +352,6 @@ def test_a_broken_catalogue_never_costs_the_answer():
             raise RuntimeError("catalogue unavailable")
 
     assert answer_images_service.collect_images(_ExplodingDb(), "tiện ích The Palma có gì", "") == []
-
 
 
 SENIQUE_GALLERY = [
@@ -457,7 +450,6 @@ class _FakeProjectWithoutAmenities:
 
 def test_select_listing_amenities_handles_missing_data():
     assert answer_images_service.select_listing_amenities(_FakeProjectWithoutAmenities()) == []
-
 
 
 ZENPARK_FOLDERED_GALLERY = [

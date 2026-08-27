@@ -836,8 +836,6 @@ def test_classifying_an_unknown_document_returns_404(client):
     assert response.status_code == 404
 
 
-
-
 def test_changing_visibility_clears_the_semantic_cache(client, db_session, admin):
     """Otherwise a question cached while this document was still internal keeps serving
     that stale answer forever after it goes public — the cache has no idea anything about

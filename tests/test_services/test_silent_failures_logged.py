@@ -23,8 +23,6 @@ def _raise(*args, **kwargs):
     raise _SimulatedError("simulated infrastructure failure")
 
 
-
-
 def test_cache_lookup_failure_is_logged_and_returns_a_miss(monkeypatch, caplog):
     monkeypatch.setattr(cache_service, "get_qdrant_client", _raise)
 
@@ -44,8 +42,6 @@ def test_cache_store_failure_is_logged_and_swallowed(monkeypatch, caplog):
         assert cache_service.store_cache("q", "a", [], 0.9, "ocean-park-3") is None
 
     assert any(getattr(r, "event", None) == "cache.store.failed" for r in caplog.records)
-
-
 
 
 def test_judge_failure_is_logged_at_error_and_still_fails_closed(monkeypatch, caplog):
@@ -95,8 +91,6 @@ def test_the_weaker_dimension_decides_the_score():
     assert verifier_service.VerifierResult(faithfulness=0.2, relevancy=1.0).score == pytest.approx(0.2)
 
 
-
-
 def test_pipeline_crash_is_logged_and_still_returns_the_standard_message(monkeypatch, caplog):
     """The single most valuable log line: without it a crash is entirely invisible."""
     import backend.services.agent_pipeline as pipeline
@@ -119,8 +113,6 @@ def test_pipeline_crash_is_logged_and_still_returns_the_standard_message(monkeyp
     assert record.exc_info is not None
 
 
-
-
 def test_rejected_token_is_logged_without_ever_including_the_token(caplog):
     """A JWT prefix is header+payload and decodes to real data - never log any of it."""
     from backend.core.security import decode_token
@@ -134,8 +126,6 @@ def test_rejected_token_is_logged_without_ever_including_the_token(caplog):
     assert record.reason
     assert token not in caplog.text
     assert "eyJhbGciOiJIUzI1NiJ9" not in caplog.text
-
-
 
 
 def test_unparseable_price_is_logged_at_debug_and_left_blank(caplog):

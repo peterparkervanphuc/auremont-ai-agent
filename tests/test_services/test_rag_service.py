@@ -81,8 +81,6 @@ def _is_current(call) -> bool:
     raise AssertionError("Không có filter is_current")
 
 
-
-
 def test_internal_clearance_sees_internal_and_public(qdrant):
     """Sale/Admin đọc được cả hai loại — khớp chính xác sẽ chặn nhầm tài liệu PUBLIC."""
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL)
@@ -180,8 +178,6 @@ def test_retrieval_excludes_unclassified_other_documents(qdrant):
     assert excluded[0].match.value == "other"
 
 
-
-
 def test_overfetches_before_reranking(qdrant):
     """Phải lấy dư rồi mới cắt, nếu không re-rank chỉ xáo lại đúng tập đã bị cắt."""
     rag_service.retrieve("giá căn hộ", DocumentVisibility.INTERNAL, top_k=5)
@@ -231,8 +227,6 @@ def test_skips_points_without_content(qdrant):
     assert len(result) == 1
 
 
-
-
 def test_identifier_match_outranks_higher_vector_score(qdrant):
     """'2PN' và '3PN' gần như trùng vector; từ khoá là thứ duy nhất tách được hai loại căn."""
     qdrant.points = [
@@ -255,8 +249,6 @@ def test_pure_vector_order_when_query_has_no_identifier(qdrant):
     result = rag_service.retrieve("tiện ích thế nào", DocumentVisibility.INTERNAL)
 
     assert [hit["document_id"] for hit in result] == [2, 1]
-
-
 
 
 def test_exact_identifier_is_a_final_safety_layer_over_fuzzy_scores(qdrant):
@@ -350,8 +342,6 @@ def test_context_budget_keeps_whole_chunks_and_always_keeps_best_hit(qdrant, mon
 
     assert [hit["document_id"] for hit in result] == [1]
     assert result[0]["content"] == "A" * 25
-
-
 
 
 @pytest.fixture
@@ -486,8 +476,6 @@ def test_cohere_rerank_applies_to_hybrid_results(hybrid_qdrant, monkeypatch):
     assert [hit["document_id"] for hit in result] == [2, 1]
 
 
-
-
 def test_missing_collection_returns_empty_list(qdrant):
     """Chưa ai upload tài liệu — Empty State, không phải lỗi hệ thống."""
     qdrant.exists = False
@@ -539,8 +527,6 @@ def test_dense_only_names_the_dense_vector(qdrant):
 
     assert qdrant.query_calls[0]["using"] == "dense"
     assert "prefetch" not in qdrant.query_calls[0]
-
-
 
 
 def test_hybrid_query_builds_prefetch_and_rrf_fusion(hybrid_qdrant):
@@ -613,8 +599,6 @@ def test_disabled_flag_never_embeds_the_sparse_query(qdrant, monkeypatch):
 
     assert calls == []
     assert "prefetch" not in qdrant.query_calls[0]
-
-
 
 
 @pytest.fixture
@@ -701,8 +685,6 @@ def test_live_carries_page_for_citation(live_qdrant):
 
     assert result[0]["page"] == 2
     assert result[0]["title"] == "bang-gia.pdf"
-
-
 
 
 @pytest.fixture

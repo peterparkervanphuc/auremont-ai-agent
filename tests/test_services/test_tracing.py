@@ -70,8 +70,6 @@ def _steps(run: dict, name: str) -> list[dict]:
     return [step for step in run["steps"] if step["name"] == name]
 
 
-
-
 def test_a_run_is_recorded_with_its_steps(trace_file, monkeypatch):
     _stub_pipeline(monkeypatch, verdicts=[_verdict(0.9)])
 
@@ -109,8 +107,6 @@ def test_mysql_metrics_can_run_without_jsonl_tracing(tmp_path, monkeypatch):
     assert len(persisted) == 1
     assert persisted[0]["outcome"] == "answered"
     assert persisted[0]["steps"]
-
-
 
 
 def test_routing_decisions_are_recorded(trace_file, monkeypatch):
@@ -191,8 +187,6 @@ def test_route_after_verify_records_the_decision(trace_file, monkeypatch):
     route = _steps(trace_file()[0], "route.after_verify")[0]
     assert route["decision"] == "decline"
     assert route["reason"] == "verifier_declined"
-
-
 
 
 def test_answer_text_never_reaches_the_trace(trace_file, monkeypatch):

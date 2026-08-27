@@ -70,9 +70,7 @@ def _rescore(db: Session, session: ChatSession, query: str, settings) -> None:
         warm_threshold=settings.lead_warm_threshold,
         min_turns=settings.lead_llm_min_turns,
     ):
-        soft = scoring.enrich_with_llm(
-            _recent_customer_turns(db, session.id, settings.lead_llm_max_history_turns)
-        )
+        soft = scoring.enrich_with_llm(_recent_customer_turns(db, session.id, settings.lead_llm_max_history_turns))
 
     verdict = scoring.combine(
         rule_score,
@@ -147,11 +145,7 @@ def _criteria_for(session_id: int, query: str) -> search_criteria.SearchCriteria
 
 
 def _customer_turn_count(db: Session, session_id: int) -> int:
-    return (
-        db.query(Message)
-        .filter(Message.session_id == session_id, Message.sender == MessageSender.CUSTOMER)
-        .count()
-    )
+    return db.query(Message).filter(Message.session_id == session_id, Message.sender == MessageSender.CUSTOMER).count()
 
 
 def _recent_customer_turns(db: Session, session_id: int, limit: int) -> list[str]:

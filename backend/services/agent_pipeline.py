@@ -231,8 +231,6 @@ class PipelineState(TypedDict, total=False):
     used_cache: bool
 
 
-
-
 def _preflight(state: PipelineState) -> dict[str, Any]:
     """Stop unsafe or unsupported requests before cache, retrieval, and model calls."""
     policy = preflight_policy(state["query"])
@@ -1101,8 +1099,6 @@ def _image_tool(state: PipelineState) -> dict[str, Any]:
     return {"images": images, "floor_plan_towers_only": floor_plan_towers_only}
 
 
-
-
 def _route_after_cache(state: PipelineState) -> str:
     return "hit" if state.get("used_cache") else "miss"
 
@@ -1188,8 +1184,6 @@ def _low_confidence(state: PipelineState) -> dict[str, Any]:
     return {"notice": _low_confidence_message(state.get("clearance", DocumentVisibility.INTERNAL))}
 
 
-
-
 def _build_graph():
     graph = StateGraph(PipelineState)
 
@@ -1247,8 +1241,6 @@ def _get_graph():
     if _COMPILED_GRAPH is None:
         _COMPILED_GRAPH = _build_graph()
     return _COMPILED_GRAPH
-
-
 
 
 def run_pipeline(
@@ -1454,8 +1446,6 @@ def _store_cache(query: str, result: PipelineResult, project_id: str | None, cle
         images=result.images,
         clearance=clearance,
     )
-
-
 
 
 def _threshold() -> float:

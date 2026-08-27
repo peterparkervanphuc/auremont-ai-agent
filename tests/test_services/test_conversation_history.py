@@ -19,8 +19,6 @@ def _history():
     ]
 
 
-
-
 def test_build_prompt_includes_history_transcript():
     prompt = prompts.build_prompt("Giá bao nhiêu?", [], [], False, False, is_public=True, history=_history())
 
@@ -43,8 +41,6 @@ def test_build_prompt_public_labels_differ_from_internal():
     assert "Em: Dạ hiện có 3 căn 2PN" in public_prompt
     assert "Bạn: Dạ hiện có 3 căn 2PN" in internal_prompt
     assert "Em:" not in internal_prompt
-
-
 
 
 def test_build_prompt_warns_against_repeating_the_ai_own_question():
@@ -83,8 +79,6 @@ def test_build_prompt_has_no_repeat_warning_with_no_history():
     prompt = prompts.build_prompt("Giá bao nhiêu?", [], [], False, False, is_public=True, history=None)
 
     assert "TUYỆT ĐỐI không lặp lại" not in prompt
-
-
 
 
 def test_retrieval_query_folds_in_last_customer_turn():
@@ -229,8 +223,6 @@ def test_inventory_field_follow_up_keeps_live_tool_routing(monkeypatch):
     assert result["needs_inventory"] is True
 
 
-
-
 def test_verify_scores_against_the_history_expanded_query(monkeypatch):
     """Regression for the bug reported live: retrieval/generate picked up the history fix,
     but _verify still judged the bare "có" against a correct, on-topic draft answer and
@@ -263,8 +255,6 @@ def test_verify_scores_against_the_history_expanded_query(monkeypatch):
     assert "các khoản chiết khấu này không ạ?" in seen_queries[0]
 
 
-
-
 def test_cache_check_skips_lookup_when_history_present(monkeypatch):
     calls = []
     monkeypatch.setattr(agent_pipeline.cache_service, "lookup_cache", lambda *a, **kw: calls.append(1))
@@ -281,8 +271,6 @@ def test_cache_check_still_looks_up_with_no_history(monkeypatch):
     result = agent_pipeline._cache_check({"query": "Giá bao nhiêu?", "history": []})
 
     assert result == {"used_cache": False}
-
-
 
 
 def test_run_pipeline_caps_history_to_max_messages(monkeypatch):

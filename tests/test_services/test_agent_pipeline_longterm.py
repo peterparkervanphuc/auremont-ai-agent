@@ -10,8 +10,6 @@ from backend.services import agent_pipeline, memory_service
 PROFILE = "- Loai can thuong quan tam: 2PN"
 
 
-
-
 def test_profile_reaches_the_prompt():
     prompt = prompts.build_prompt("Gia can 3PN?", [], [], False, False, profile=PROFILE)
 
@@ -43,8 +41,6 @@ def test_profile_sits_above_the_conversation_history():
     prompt = prompts.build_prompt("Con 3PN?", [], [], False, False, history=history, profile=PROFILE)
 
     assert prompt.index("GHI NHỚ VỀ NGƯỜI HỎI") < prompt.index("LỊCH SỬ HỘI THOẠI")
-
-
 
 
 def test_cache_is_skipped_for_a_personalised_question(monkeypatch):
