@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { saleLiveApi } from "../../api/saleLive";
-import type { LeadDetail, MessageResponse } from "../../types";
+import type { CustomerConversationSummary, LeadDetail, MessageResponse } from "../../types";
 import { AnswerImageStrip } from "./AnswerImageStrip";
 import { LeadContextCard } from "./LeadContextCard";
 import { LeadInsightPanel } from "./LeadInsightPanel";
@@ -12,14 +12,24 @@ import { AuremontAvatar } from "../../components/AuremontAvatar";
 import { MessageContent } from "../../components/MessageContent";
 import { CitationList } from "../../components/CitationList";
 import {
+  filterAuremontCommands,
+  findAuremontCommand,
+  isInternalCommandInput,
+  type AuremontCommandDefinition,
+} from "./auremontCommandRegistry";
+import {
   AlertTriangleIcon,
   ArrowLeftIcon,
+  ClipboardListIcon,
   ClockIcon,
   LoaderIcon,
+  RefreshIcon,
   SendIcon,
+  ShieldCheckIcon,
   SparklesIcon,
   UserIcon,
   UsersIcon,
+  XIcon,
 } from "../../components/Icons";
 
 function formatTime(iso: string): string {
@@ -29,9 +39,18 @@ function formatTime(iso: string): string {
 
 const POLL_INTERVAL_MS = 4000;
 
-/** A Sale's view of a claimed live-handoff session: the full AI-era + human-era history,
- * a reply box that goes straight to the customer (no AI in between), and a "Gợi ý AI"
- * co-pilot that drafts a suggestion into the box without ever sending it automatically. */
+function formatBudget(value: number | null): string | null {
+  if (value === null) return null;
+  return new Intl.NumberFormat("vi-VN", {
+    style: "currency",
+    currency: "VND",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+/** A Sale's view of a claimed live-handoff session: the human-era transcript, a derived
+ * cross-channel handoff brief, and a "Gợi ý AI" co-pilot that drafts into the box without
+ * ever sending anything automatically. The raw AI-only transcript remains isolated. */
 export function LiveChatPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
@@ -41,6 +60,12 @@ export function LiveChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
+  const [summary, setSummary] = useState<CustomerConversationSummary | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [activeCommandIndex, setActiveCommandIndex] = useState(0);
+  const [commandMenuDismissed, setCommandMenuDismissed] = useState(false);
   const [ending, setEnding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAiHistory, setShowAiHistory] = useState(false);
@@ -95,11 +120,57 @@ export function LiveChatPage() {
   // Still the untouched risky draft: the acknowledgement banner shows and sending is
   // blocked until the Sale either confirms it or edits it into their own words.
   const awaitingAck = unacknowledgedDraft !== null && input.trim() === unacknowledgedDraft;
+  const selectedCommand = findAuremontCommand(input);
+  const filteredCommands = filterAuremontCommands(input);
+  const showCommandSuggestions =
+    isInternalCommandInput(input) && !selectedCommand && !commandMenuDismissed;
+
+  const chooseCommand = useCallback((command: AuremontCommandDefinition) => {
+    setInput(command.trigger);
+    setActiveCommandIndex(0);
+    setCommandMenuDismissed(true);
+    textareaRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    setActiveCommandIndex(0);
+  }, [input]);
+
+  const summarizeCustomer = useCallback(async () => {
+    if (!sessionId || summaryLoading) return;
+    setSummaryOpen(true);
+    setSummaryLoading(true);
+    setSummaryError(null);
+    setError(null);
+    try {
+      const result = await saleLiveApi.refreshCustomerSummary(Number(sessionId));
+      setSummary(result);
+    } catch (requestError) {
+      setSummaryError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Không cập nhật được tóm tắt khách hàng — bản cũ vẫn được giữ nguyên.",
+      );
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, [sessionId, summaryLoading]);
 
   const sendReply = useCallback(async () => {
     if (!sessionId || !input.trim() || loading || awaitingAck) return;
     const content = input.trim();
     setInput("");
+    const command = findAuremontCommand(content);
+    if (command) {
+      if (command.id === "customer-summary") await summarizeCustomer();
+      return;
+    }
+    // Every leading @ is reserved for internal Sale controls. Unknown commands fail
+    // locally instead of ever falling through to the customer-facing reply endpoint.
+    if (isInternalCommandInput(content)) {
+      setError("Không tìm thấy lệnh nội bộ này. Nội dung chưa được gửi cho khách hàng.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -111,7 +182,7 @@ export function LiveChatPage() {
     } finally {
       setLoading(false);
     }
-  }, [sessionId, input, loading, awaitingAck]);
+  }, [sessionId, input, loading, awaitingAck, summarizeCustomer]);
 
   const suggest = useCallback(async () => {
     if (!sessionId || suggesting) return;
@@ -151,13 +222,41 @@ export function LiveChatPage() {
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showCommandSuggestions) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setCommandMenuDismissed(true);
+        return;
+      }
+      if (e.key === "ArrowDown" && filteredCommands.length > 0) {
+        e.preventDefault();
+        setActiveCommandIndex((current) => (current + 1) % filteredCommands.length);
+        return;
+      }
+      if (e.key === "ArrowUp" && filteredCommands.length > 0) {
+        e.preventDefault();
+        setActiveCommandIndex((current) => (current - 1 + filteredCommands.length) % filteredCommands.length);
+        return;
+      }
+      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+        e.preventDefault();
+        const command = filteredCommands[activeCommandIndex] ?? filteredCommands[0];
+        if (command) chooseCommand(command);
+        else setError("Không tìm thấy lệnh Auremont phù hợp.");
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendReply();
     }
   };
 
-  const ready = Boolean(input.trim()) && !loading && !awaitingAck;
+  const ready =
+    Boolean(input.trim()) &&
+    !loading &&
+    !awaitingAck &&
+    (!isInternalCommandInput(input) || Boolean(selectedCommand));
 
   // Previously hardcoded to "Chat trực tiếp với khách" — the lead lookup already carries
   // the customer's real name (or their label as a fallback), so the topbar can finally show
@@ -189,6 +288,10 @@ export function LiveChatPage() {
             <ClockIcon size={15} />
             Xem lại hội thoại AI
           </button>
+          <button className="btn btn-outline" type="button" onClick={summarizeCustomer} disabled={summaryLoading}>
+            {summaryLoading ? <LoaderIcon size={15} className="icon-spin" /> : <ClipboardListIcon size={15} />}
+            Tóm tắt khách
+          </button>
           <button className="btn btn-outline" type="button" onClick={endChat} disabled={ending}>
             {ending ? <LoaderIcon size={15} className="icon-spin" /> : null}
             Kết thúc chat
@@ -198,6 +301,184 @@ export function LiveChatPage() {
 
       {sessionId && (
         <AiHistoryModal sessionId={Number(sessionId)} open={showAiHistory} onClose={() => setShowAiHistory(false)} />
+      )}
+
+      {summaryOpen && (
+        <>
+          <button
+            type="button"
+            className="customer-summary-scrim"
+            aria-label="Đóng tóm tắt khách hàng"
+            onClick={() => setSummaryOpen(false)}
+          />
+          <aside className="customer-summary-drawer" aria-label="Tóm tắt khách hàng">
+            <div className="customer-summary-head">
+              <div>
+                <span className="customer-summary-eyebrow">Auremont AI · hồ sơ bàn giao</span>
+                <h2>{summary?.customer_label ?? "Tóm tắt khách hàng"}</h2>
+              </div>
+              <button
+                type="button"
+                className="customer-summary-close"
+                onClick={() => setSummaryOpen(false)}
+                aria-label="Đóng"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+
+            {summaryError && summary && (
+              <div className="customer-summary-error" role="alert">
+                <AlertTriangleIcon size={16} />
+                <span>{summaryError}</span>
+              </div>
+            )}
+
+            {summaryLoading && !summary ? (
+              <div className="customer-summary-loading">
+                <LoaderIcon size={24} className="icon-spin" />
+                <strong>Đang tổng hợp hội thoại…</strong>
+                <span>AI chỉ đọc các tin nhắn mới kể từ lần tóm tắt gần nhất.</span>
+              </div>
+            ) : summary ? (
+              <div className="customer-summary-body">
+                <div className="customer-summary-meta">
+                  <span>{summary.source_message_count} tin nhắn</span>
+                  <span>
+                    {summary.newly_processed_message_count > 0
+                      ? `+${summary.newly_processed_message_count} mới`
+                      : "Đã cập nhật"}
+                  </span>
+                  <span>{parseServerDate(summary.generated_at).toLocaleString("vi-VN")}</span>
+                </div>
+
+                <section className="customer-summary-hero">
+                  <div className="customer-summary-signal-row">
+                    {summary.metadata.urgency && (
+                      <span className="customer-summary-signal">Mức độ: {summary.metadata.urgency}</span>
+                    )}
+                    {summary.metadata.sentiment && (
+                      <span className="customer-summary-signal">{summary.metadata.sentiment}</span>
+                    )}
+                  </div>
+                  <p>{summary.summary_text}</p>
+                </section>
+
+                <section className="customer-summary-section">
+                  <h3>Nhu cầu hiện tại</h3>
+                  <div className="customer-summary-facts">
+                    {summary.metadata.needs.purchase_purpose && (
+                      <div><span>Mục đích</span><strong>{summary.metadata.needs.purchase_purpose}</strong></div>
+                    )}
+                    {(summary.metadata.needs.budget_min !== null || summary.metadata.needs.budget_max !== null) && (
+                      <div>
+                        <span>Ngân sách</span>
+                        <strong>
+                          {formatBudget(summary.metadata.needs.budget_min) ?? "—"} – {formatBudget(summary.metadata.needs.budget_max) ?? "—"}
+                        </strong>
+                      </div>
+                    )}
+                    {(summary.metadata.needs.area_min_m2 !== null || summary.metadata.needs.area_max_m2 !== null) && (
+                      <div>
+                        <span>Diện tích</span>
+                        <strong>{summary.metadata.needs.area_min_m2 ?? "—"}–{summary.metadata.needs.area_max_m2 ?? "—"} m²</strong>
+                      </div>
+                    )}
+                    {summary.metadata.needs.purchase_timeline && (
+                      <div><span>Thời điểm mua</span><strong>{summary.metadata.needs.purchase_timeline}</strong></div>
+                    )}
+                  </div>
+                  {[
+                    ...summary.metadata.needs.projects,
+                    ...summary.metadata.needs.unit_types,
+                    ...summary.metadata.needs.property_types,
+                  ].length > 0 && (
+                    <div className="customer-summary-tags">
+                      {[
+                        ...summary.metadata.needs.projects,
+                        ...summary.metadata.needs.unit_types,
+                        ...summary.metadata.needs.property_types,
+                      ].map((item) => <span key={item}>{item}</span>)}
+                    </div>
+                  )}
+                </section>
+
+                {summary.metadata.considered_units.length > 0 && (
+                  <section className="customer-summary-section">
+                    <h3>Căn đã quan tâm</h3>
+                    <div className="customer-summary-list">
+                      {summary.metadata.considered_units.map((unit) => (
+                        <div key={`${unit.project_id ?? "project"}-${unit.unit_code}`} className="customer-summary-unit">
+                          <div><strong>{unit.unit_code}</strong><span>{unit.project_id ?? "Chưa rõ dự án"}</span></div>
+                          {unit.customer_reaction && <p>{unit.customer_reaction}</p>}
+                          <small><AlertTriangleIcon size={12} /> Cần kiểm tra lại tồn kho</small>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {summary.metadata.pending_questions.length > 0 && (
+                  <section className="customer-summary-section">
+                    <h3>Chờ xử lý</h3>
+                    <ul className="customer-summary-checklist">
+                      {summary.metadata.pending_questions.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </section>
+                )}
+
+                {summary.metadata.objections.length > 0 && (
+                  <section className="customer-summary-section">
+                    <h3>Băn khoăn của khách</h3>
+                    <ul className="customer-summary-checklist customer-summary-checklist--warning">
+                      {summary.metadata.objections.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </section>
+                )}
+
+                {summary.metadata.commitments.length > 0 && (
+                  <section className="customer-summary-section">
+                    <h3>Cam kết của Sale</h3>
+                    <ul className="customer-summary-checklist">
+                      {summary.metadata.commitments.map((item) => <li key={item.content}>{item.content}</li>)}
+                    </ul>
+                  </section>
+                )}
+
+                {summary.metadata.next_best_actions.length > 0 && (
+                  <section className="customer-summary-section customer-summary-section--actions">
+                    <h3>Việc nên làm tiếp theo</h3>
+                    <ol>
+                      {summary.metadata.next_best_actions.map((item) => <li key={item}>{item}</li>)}
+                    </ol>
+                  </section>
+                )}
+              </div>
+            ) : (
+              <div className="customer-summary-loading">
+                <AlertTriangleIcon size={24} />
+                <strong>Chưa tạo được bản tóm tắt</strong>
+                <span>{summaryError ?? "Bạn có thể thử làm mới mà không làm mất dữ liệu cũ."}</span>
+              </div>
+            )}
+
+            <div className="customer-summary-footer">
+              <span className="customer-summary-private">
+                <ShieldCheckIcon size={14} />
+                Chỉ Sale nhìn thấy · khách hàng không nhận được lệnh hoặc bản tóm tắt này.
+              </span>
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={summarizeCustomer}
+                disabled={summaryLoading}
+              >
+                {summaryLoading ? <LoaderIcon size={13} className="icon-spin" /> : <RefreshIcon size={13} />}
+                Làm mới
+              </button>
+            </div>
+          </aside>
+        </>
       )}
 
       <div className="chat-messages" ref={scrollRef}>
@@ -258,16 +539,76 @@ export function LiveChatPage() {
           </div>
         )}
         <form className="chat-input-area" onSubmit={handleSubmit}>
+          {showCommandSuggestions && (
+            <div className="chat-command-menu" id="auremont-command-menu" role="listbox" aria-label="Lệnh Auremont">
+              <div className="chat-command-menu-head">
+                <div>
+                  <span className="chat-command-menu-kicker">Auremont AI</span>
+                  <strong>Gợi ý lệnh nội bộ</strong>
+                </div>
+                <span className="chat-command-prefix" aria-label="Tiền tố lệnh">@</span>
+              </div>
+              <div className="chat-command-menu-label">
+                {filteredCommands.length > 0 ? `Thường dùng · ${filteredCommands.length} lệnh` : "Không có kết quả"}
+              </div>
+              <div className="chat-command-results">
+                {filteredCommands.length > 0 ? (
+                  filteredCommands.map((command, index) => (
+                    <button
+                      type="button"
+                      id={`auremont-command-${command.id}`}
+                      className={`chat-command-item ${index === activeCommandIndex ? "chat-command-item--active" : ""}`}
+                      role="option"
+                      aria-selected={index === activeCommandIndex}
+                      key={command.id}
+                      onMouseEnter={() => setActiveCommandIndex(index)}
+                      onClick={() => chooseCommand(command)}
+                    >
+                      <span className="chat-command-icon"><ClipboardListIcon size={18} /></span>
+                      <span className="chat-command-copy">
+                        <strong>{command.trigger}</strong>
+                        <small>{command.description}</small>
+                      </span>
+                      <span className="chat-command-privacy">
+                        <ShieldCheckIcon size={12} /> Chỉ Sale
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="chat-command-empty">
+                    <strong>Không tìm thấy lệnh phù hợp</strong>
+                    <span>Thử gõ “@”, “@Auremont” hoặc một từ khóa khác.</span>
+                  </div>
+                )}
+              </div>
+              <div className="chat-command-menu-footer" aria-hidden="true">
+                <span><kbd>↑</kbd><kbd>↓</kbd> di chuyển</span>
+                <span><kbd>Enter</kbd> chọn</span>
+                <span><kbd>Esc</kbd> đóng</span>
+              </div>
+            </div>
+          )}
           <div className={`chat-input-box ${input.trim() ? "chat-input-box--active" : ""}`}>
             <textarea
               ref={textareaRef}
               className="chat-input"
-              placeholder="Nhập tin nhắn gửi khách..."
+              placeholder="Nhập tin gửi khách hoặc gõ @ để mở lệnh Auremont…"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                setCommandMenuDismissed(false);
+              }}
               onKeyDown={handleKeyDown}
               disabled={loading}
               rows={1}
+              aria-autocomplete="list"
+              aria-expanded={showCommandSuggestions}
+              aria-controls={showCommandSuggestions ? "auremont-command-menu" : undefined}
+              aria-activedescendant={
+                showCommandSuggestions && filteredCommands[activeCommandIndex]
+                  ? `auremont-command-${filteredCommands[activeCommandIndex].id}`
+                  : undefined
+              }
             />
             <button type="submit" className={`chat-send-btn ${ready ? "chat-send-btn--ready" : ""}`} disabled={!ready} aria-label="Gửi">
               {loading ? <LoaderIcon size={18} className="icon-spin" /> : <SendIcon size={18} />}

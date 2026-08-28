@@ -23,6 +23,7 @@ from backend.core.enums import (
     SessionStatus,
     UserRole,
 )
+from backend.core.gemini_client import is_gemini_quota_error
 from backend.core.mysql_client import get_db
 from backend.models.chat_session import ChatSession
 from backend.models.lead import Lead
@@ -39,6 +40,7 @@ from backend.repositories.chat_session import (
 from backend.repositories.lead import get_lead_for_customer, list_leads_for_customers
 from backend.repositories.message import create_message, history_for_pipeline, list_messages_for_session
 from backend.repositories.user import get_user_by_id, list_users_by_ids
+from backend.schemas.customer_summary import CustomerConversationSummaryResponse
 from backend.schemas.message import MessageResponse
 from backend.schemas.sale_live import (
     LeadDetailResponse,
@@ -47,7 +49,12 @@ from backend.schemas.sale_live import (
     SaleLiveMessageRequest,
     SaleSuggestResponse,
 )
-from backend.services import agent_pipeline, lead_scoring_service, memory_service
+from backend.services import (
+    agent_pipeline,
+    customer_summary_service,
+    lead_scoring_service,
+    memory_service,
+)
 from backend.utils.time import utcnow
 
 router = APIRouter(
@@ -285,6 +292,60 @@ async def get_ai_history(
     session = _owned_live_session(db, session_id, user)
     ai_session = get_latest_customer_session(db, session.customer_id) if session.customer_id else None
     return list_messages_for_session(db, ai_session.id) if ai_session else []
+
+
+@router.get("/{session_id}/customer-summary", response_model=CustomerConversationSummaryResponse)
+async def get_customer_summary(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN)),
+) -> CustomerConversationSummaryResponse:
+    """Return the last saved handoff brief without spending an LLM call.
+
+    The authorization check resolves only the LIVE row currently owned by this Sale. The
+    service may aggregate the matching AI row internally, but raw AI messages never cross
+    this endpoint.
+    """
+
+    session = _owned_live_session(db, session_id, user)
+    assert session.customer_id is not None  # guaranteed by _owned_live_session
+    summary = customer_summary_service.get_summary_response(db, session.customer_id)
+    if summary is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Khách hàng chưa có bản tóm tắt.")
+    return summary
+
+
+@router.post("/{session_id}/customer-summary/refresh", response_model=CustomerConversationSummaryResponse)
+async def refresh_customer_summary(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN)),
+) -> CustomerConversationSummaryResponse:
+    """Update the brief from messages after its checkpoint, or return the fresh cache."""
+
+    session = _owned_live_session(db, session_id, user)
+    assert session.customer_id is not None  # guaranteed by _owned_live_session
+    try:
+        summary = customer_summary_service.refresh_summary(db, session.customer_id)
+    except customer_summary_service.CustomerSummaryGenerationError as exc:
+        detail = (
+            "Dịch vụ AI tạm thời đã đạt giới hạn sử dụng. Bản tóm tắt cũ vẫn được giữ nguyên."
+            if is_gemini_quota_error(exc)
+            else "Không thể cập nhật tóm tắt lúc này. Bản tóm tắt cũ vẫn được giữ nguyên."
+        )
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
+
+    log_event(
+        "chat.customer_summary.refreshed",
+        user_id=user.id,
+        username=user.username,
+        session_id=session.id,
+        customer_id=session.customer_id,
+        newly_processed_message_count=summary.newly_processed_message_count,
+        source_message_count=summary.source_message_count,
+        from_cache=summary.from_cache,
+    )
+    return summary
 
 
 @router.post("/{session_id}/reply", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)

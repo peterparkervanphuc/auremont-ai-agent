@@ -9,10 +9,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.core.deps import get_current_user, get_optional_current_user
-from backend.core.enums import MessageSender, SessionStatus, UserRole
+from backend.core.enums import MessageSender, SessionChannel, SessionStatus, UserRole
 from backend.core.mysql_client import Base, get_db
 from backend.core.rate_limit import anonymous_rate_limit
 from backend.main import app
+from backend.models.chat_session import ChatSession
 from backend.models.user import User
 from backend.repositories.chat_session import (
     claim_for_sale,
@@ -21,7 +22,8 @@ from backend.repositories.chat_session import (
     list_sessions_for_sale,
 )
 from backend.repositories.message import create_message
-from backend.services import agent_pipeline
+from backend.schemas.customer_summary import CustomerNeeds, CustomerSummaryMetadata, CustomerSummarySnapshot
+from backend.services import agent_pipeline, customer_summary_service
 from backend.services.agent_pipeline import PipelineResult
 
 
@@ -290,6 +292,46 @@ def _claimed_live_session(db, sale, customer, question: str):
     claim_for_sale(db, session.id, sale_id=sale.id)
     create_message(db, session.id, sender=MessageSender.CUSTOMER, content=question)
     return session
+
+
+def test_only_assigned_sale_can_refresh_the_cross_channel_customer_summary(
+    as_sale, sale, other_sale, customer, db_session, monkeypatch
+):
+    ai_session = ChatSession(customer_id=customer.id, channel=SessionChannel.AI)
+    db_session.add(ai_session)
+    db_session.commit()
+    db_session.refresh(ai_session)
+    create_message(
+        db_session,
+        ai_session.id,
+        sender=MessageSender.CUSTOMER,
+        content="Ngân sách của tôi là 3 tỷ.",
+    )
+    live_session = _claimed_live_session(db_session, sale, customer, "Tôi muốn xem căn 2PN.")
+
+    monkeypatch.setattr(
+        customer_summary_service,
+        "generate_json",
+        lambda *_args, **_kwargs: CustomerSummarySnapshot(
+            summary_text="Khách tìm căn 2PN với ngân sách 3 tỷ.",
+            metadata=CustomerSummaryMetadata(
+                needs=CustomerNeeds(unit_types=["2PN"], budget_max=3_000_000_000)
+            ),
+        ),
+    )
+
+    response = as_sale(sale).post(f"/api/v1/sale/live-inbox/{live_session.id}/customer-summary/refresh")
+    assert response.status_code == 200, response.text
+    assert response.json()["source_message_count"] == 2
+    assert response.json()["newly_processed_message_count"] == 2
+
+    # The app-level dependency override is shared; logging in as the other Sale switches
+    # the authenticated actor for this request and must make the live id indistinguishable
+    # from a non-existent one.
+    forbidden = as_sale(other_sale).post(
+        f"/api/v1/sale/live-inbox/{live_session.id}/customer-summary/refresh"
+    )
+    assert forbidden.status_code == 404
 
 
 @pytest.mark.parametrize("risky", [True, False])

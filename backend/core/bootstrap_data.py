@@ -16,8 +16,9 @@ Co hai nguon:
 
 Ba tinh chat bat buoc:
 
-* **Idempotent** — bo qua anh da co tren MinIO va bo qua han buoc nap khi catalogue
-  da co du lieu, nen restart khong ton cong tai lai ~180 anh.
+* **Idempotent** — bo qua anh da co tren MinIO va chi bo qua buoc nap catalogue khi
+  catalogue da co du lieu. Anh van duoc doi chieu moi lan khoi dong de mot MinIO cu
+  khong bi ket vinh vien khi manifest co them file moi.
 * **Khong bao gio chan khoi dong** — nguon loi, MinIO chua san sang hay thieu bien
   moi truong chi lam hong du lieu demo, khong phai ly do de ca API sap.
 * **Khong tu y ra Internet khi chua duoc cau hinh** — thieu ca hai bien thi bo qua
@@ -180,18 +181,14 @@ def _download_images_to_minio(base_url: str) -> int:
         return sum(pool.map(fetch_one, images))
 
 
-def load_demo_data() -> None:
+def _sync_project_images() -> None:
+    """Doi chieu manifest va nap rieng cac anh MinIO con thieu.
+
+    Anh va catalogue co vong doi khac nhau: MySQL da day du khong co nghia bucket
+    MinIO da day du (volume moi, manifest moi, hoac lan tai R2 truoc bi ngat). Vi vay
+    ham nay phai chay truoc phep kiem tra catalogue trong moi lan bootstrap.
+    """
     settings = get_settings()
-    if not settings.auto_load_demo_data:
-        return
-
-    try:
-        if _catalogue_is_loaded():
-            logger.info("Catalogue da co du lieu — bo qua buoc nap demo.")
-            return
-    except Exception:
-        logger.warning("Khong kiem tra duoc trang thai catalogue.", exc_info=True)
-
     archive_url = settings.project_images_archive_url
     base_url = settings.project_images_base_url
 
@@ -212,6 +209,21 @@ def load_demo_data() -> None:
             "Chua dat PROJECT_IMAGES_BASE_URL hay PROJECT_IMAGES_ARCHIVE_URL — bo qua "
             "buoc tai anh, catalogue se hien thi khong co anh."
         )
+
+
+def load_demo_data() -> None:
+    settings = get_settings()
+    if not settings.auto_load_demo_data:
+        return
+
+    _sync_project_images()
+
+    try:
+        if _catalogue_is_loaded():
+            logger.info("Catalogue da co du lieu — bo qua buoc nap catalogue.")
+            return
+    except Exception:
+        logger.warning("Khong kiem tra duoc trang thai catalogue.", exc_info=True)
 
     from scripts.load_apartment_projects import main as load_apartments
     from scripts.load_villa_shop_projects import main as load_villas_and_shops
