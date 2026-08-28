@@ -18,10 +18,9 @@ class Feedback(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     message_id: Mapped[int] = mapped_column(Integer, ForeignKey("messages.id"), nullable=False, index=True)
 
-    # Who filed it — lets Admin trace a report back to the Sale who hit the problem.
     user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
-    type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # FeedbackType
+    type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

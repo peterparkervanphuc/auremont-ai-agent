@@ -2877,6 +2877,17 @@ code {
   background: var(--chat-bg);
 }
 
+/* Sale's read-only look at a customer's prior AI-era conversation (AiHistoryModal.tsx) —
+   `.chat-page` is built for a full route (height: 100vh - navbar), so this overrides it to
+   a bounded panel inside `.admin-modal-backdrop` instead. */
+.ai-history-modal.chat-page {
+  width: min(640px, 100%);
+  height: min(80vh, 720px);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 64px rgba(4, 10, 20, 0.35);
+}
+
 /* Topbar */
 .chat-topbar {
   display: flex;
@@ -4016,6 +4027,7 @@ code {
 .login-form { display: flex; flex-direction: column; gap: 18px; }
 .login-field { display: flex; flex-direction: column; gap: 7px; }
 .login-label { font-size: 0.8125rem; font-weight: 500; color: var(--text-2); }
+.login-field-error { font-size: 0.75rem; color: var(--rose); }
 .login-input {
   width: 100%;
   padding: 11px 14px;

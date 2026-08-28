@@ -4,6 +4,7 @@ import { customerApi } from "../api/customerChat";
 import { getVisitorSession, clearVisitorSession } from "../hooks/useVisitorToken";
 import { useAuth } from "../hooks/useAuth";
 import type { TokenResponse } from "../types";
+import { PHONE_ERROR, isValidPhone, normalisePhone } from "../utils/phone";
 import { EyeIcon, EyeOffIcon, LoaderIcon, LogInIcon, AuremontLogoIcon } from "../components/Icons";
 
 const HERO_IMAGE_URL =
@@ -16,6 +17,8 @@ const HERO_IMAGE_URL =
 // anonymously, their in-progress session is claimed here too, exactly like the modal does.
 export function Register() {
   const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +26,8 @@ export function Register() {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const canSubmit = Boolean(email.trim() && password) && !loading;
+  const showPhoneError = phone.trim().length > 0 && !isValidPhone(phone);
+  const canSubmit = Boolean(email.trim() && password) && isValidPhone(phone) && !loading;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -35,6 +39,8 @@ export function Register() {
       const token = await customerApi.post<TokenResponse>("/customer/register", {
         email: email.trim(),
         password,
+        full_name: fullName.trim() || null,
+        phone: normalisePhone(phone),
         session_id: visitor?.sessionId ?? null,
         visitor_token: visitor?.visitorToken ?? null,
       });
@@ -79,6 +85,40 @@ export function Register() {
               autoFocus
               disabled={loading}
             />
+          </div>
+
+          <div className="login-field">
+            <label className="login-label" htmlFor="register-name">
+              Họ và tên
+            </label>
+            <input
+              id="register-name"
+              type="text"
+              className="login-input"
+              placeholder="Nguyễn Văn A"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              autoComplete="name"
+              disabled={loading}
+            />
+          </div>
+
+          <div className="login-field">
+            <label className="login-label" htmlFor="register-phone">
+              Số điện thoại
+            </label>
+            <input
+              id="register-phone"
+              type="tel"
+              inputMode="tel"
+              className="login-input"
+              placeholder="0912345678"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              autoComplete="tel"
+              disabled={loading}
+            />
+            {showPhoneError && <span className="login-field-error">{PHONE_ERROR}</span>}
           </div>
 
           <div className="login-field">

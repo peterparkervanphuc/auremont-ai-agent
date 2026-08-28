@@ -18,7 +18,6 @@ from fastapi import HTTPException, Request, status
 
 from backend.core.config import settings
 
-# {ip: deque[timestamp, ...]} — timestamps of recent requests, oldest first.
 _hits: dict[str, deque[float]] = defaultdict(deque)
 
 
@@ -46,9 +45,6 @@ def _client_ip(request: Request) -> str:
     if not chain:
         return peer
 
-    # One proxy appends one entry, so the client address sits `hops` from the end. A chain
-    # shorter than that means fewer proxies ran than configured — fall back to the leftmost
-    # entry rather than reaching past the start of the list.
     return chain[-hops] if len(chain) >= hops else chain[0]
 
 

@@ -94,7 +94,6 @@ class TestAuthorization:
 
         response = as_user(intruder).post(f"/api/v1/hitl/{message.id}/confirm", json={"confirmed_content": "anything"})
 
-        # 404, not 403 — a 403 would confirm the message id exists.
         assert response.status_code == 404
         assert db_session.query(HitlLog).count() == 0
 
@@ -212,8 +211,6 @@ class TestDeletionWithConfirmations:
         """ "Xóa chat" deletes messages too, so it hits the same foreign key."""
         owner, _ = sales
         message = _risky_message(db_session, owner)
-        # Read the id before the delete: afterwards the ORM object is stale and touching
-        # an attribute triggers a reload of a row that no longer exists.
         session_id = message.session_id
         client = as_user(owner)
 

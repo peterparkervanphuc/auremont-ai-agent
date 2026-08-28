@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.ai.intent import is_customer_memory_query
-from backend.core.audit import log_event, truncate
+from backend.core.audit import log_event, redact_and_truncate
 from backend.core.config import settings
 from backend.core.deps import require_role
 from backend.core.enums import MessageEmotion, MessageSender, UserRole
@@ -101,8 +101,6 @@ async def list_session_messages(
     _owned_session(db, session_id, user)
     messages = list_messages_for_session(db, session_id)
 
-    # Confirmation state comes from the audit trail, not from the client. Looked up in one
-    # batched query rather than per message.
     confirmed = confirmed_message_ids(db, [message.id for message in messages if message.requires_hitl])
 
     responses = []
@@ -124,21 +122,13 @@ async def ask_in_session(
     session = _owned_session(db, session_id, user)
     set_title_if_empty(db, session, payload.content)
 
-    # Fetched BEFORE persisting the new turn below, so it excludes that turn — same
-    # ordering as customer_chat.py's ask_in_customer_session, for the same reason.
     history = _conversation_history(db, session_id)
 
     create_message(db, session_id, sender=MessageSender.SALE, content=payload.content)
 
-    # One Sales session represents one end customer. Keep both long-term preferences and
-    # learned corrections under that session: using user.id here would leak customer A's
-    # budget and lessons into customer B's consultation. Read before writing this turn.
     memory_key = memory_service.sale_session_key(session_id)
     reflection_scope = reflection_memory.sale_session_scope(session_id)
     if is_customer_memory_query(payload.content):
-        # Existing sessions predate the per-session namespace. Rebuild only from this
-        # session's Sale-authored turns; never migrate the legacy Sale-wide profile,
-        # because it may contain preferences from several different customers.
         memory_service.remember_many(
             memory_key,
             [turn["content"] for turn in history if turn.get("sender") == MessageSender.SALE],
@@ -161,8 +151,6 @@ async def ask_in_session(
     )
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
 
-    # The core business record for Admin Tab 2 (AI Evaluation): the Verifier score
-    # and the question are enough to reproduce a wrong answer. NEVER log the answer text.
     log_event(
         "sale.query",
         session_id=session_id,
@@ -172,18 +160,14 @@ async def ask_in_session(
         faithfulness=result.faithfulness,
         answer_relevancy=result.answer_relevancy,
         completeness=result.completeness,
-        # The audit log's diagnosis field: filtering Tab 2 by failure_mode is what turns a
-        # list of low scores into "these 12 answers failed for the same fixable reason".
         failure_mode=result.failure_mode,
         requires_hitl=result.requires_hitl,
         used_cache=result.used_cache,
         citation_count=len(result.citations),
         duration_ms=duration_ms,
         query_len=len(payload.content),
-        query=truncate(payload.content) if settings.log_query_text else None,
+        query=redact_and_truncate(payload.content) if settings.log_query_text else None,
     )
-    # Only the human's own question is remembered, never the generated answer. `db` lets
-    # the project be read out of the question when the session carries none.
     memory_service.remember(memory_key, payload.content, session.project_id, db=db)
 
     return create_message(

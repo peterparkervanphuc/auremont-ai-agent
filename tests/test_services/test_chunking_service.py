@@ -68,7 +68,6 @@ def test_chunk_sections_splits_long_text_with_overlap_and_size_limit():
     assert all(chunk.page == 7 for chunk in chunks)
     assert all(len(chunk.text) <= 80 for chunk in chunks)
 
-    # Từ đầu của chunk tiếp theo phải có trong chunk trước: overlap.
     assert chunks[1].text.split()[0] in chunks[0].text
 
 
@@ -201,7 +200,6 @@ def test_chunk_sections_splits_large_table_without_dropping_rows():
     assert all(chunk.content_type == "table" for chunk in chunks)
     assert all(chunk.page == 8 for chunk in chunks)
 
-    # Every row must survive exactly once: none dropped, none duplicated.
     seen_rows = "\n".join(chunk.text for chunk in chunks).splitlines()
     assert sorted(seen_rows) == sorted(rows)
 

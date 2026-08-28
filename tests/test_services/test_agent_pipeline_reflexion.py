@@ -58,9 +58,6 @@ def _run(monkeypatch, *, verdicts: list[VerifierResult]) -> list[str]:
     return prompts_seen
 
 
-# --- Reflexion ------------------------------------------------------------------------
-
-
 def test_rejection_reason_reaches_the_regeneration_prompt(monkeypatch):
     """Lan sinh lai phai duoc biet lan truoc sai o dau — day la diem cot loi cua Reflexion."""
     seen = _run(monkeypatch, verdicts=[_verdict(0.3), _verdict(0.9)])
@@ -86,9 +83,6 @@ def test_correction_block_still_forbids_inventing_data(monkeypatch):
     assert "chưa có dữ liệu" in seen[1]
 
 
-# --- next_action ----------------------------------------------------------------------
-
-
 def test_decline_skips_the_retry_entirely(monkeypatch):
     """Ngu canh khong he co du lieu thi sinh lai cung vo ich — dung tieu them mot lan goi LLM."""
     seen = _run(
@@ -104,9 +98,6 @@ def test_passing_score_overrides_a_contradictory_decline(monkeypatch):
     seen = _run(monkeypatch, verdicts=[_verdict(0.9, next_action=NextAction.DECLINE)])
 
     assert len(seen) == 1
-
-
-# --- Ket qua tra ra ngoai --------------------------------------------------------------
 
 
 def test_all_three_scores_travel_out_of_the_pipeline(monkeypatch):
@@ -130,7 +121,6 @@ def test_all_three_scores_travel_out_of_the_pipeline(monkeypatch):
     assert result.faithfulness == 0.95
     assert result.answer_relevancy == 0.95
     assert result.completeness == 0.8
-    # min cua ba tieu chi, khong phai chi rieng faithfulness/relevancy.
     assert result.verifier_score == 0.8
 
 
@@ -143,7 +133,6 @@ def test_incomplete_answer_is_blocked_even_when_grounded(monkeypatch):
             _verdict(0.95, completeness=0.3, failure_mode=FailureMode.INCOMPLETE_ANSWER),
         ],
     )
-    # Sinh lai mot lan roi van thieu y -> tu choi, khong dua cau tra loi nua vom cho Sale.
     assert len(seen) == 2
 
 
@@ -172,9 +161,6 @@ def test_declined_answer_still_reports_why(monkeypatch):
 
     assert result.failure_mode == FailureMode.MISSING_EVIDENCE.value
     assert result.verifier_feedback
-
-
-# --- Prompt-level -----------------------------------------------------------------------
 
 
 def test_correction_is_the_last_block_in_the_prompt():

@@ -47,8 +47,6 @@ SECRET_PATTERNS = (
     re.compile(r"(?i)\b(api[ _-]?key|token|secret|password)\s*([=:])\s*\S+"),
 )
 
-# Blocks injected by the IDE/harness into the user's turn, not text the student typed.
-# Keeping them would pollute the log and misrepresent the record of "what the student asked".
 _INJECTED_BLOCKS = re.compile(
     r"<(ide_opened_file|ide_selection|system-reminder|command-name|command-message|"
     r"command-args|local-command-stdout)>.*?</\1>",
@@ -98,7 +96,6 @@ def logged_ids(log_dir: Path) -> set[str]:
     archive_dir = log_dir / "archive"
     if archive_dir.is_dir():
         files.extend(archive_dir.glob("*.jsonl"))
-    # Batches pending resend also count as logged, otherwise the next scan would duplicate them.
     files.extend(log_dir.glob("session.pending.*.jsonl"))
     for log_file in files:
         if not log_file.exists():
@@ -176,10 +173,6 @@ def iter_prompts(repo_root: str, cutoff: datetime | None):
 
 
 def main() -> None:
-    # stderr on Windows defaults to the system code page (cp1252), which turns
-    # Vietnamese prompts in the preview into question marks. The data written to
-    # file is still correct — only the display breaks — but --dry-run is useless
-    # if it can't be read.
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 

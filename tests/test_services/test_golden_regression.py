@@ -76,6 +76,23 @@ def test_golden_case(monkeypatch, case: GoldenCase):
         )
 
 
+def test_every_answering_case_carries_a_reference_answer():
+    """`eval/deepeval_suite.py` grades the real model against `expected_output` instead of
+    against a judge's opinion, so a case added without one silently loses that gate — and
+    the suite itself is not run in CI to notice. Cases that never reach Generate have no
+    model-written answer to compare, so they are exempt.
+
+    The facts the answer must contain live in `expect_answer_contains`; a reference answer
+    that commits to none of them cannot fail a wrong draft.
+    """
+    for case in GOLDEN_CASES:
+        if case.expect_notice:
+            continue
+
+        assert case.expected_output, f"{case.case_id}: no reference answer"
+        assert case.expect_answer_contains, f"{case.case_id}: no required facts"
+
+
 @pytest.mark.parametrize("case", [c for c in GOLDEN_CASES if c.expect_inventory_called], ids=lambda c: c.case_id)
 def test_golden_case_calls_inventory(monkeypatch, case: GoldenCase):
     """A subset of cases must prove the inventory tool actually ran, not just that the

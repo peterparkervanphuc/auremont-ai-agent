@@ -58,9 +58,6 @@ LOG_DIR = Path(os.environ.get("AI_LOG_DIR", ".ai-log"))
 LOG_FILE = LOG_DIR / "session.jsonl"
 ARCHIVE_DIR = LOG_DIR / "archive"
 
-# Match server-side MAX_BATCH_ENTRIES so we never get a 422.
-# If the local file has more than this, we submit the oldest BATCH_LIMIT
-# and leave the rest for the next push.
 BATCH_LIMIT = 500
 
 
@@ -101,7 +98,6 @@ def _restore_pending(pending: Path) -> None:
     if not pending.exists():
         return
     if LOG_FILE.exists():
-        # Concat: pending (older) + LOG_FILE (newer) → LOG_FILE
         tmp = LOG_FILE.with_suffix(".merge.jsonl")
         with open(tmp, "wb") as out:
             with open(pending, "rb") as a:
@@ -123,8 +119,6 @@ def main():
         print("[ai-log] No logs to submit.", file=sys.stderr)
         sys.exit(0)
 
-    # Atomic rename closes the race window: hook writes that arrive after this
-    # land in a fresh LOG_FILE, not in the batch we're about to POST.
     pending = LOG_FILE.with_name(f"session.pending.{int(time.time())}.jsonl")
     try:
         LOG_FILE.rename(pending)
@@ -145,10 +139,9 @@ def main():
             try:
                 entries.append(json.loads(stripped))
             except json.JSONDecodeError:
-                pass  # drop unparseable line
+                pass
 
     if not entries:
-        # Nothing to send; archive whatever was there (probably junk) and bail.
         _archive(pending)
         pending.unlink()
         print("[ai-log] No valid entries to submit.", file=sys.stderr)
@@ -169,18 +162,14 @@ def main():
         with urllib.request.urlopen(req, timeout=10, context=ssl_context()) as resp:
             print(f"[ai-log] Submitted {len(entries)} entries → {resp.status}", file=sys.stderr)
     except urllib.error.URLError as e:
-        # Failure: restore the whole pending (including leftover) for next push.
         _restore_pending(pending)
         print(f"[ai-log] Submit failed: {e} — logs kept locally.", file=sys.stderr)
-        sys.exit(0)  # Don't block push on server error
+        sys.exit(0)
 
-    # Success: archive the submitted batch, then handle any leftover.
     _archive(pending)
     pending.unlink()
 
     if leftover_lines:
-        # More than BATCH_LIMIT entries existed; put the rest back so the
-        # next push picks them up.
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.writelines(leftover_lines)
         print(

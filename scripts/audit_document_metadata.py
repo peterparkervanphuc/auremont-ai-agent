@@ -125,8 +125,6 @@ def main(argv: list[str] | None = None) -> int:
         repaired_ids: tuple[int, ...] = ()
         quarantined_ids: tuple[int, ...] = ()
         if args.apply_payload_sync or args.apply_orphan_quarantine:
-            # Source probing can take minutes. End the old read transaction and obtain a
-            # fresh DB/Qdrant snapshot immediately before any mutation.
             documents, vector_scan = _read_state(
                 db,
                 qdrant,
@@ -149,9 +147,6 @@ def main(argv: list[str] | None = None) -> int:
             if args.apply_payload_sync:
                 payload_ids = pre_apply_report.payload_sync_document_ids
                 if payload_ids:
-                    # Lock only rows that will feed a Qdrant write. This prevents an
-                    # Admin metadata update from committing between our DB read and
-                    # set_payload, which would otherwise overwrite the newer value.
                     locked_documents = _lock_documents(db, payload_ids)
                     try:
                         repaired_ids = synchronize_vector_payloads(
@@ -167,8 +162,6 @@ def main(argv: list[str] | None = None) -> int:
                         raise
 
             if args.apply_orphan_quarantine:
-                # Payload sync may have ended the preceding transaction. Re-read both
-                # systems again before the independent orphan mutation.
                 documents, vector_scan = _read_state(
                     db,
                     qdrant,
@@ -197,8 +190,6 @@ def main(argv: list[str] | None = None) -> int:
                     apply=True,
                 )
 
-            # Do not print the stale pre-apply report. Re-read both systems and verify
-            # every claimed action against the state retrieval will actually observe.
             documents, vector_scan = _read_state(
                 db,
                 qdrant,
@@ -254,8 +245,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except Exception as exc:
-        # A maintenance command must fail clearly, but never dump credentials/provider
-        # response bodies by default.  Developers can rerun under a debugger if needed.
         print(f"error: {type(exc).__name__}: {_bounded(str(exc))}", file=sys.stderr)
         return 2
     finally:
@@ -314,8 +303,6 @@ def _print_human(output: dict[str, Any]) -> None:
 
 def _read_state(db: Any, qdrant: Any, *, batch_size: int, refresh: bool = False) -> tuple[list[Any], Any]:
     if refresh:
-        # MySQL commonly runs REPEATABLE READ. expire_all() alone would keep the same
-        # transaction snapshot, so rollback the read-only transaction before re-querying.
         db.rollback()
         db.expire_all()
     documents = db.query(Document).order_by(Document.id.asc()).all()

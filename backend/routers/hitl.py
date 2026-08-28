@@ -33,7 +33,6 @@ async def confirm_hitl(
 
     session = get_session(db, message.session_id) if message.session_id else None
     if session is None or session.sale_id != user.id:
-        # 404 rather than 403: a 403 would confirm that this message id exists.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
 
     if not message.requires_hitl:
@@ -46,8 +45,6 @@ async def confirm_hitl(
         confirmed_content=payload.confirmed_content,
     )
 
-    # Never log `confirmed_content`: it is the exact price/commitment text going to the
-    # customer. What the audit needs is whether the Sale edited the generated answer.
     log_event(
         "hitl.confirm",
         message_id=message_id,

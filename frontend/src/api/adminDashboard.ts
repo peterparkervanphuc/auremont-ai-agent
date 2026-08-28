@@ -1,6 +1,7 @@
 import { api } from "./client";
 import type {
   BusinessDashboard,
+  LeadStats,
   ManagedLiveSession,
   ObservabilityOverview,
   SaleAccountCreate,
@@ -10,6 +11,11 @@ import type {
 } from "../types/admin";
 
 export const adminDashboardApi = {
+  leads: (days = 14, projectId?: string) => {
+    const params = new URLSearchParams({ days: String(days) });
+    if (projectId) params.set("project_id", projectId);
+    return api.get<LeadStats>(`/admin/stats/leads?${params}`);
+  },
   business: (days: number, projectId?: string, saleId?: string) => {
     const params = new URLSearchParams({ days: String(days) });
     if (projectId) params.set("project_id", projectId);

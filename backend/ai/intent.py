@@ -38,14 +38,8 @@ _REALTIME_INTENT_KEYWORDS = (
     "giữ chỗ",
     "căn nào",
     "suất nào",
-    # Queries over fields exposed by the live MockAPI. These must never fall back to a
-    # stale document just because the Sale did not include the words "tồn kho".
     "mã căn",
     "diện tích",
-    # Deliberately NOT "giá căn": a bare price question ("giá căn 2PN?") is answered by the
-    # uploaded price list, not the live tool. Only an explicit threshold/range routes to
-    # inventory (see the budget patterns below). "giá" stays in the FOLLOW-UP list, where
-    # rows are already in scope and another field of them is being asked for.
     "trạng thái",
     "loại căn",
     "unit_code",
@@ -76,35 +70,17 @@ _INVENTORY_FOLLOWUP_FIELD_KEYWORDS = (
     "m²",
 )
 
-# Natural filtering requests often omit an explicit verb: "những căn dưới 5 tỷ", "căn
-# hộ trên 80m2". Keyword-only routing missed these even though the criteria parser read
-# the numeric bound correctly, leaving a valid filter stranded on the document-RAG path.
 _FILTERED_UNIT_QUERY_PATTERN = re.compile(
     r"\b(?:nhung|cac)\s+can\b|\b(?:can|nha)(?:\s+ho)?\b.{0,32}\b(?:duoi|tren|toi da|toi thieu|tu)\s*\d",
     re.IGNORECASE,
 )
 
-# A budget/price filter needs both sources: live inventory says what is still available,
-# while public project documents provide the published price ranges used to explain and
-# compare the recommendations. Previously these questions took the inventory-only branch,
-# so a customer asking "tư vấn căn dưới 3 tỷ" never searched the uploaded price material.
 _PRICE_DOCUMENT_QUERY_PATTERN = re.compile(
     r"\b(?:gia|ngan\s+sach|tam\s+gia)\b"
     r"|\b(?:duoi|tren|toi\s+da|toi\s+thieu|tu)\b.{0,32}\b(?:ty|ti|trieu|vnd|dong)\b",
     re.IGNORECASE,
 )
 
-# Unit-search wording and project-document wording can occur in the same question. The
-# live API owns price/status/unit codes, but qualitative attributes such as a view or the
-# surrounding landscape normally live in project documents. Treating "can nao ..." as
-# inventory-only silently removes the only source that can answer that second half.
-# These are domain concepts, not project names or answers, so newly ingested projects
-# benefit without a code change.
-# A concrete unit identifier ("OCP1-S1-0203", "R1.03-1205"): a token starting with
-# letters, containing a digit, and joined by - or . to at least one more group. This is
-# what separates "gia can OCP1-S1-0203" (one real row, only the live API knows its
-# current price/status) from "gia can 2PN" (a unit TYPE, answered by the uploaded price
-# list). "2PN", "m2" and "45-70" must not match.
 _UNIT_CODE_PATTERN = re.compile(r"\b[a-z]+\d[a-z0-9]*(?:[.-][a-z0-9]+)+\b", re.IGNORECASE)
 
 _PROPERTY_DOCUMENT_ATTRIBUTE_PATTERN = re.compile(
@@ -113,11 +89,6 @@ _PROPERTY_DOCUMENT_ATTRIBUTE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Narrower fallback for a bare budget threshold/range with no "căn"/"nhà" word nearby
-# ("dưới 5 tỷ có gì hợp không", "3-5 tỷ"). `names_specific_document_topic` below still
-# needs this even though `_FILTERED_UNIT_QUERY_PATTERN`/`_PRICE_DOCUMENT_QUERY_PATTERN`
-# cover the common phrasing, since it also decides "genuinely missing data" for a
-# budget-only question that never mentions "căn" at all.
 _PRICE_THRESHOLD_PATTERN = re.compile(r"\b(?:duoi|tren|khong qua|toi da)\s*\d+(?:[.,]\d+)?\s*(?:ty|trieu|tr)\b")
 _PRICE_RANGE_PATTERN = re.compile(
     r"\b(?:tu\s*)?\d+(?:[.,]\d+)?\s*(?:ty|trieu|tr)?\s*(?:-|den|toi)\s*\d+(?:[.,]\d+)?\s*(?:ty|trieu|tr)\b"
@@ -187,10 +158,6 @@ def needs_document_retrieval(query: str) -> bool:
     )
 
 
-# Questions a Sale asks about the end customer's profile, not about project facts. These
-# must be answered from the session-scoped memory/history before retrieval: sending them
-# to RAG both wastes an embedding call and makes a perfectly answerable recall depend on
-# the document service being healthy.
 _CUSTOMER_MEMORY_REFERENCE_PATTERN = re.compile(
     r"\b(?:khach(?:\s+hang)?(?:\s+(?:cua\s+toi|nay|do))?|ho\s+so\s+khach|nhu\s+cau\s+khach)\b",
     re.IGNORECASE,
@@ -242,14 +209,6 @@ def names_specific_document_topic(query: str) -> bool:
     return _mentions_price_threshold(normalized)
 
 
-# Phrases that adjust an existing unit search rather than starting a new topic ("giữ
-# nguyên điều kiện, tăng giá lên 5 tỷ", "bỏ yêu cầu hồ bơi", "quay lại bộ lọc cũ").
-#
-# These matter because accumulated search criteria must NOT be applied to every question.
-# A Sale who has been filtering units and then asks "chính sách thanh toán thế nào?" is
-# changing subject, and silently keeping a 3PN filter on that answer would be wrong. So
-# criteria are only touched when the turn is either an inventory question
-# (`needs_inventory`) or a refinement of one — this list is the second half of that gate.
 _SEARCH_REFINEMENT_KEYWORDS = (
     "giu nguyen",
     "van giu",
@@ -305,19 +264,8 @@ def is_search_refinement(query: str) -> bool:
     return any(keyword in normalized for keyword in _SEARCH_REFINEMENT_KEYWORDS)
 
 
-# "What do you have at all" — a full-catalogue survey, not a question about one project or
-# one filtered search. RAG's top-k semantic retrieval is the wrong tool for this: it
-# returns whichever ~8 chunks score closest by embedding similarity to the phrase itself,
-# an arbitrary and incomplete subset that happens to skip whole product categories
-# (villas, shophouses) when no project document scores high enough to make the cut — see
-# agent_pipeline._retrieve, which builds a deterministic catalog_overview_context from the
-# `projects` table instead of relying on retrieval alone whenever this matches.
 _CATALOG_OVERVIEW_PATTERN = re.compile(
     r"\b(?:co\s+nhung|co\s+bao\s+nhieu|danh\s+sach|liet\s+ke|gom\s+nhung|toan\s+bo)\b"
-    # "khu" alone covers the everyday-chat shorthand for "phân khu" ("có những khu nào") —
-    # without it this whole detector misses that exact common phrasing and the question
-    # falls through to plain RAG retrieval, which answers with an arbitrary, incomplete
-    # handful of sub-zones instead of the full loại hình survey.
     r".{0,20}\b(?:du\s+an|phan\s+khu|khu|loai\s+hinh|san\s+pham|danh\s+muc)\b",
     re.IGNORECASE,
 )
@@ -335,10 +283,6 @@ def is_catalog_overview_query(query: str) -> bool:
     return bool(_CATALOG_OVERVIEW_PATTERN.search(normalized))
 
 
-# Preflight policies cover requests where generation is the wrong tool: unsafe requests
-# must be refused consistently, while unsupported product actions must not be presented as
-# if they succeeded. The return value is a closed code; user-facing wording stays in the
-# pipeline with the other notices.
 _ILLEGAL_REQUEST_KEYWORDS = (
     "lam gia giay to",
     "khai gia thap",
@@ -384,21 +328,11 @@ def preflight_policy(query: str) -> str | None:
         return "discrimination_request"
     if any(keyword in normalized for keyword in _SCAM_SIGNAL_KEYWORDS):
         return "scam_warning"
-    # Saving/favourites/notifications are now self-service conversation topics. The
-    # assistant may explain the current capability and keep the criteria in this session;
-    # prompts still forbid claiming that an external notification was actually created.
     if _RENTAL_SEARCH_PATTERN.search(normalized) and "cho thue" not in normalized:
         return "rental_out_of_scope"
     return None
 
 
-# Questions ABOUT the conversation itself rather than about a project ("tôi vừa hỏi gì",
-# "bạn vừa nói gì", "tóm tắt lại"). The answer lives in the session transcript, which the
-# model already receives via prompts.build_prompt's history block — no document can ever
-# ground it. Without this, such a question reaches the Verifier, which scores faithfulness
-# against retrieved documents that say nothing about what was asked two turns ago, scores
-# 0.0 and replaces a perfectly correct answer with "Không đủ thông tin, liên hệ Admin."
-# — see agent_pipeline._route_after_generate.
 _CONVERSATION_META_KEYWORDS = (
     "vua hoi",
     "vua noi",
@@ -442,11 +376,6 @@ def is_conversation_meta_query(query: str) -> bool:
     return any(keyword in normalized for keyword in _CONVERSATION_META_KEYWORDS)
 
 
-# Signals that an anonymous visitor is past general curiosity and into a sales-closing
-# question — this is the one moment the customer chat flow (backend/routers/customer_chat.py)
-# withholds the real answer and shows the register/login gate instead. Keyword matching,
-# same rationale as everything else in this file: deterministic, auditable, no added
-# round trip. First-draft wordlist — tune against real visitor phrasing once available.
 _CLOSING_INTENT_KEYWORDS = (
     "bảng giá chi tiết",
     "xin bảng giá",
@@ -486,11 +415,6 @@ def needs_registration_gate(query: str) -> bool:
     return any(strip_diacritics(keyword) in normalized for keyword in _CLOSING_INTENT_KEYWORDS)
 
 
-# An explicit ask for a human, as opposed to merely asking a closing-adjacent question.
-# Kept separate from `_CLOSING_INTENT_KEYWORDS` because the two need different responses for
-# an anonymous visitor: a closing-adjacent question gets the existing "register to unlock"
-# copy, this gets "register to talk to someone" copy — see the `"human_request"` gate in
-# backend/routers/customer_chat.py.
 _WANTS_HUMAN_KEYWORDS = (
     "gặp người thật",
     "nói chuyện với người",
@@ -511,10 +435,6 @@ def wants_human_agent(query: str) -> bool:
     return any(strip_diacritics(keyword) in normalized for keyword in _WANTS_HUMAN_KEYWORDS)
 
 
-# Signs of frustration — on top of the two lists above, this is the third trigger for
-# handing a conversation to a human (backend/routers/customer_chat.py), only applied to a
-# logged-in customer: frustration means "this now needs a human before the AI makes it
-# worse", which is a lower bar than what an anonymous visitor should be gated on.
 _FRUSTRATION_KEYWORDS = (
     "bực",
     "khó chịu",

@@ -23,21 +23,12 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
-    # Indexed because every dashboard query filters on one of these.
     event: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False, index=True)
 
-    # No ForeignKey on user_id on purpose: an audit row must outlive the user it
-    # refers to. A cascade delete that silently erased the trail of a removed
-    # account would defeat the point of keeping one.
     username: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
-    # Ties a row back to its stdout lines (access log, tracebacks) for the same
-    # request while those are still in the collector's retention window.
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
-    # Event-specific fields. JSON rather than a wide table of mostly-NULL columns:
-    # each event type carries a different shape, and adding a field to one event
-    # should not require a migration.
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)

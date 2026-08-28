@@ -96,10 +96,6 @@ router = APIRouter(
 ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".docx"}
 _AI_QUOTA_RETRY_AFTER_SECONDS = 60
 
-# Leading bytes each accepted format must start with. The extension is attacker-chosen —
-# renaming an HTML or script file to .pdf passes an extension check — so the content is
-# verified before the parsers, which are the code most exposed to a malformed file.
-# DOCX is a ZIP container, hence the PK signature.
 _MAGIC_BYTES = {
     ".pdf": (b"%PDF-",),
     ".docx": (b"PK", b"PK", b"PK"),
@@ -244,9 +240,6 @@ def apply_llm_reclassification(
     started = time.perf_counter()
     results: list[ReclassificationApplyResult] = []
     for item in payload.items:
-        # An apply can quarantine Qdrant and then fail before it reaches the normal
-        # success path. Clear before every attempt so a cached answer cannot bypass that
-        # quarantine. `clear_cache` is best-effort and never masks the apply result.
         _clear_answer_cache()
         try:
             result = apply_document_reclassification(db, item=item, admin_id=admin.id)
@@ -267,9 +260,6 @@ def apply_llm_reclassification(
 
     failed = sum(item.error is not None for item in results)
     applied = len(results) - failed
-    # A question may have repopulated the cache while a slow re-index was running.
-    # Clear again regardless of outcome because even a failed apply may have committed
-    # its fail-closed `is_current=false` transition.
     _clear_answer_cache()
     log_event(
         "document.legacy_reclassification.apply",
@@ -371,7 +361,6 @@ async def upload_document(
             content_type=file.content_type,
         )
     except PromptInjectionError as exc:
-        # ingestion_service has already moved the document to BLOCKED.
         log_event(
             "document.ingest.blocked",
             document_id=document.id,
@@ -396,7 +385,6 @@ async def upload_document(
         )
         raise _ai_quota_http_exception() from exc
     except DocumentIngestionError as exc:
-        # ingestion_service has already moved the document to FAILED.
         log_event(
             "document.ingest.failure",
             document_id=document.id,
@@ -538,14 +526,8 @@ async def reclassify_document_endpoint(
     category = updates.pop("category")
     if "project_id" in updates:
         updates["project_id"] = _validate_project_id(db, updates.get("project_id"))
-    # A partial failure can leave the document safely quarantined. Clear before starting
-    # so a semantic-cache hit cannot continue serving an answer from its old scope.
     _clear_answer_cache()
     try:
-        # Passed positionally rather than through a `**kwargs` dict: unpacking a
-        # `dict[str, object]` erases every argument type, so a wrong key or value would
-        # only surface at runtime. `None` is what `reclassify_document` already defaults
-        # to, so an empty `updates` keeps the original category-only contract.
         document = reclassify_document(
             db,
             document_id=document_id,
@@ -573,7 +555,6 @@ async def reclassify_document_endpoint(
             admin_id=admin.id,
             duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
-        # The document stays quarantined on every failure path, so this is safe to retry.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
@@ -588,7 +569,6 @@ async def reclassify_document_endpoint(
         admin_id=admin.id,
         duration_ms=round((time.perf_counter() - started) * 1000, 2),
     )
-    # The document's chunks and category both changed, so answers cached from it are stale.
     _clear_answer_cache()
     return document
 
@@ -662,8 +642,6 @@ async def set_document_visibility(
     )
 
     if loosening_access:
-        # Phase 1 is fail-closed: quarantine the points while holding the row lock,
-        # then commit PUBLIC in MySQL. No failure can expose the document early.
         quarantine_attempted = False
         try:
             quarantine_attempted = True
@@ -688,9 +666,6 @@ async def set_document_visibility(
                 detail="Document visibility was not changed because retrieval could not be safely quarantined.",
             ) from exc
 
-        # Phase 2 obtains a fresh row lock after the commit. A conflict/relation that
-        # ran between phases may have set is_current=false; publishing that fresh value
-        # prevents this request from reactivating a newly blocked document.
         try:
             document = get_document(db, document_id, for_update=True)
             if document is None:  # pragma: no cover - deletion also needs the same row lock
@@ -708,17 +683,12 @@ async def set_document_visibility(
             _clear_answer_cache()
             return document
         except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
-            # Do not reactivate from a stale snapshot. Qdrant remains quarantined (or
-            # the timed-out write already applied the fresh DB state), both fail-safe.
             db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Visibility changed in MySQL, but retrieval remains quarantined until synchronisation is retried.",
             ) from exc
 
-    # Tightening PUBLIC -> INTERNAL reaches Qdrant before the MySQL commit while the
-    # row remains locked. If either operation fails, any partial Qdrant result is more
-    # restrictive than the still-public DB state and is therefore safe.
     try:
         document = update_document_visibility(
             db,
@@ -784,8 +754,6 @@ async def remove_document(
             detail=str(exc),
         ) from exc
 
-    # Otherwise the Agent keeps answering from this document out of the semantic cache
-    # long after the Admin deleted it, citing a document_id that no longer resolves.
     _clear_answer_cache()
 
 
@@ -830,9 +798,6 @@ async def update_document_metadata(
         )
 
     if existing.review_status == DocumentReviewStatus.PENDING:
-        # Pending uploads intentionally have no chunks or embeddings. The Admin's
-        # confirmation is the operation that builds their index, scans conflicts and
-        # only then publishes an eligible document to RAG.
         updates = payload.model_dump(exclude_unset=True)
         category = updates.pop("category")
         started = time.perf_counter()
@@ -886,9 +851,6 @@ async def update_document_metadata(
         _clear_answer_cache()
         return document
 
-    # Phase 1 writes the new metadata with the document quarantined, while holding its row
-    # lock. A provider timeout that actually applied the payload therefore cannot leave a
-    # half-written state answering.
     try:
         existing = get_document(db, document_id, for_update=True)
         if existing is None:
@@ -936,9 +898,6 @@ async def update_document_metadata(
             detail="Document classification was not approved because retrieval metadata could not be synchronised.",
         ) from exc
 
-    # Phase 2 re-locks and refreshes after the commit. A conflict or relation may have
-    # quarantined the document between phases; publishing the fresh is_current value
-    # cannot undo that newer decision.
     try:
         with _conflict_scope_lock(db, document):
             refreshed = get_document(db, document_id, for_update=True)
@@ -946,13 +905,8 @@ async def update_document_metadata(
                 raise ValueError(f"Document with id={document_id} not found.")
             document = refreshed
             if was_pending_review:
-                # Re-evaluate under the same scope lock used by ingestion. An OPEN
-                # conflict/relation created after phase 1 can no longer race this publish.
                 document.is_current = is_document_eligible_after_classification_approval(db, document)
 
-            # MySQL becomes authoritative before Qdrant is activated. The commit releases
-            # the row lock, so acquire it again immediately afterwards; a concurrent
-            # quarantine that wins this small race must be reflected in publication.
             db.commit()
             refreshed = get_document(db, document_id, for_update=True)
             if refreshed is None:  # pragma: no cover - deletion also requires this row lock
@@ -973,8 +927,6 @@ async def update_document_metadata(
                 is_current=publication_current,
             )
             db.commit()
-        # Approval is what makes a document retrievable, so questions answered "we have no
-        # information on that" before now must not keep serving from the cache.
         _clear_answer_cache()
         return document
     except (DocumentIngestionError, VectorStoreError, SQLAlchemyError, ValueError) as exc:
@@ -1042,8 +994,6 @@ def _restore_document_vector_metadata(
             is_current=bool(metadata["is_current"]),
         )
     except VectorStoreError:
-        # The MySQL rollback below leaves the document pending. The audit command
-        # reports any Qdrant drift if this best-effort restoration also fails.
         logger.exception(
             "Could not restore vector metadata after classification approval failed.",
             extra={"event": "document.classification.vector_compensation_failed", "document_id": document_id},

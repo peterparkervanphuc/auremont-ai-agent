@@ -52,10 +52,8 @@ class DocumentRelation(Base):
         index=True,
     )
 
-    # Ví dụ: "Chỉ thay thế chính sách cho phân khu The Beverly".
     scope_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Đoạn text AI/rule tìm thấy để đề xuất quan hệ.
     evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 

@@ -60,9 +60,6 @@ def _criteria(query: str, previous: sc.SearchCriteria | None = None) -> sc.Searc
     return sc.merge_criteria(previous or sc.SearchCriteria(), sc.parse_criteria(query))
 
 
-# --------------------------------------------------------------------------- parsing
-
-
 def test_explicit_bounds_are_parsed_as_hard_and_explicit():
     criteria = _criteria("còn căn 3PN nào dưới 4 tỷ không")
 
@@ -113,9 +110,6 @@ def test_supported_sort_language_is_parsed():
     assert _criteria("cho tôi căn rộng nhất trước").sort_by == "area_desc"
 
 
-# --------------------------------------------------------------------------- merging
-
-
 def test_keeping_conditions_while_raising_price():
     """Ca hồi quy chính của cases.md §20.
 
@@ -160,9 +154,6 @@ def test_cheaper_with_no_anchor_is_left_unresolved():
     assert sc.merge_criteria(sc.SearchCriteria(), delta).get("price") is None
 
 
-# --------------------------------------------------------------------------- conflicts
-
-
 def test_inverted_price_bounds_are_reported():
     criteria = sc.SearchCriteria(constraints=(sc.Constraint(sc.FIELD_PRICE, (5_000_000_000.0, 3_000_000_000.0)),))
 
@@ -179,9 +170,6 @@ def test_a_workable_search_reports_no_conflict():
     assert sc.detect_conflict(sc.SearchCriteria()) is None
 
 
-# --------------------------------------------------------------------------- storage
-
-
 def test_criteria_survive_a_round_trip(fake_redis):
     criteria = _criteria("căn 2PN trên 3 tỷ")
     sc.save(1, criteria, [])
@@ -196,7 +184,7 @@ def test_open_ended_bounds_serialise_as_valid_json(fake_redis):
     raw = fake_redis.store[sc.session_key(1)]
 
     assert "Infinity" not in raw
-    json.loads(raw)  # phải parse được bằng bộ đọc JSON chuẩn
+    json.loads(raw)
     assert sc.load(1)[0].get("price").value == (3_000_000_000.0, float("inf"))
 
 
@@ -240,12 +228,9 @@ def test_no_session_means_no_state():
     assert criteria.get("unit_types").value == ["3PN"]
 
 
-# --------------------------------------------------------------------------- fail open
-
-
 def test_a_dead_redis_degrades_to_no_criteria(broken_redis):
     assert sc.load(1) == (sc.SearchCriteria(), [])
-    sc.save(1, _criteria("căn 3PN"), [])  # không được ném lỗi
+    sc.save(1, _criteria("căn 3PN"), [])
     sc.clear(1)
 
 
@@ -260,9 +245,6 @@ def test_no_redis_at_all_is_not_an_error(monkeypatch):
 
     assert sc.load(1) == (sc.SearchCriteria(), [])
     sc.save(1, _criteria("căn 3PN"), [])
-
-
-# --------------------------------------------------------------------------- filtering
 
 
 def _unit(code, unit_type, area, price, status="available", subdivision="The Palma"):
@@ -441,9 +423,6 @@ def test_supported_sort_is_applied_after_filtering():
 
     assert [unit.unit_code for unit in by_price] == ["A-01", "A-02"]
     assert [unit.unit_code for unit in by_area] == ["A-02", "A-01"]
-
-
-# --------------------------------------------------------------------------- zero-result diagnosis
 
 
 def test_diagnosis_counts_results_after_relaxing_one_constraint():

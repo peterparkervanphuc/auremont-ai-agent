@@ -77,8 +77,6 @@ def resolve_tower_context(db: Session | None, project_id: str | None, query: str
                 facts = tower_details.get(tower_name) or {}
                 matches.append((project, tower_name, facts))
 
-    # A bare code such as P4 must not silently select one project when multiple
-    # catalogues use it. A project-scoped session naturally has at most one match.
     if len(matches) != 1:
         return TowerContextResult()
 
@@ -120,8 +118,6 @@ def resolve_tower_context(db: Session | None, project_id: str | None, query: str
         required_values.append(facts.get("road_adjacency"))
     if asks_boundaries:
         required_values.append(facts.get("boundaries"))
-    # Subdivision identity is always exact because the tower code came from this
-    # project's own `overview.towers`. A generic "thông tin tòa" needs a detailed record.
     complete = all(bool(value) for value in required_values) if has_specific_fields else bool(facts)
 
     if not complete:
@@ -168,7 +164,6 @@ def _known_towers(details: dict) -> list[str]:
     if not isinstance(overview_towers, list):
         overview_towers = []
 
-    # Preserve catalogue order while adding any detailed record not listed in overview.
     return list(
         dict.fromkeys(
             tower for tower in [*overview_towers, *tower_details.keys()] if isinstance(tower, str) and tower.strip()

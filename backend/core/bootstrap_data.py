@@ -39,10 +39,8 @@ from backend.models.project import Project
 
 logger = logging.getLogger(__name__)
 
-# Tai song song: ~180 file nho, phan lon thoi gian la doi mang chu khong phai CPU.
 _DOWNLOAD_WORKERS = 8
 _DOWNLOAD_TIMEOUT_SECONDS = 30
-# Archive ~53 MB: rong rai hon nhieu so voi mot anh le, de mang cham van kip.
 _ARCHIVE_TIMEOUT_SECONDS = 300
 
 
@@ -55,9 +53,6 @@ def _catalogue_is_loaded() -> bool:
     """
     db = SessionLocal()
     try:
-        # Loc o tang Python chu khong bang `.isnot(None)`: cot JSON cua MySQL phan
-        # biet JSON `null` voi SQL NULL, nen `IS NOT NULL` van khop voi row co
-        # details = JSON null — dung query se tuong catalogue da nap va bo qua.
         loaded_ids = {row.id for row in db.query(Project).all() if row.details}
         expected_ids = _expected_catalogue_ids()
         return bool(expected_ids) and expected_ids <= loaded_ids
@@ -113,8 +108,6 @@ def _download_archive_to_minio(archive_url: str) -> int:
     if wanted and wanted <= existing:
         return 0
 
-    # Ghi ra dia thay vi giu trong RAM: tarfile can seek, va 53 MB nen khong nen
-    # nam trong bo nho cua process web.
     with tempfile.TemporaryDirectory() as tmp:
         archive_path = f"{tmp}/images.tar.gz"
         with httpx.stream("GET", archive_url, timeout=_ARCHIVE_TIMEOUT_SECONDS, follow_redirects=True) as resp:
@@ -128,10 +121,7 @@ def _download_archive_to_minio(archive_url: str) -> int:
             for member in tar.getmembers():
                 if not member.isfile():
                     continue
-                # `tar -czf . ` sinh tien to "./"; manifest thi khong co.
                 name = member.name.lstrip("./")
-                # Chan path traversal: mot archive doc hai co the chua "../.."
-                # va ghi de object ngoai pham vi du dinh.
                 if name.startswith("/") or ".." in name.split("/"):
                     logger.warning("Bo qua duong dan bat thuong trong archive: %r", member.name)
                     continue
@@ -166,7 +156,6 @@ def _download_images_to_minio(base_url: str) -> int:
 
     def fetch_one(object_name: str) -> bool:
         try:
-            # Da co tren MinIO thi thoi — day la phan lam cho restart re.
             try:
                 client.stat_object(bucket, object_name)
                 return False
@@ -176,8 +165,6 @@ def _download_images_to_minio(base_url: str) -> int:
             url = urljoin(base_url.rstrip("/") + "/", object_name)
             resp = httpx.get(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS, follow_redirects=True)
             resp.raise_for_status()
-            # put_object doi doi tuong co .read(); generator cua httpx khong dung duoc.
-            # Anh du an chi vai tram KB nen giu ca file trong RAM la chap nhan duoc.
             client.put_object(
                 bucket,
                 object_name,
@@ -202,7 +189,6 @@ def _sync_project_images() -> None:
     ham nay phai chay truoc phep kiem tra catalogue trong moi lan bootstrap.
     """
     settings = get_settings()
-    # Archive truoc (mot request thay vi ~180), roi base URL.
     archive_url = settings.project_images_archive_url
     base_url = settings.project_images_base_url
 
@@ -224,7 +210,6 @@ def _sync_project_images() -> None:
             "buoc tai anh, catalogue se hien thi khong co anh."
         )
 
-
 def load_demo_data() -> None:
     settings = get_settings()
     if not settings.auto_load_demo_data:
@@ -241,8 +226,6 @@ def load_demo_data() -> None:
         # Cu thu nap ben duoi; neu van hong thi cac khoi except o do se ghi log.
         logger.warning("Khong kiem tra duoc trang thai catalogue.", exc_info=True)
 
-    # Import trong ham: cac script nay cham MinIO/MySQL ngay o module scope, khong
-    # nen keo theo luc import app (test va alembic cung import backend.main).
     from scripts.load_apartment_projects import main as load_apartments
     from scripts.load_villa_shop_projects import main as load_villas_and_shops
     from scripts.load_vinhomes_ocean_park import main as load_ocean_park

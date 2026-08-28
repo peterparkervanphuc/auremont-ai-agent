@@ -49,6 +49,18 @@ def _disable_live_observability_writes(monkeypatch):
     monkeypatch.setattr(settings, "observability_metrics_enabled", False)
 
 
+@pytest.fixture(autouse=True)
+def _disable_live_lead_enrichment(monkeypatch):
+    """Same rule as the semantic-conflict guard: no test spends an LLM request by accident.
+
+    Lead scoring runs on every customer turn, so without this any test that posts a customer
+    message and happens to land inside the enrichment decision band reaches for Gemini and
+    hangs on the network. Rule scoring — the part these tests care about — is unaffected.
+    """
+
+    monkeypatch.setattr(settings, "lead_scoring_llm_enabled", False)
+
+
 @pytest.fixture
 def capture_audit():
     """Collect records from the audit logger.

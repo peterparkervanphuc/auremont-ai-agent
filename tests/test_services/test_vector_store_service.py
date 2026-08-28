@@ -23,7 +23,6 @@ class FakeQdrantClient:
     ):
         self.exists = collection_exists
         self.collection_dimension = collection_dimension
-        # Shape of the pre-hybrid collection: one unnamed vector, no sparse config.
         self.legacy_unnamed = legacy_unnamed
         self.has_sparse = has_sparse
 
@@ -41,8 +40,6 @@ class FakeQdrantClient:
         self.exists = True
 
     def create_payload_index(self, **kwargs):
-        # `ensure_collection` indexes every field `rag_service` filters on, because
-        # Qdrant Cloud's strict mode rejects a filter on an unindexed field outright.
         self.payload_index_calls.append(kwargs)
 
     def get_collection(self, collection_name: str):

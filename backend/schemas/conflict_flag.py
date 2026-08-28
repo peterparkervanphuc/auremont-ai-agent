@@ -5,14 +5,11 @@ from pydantic import BaseModel, Field
 
 from backend.core.enums import ConflictStatus
 
-# The three ways a conflict can be found. Shared with the router so the ORM's plain
-# `str` column has one named type to be narrowed to, instead of the literal set being
-# spelled out again at each use.
 ConflictDetectionMethod = Literal["rule", "llm", "hybrid"]
 
 
 class ConflictResolveRequest(BaseModel):
-    keep_document_id: int  # the document to keep; the other is superseded
+    keep_document_id: int
 
 
 class ConflictFlagResponse(BaseModel):
@@ -24,8 +21,6 @@ class ConflictFlagResponse(BaseModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     similarity_score: float | None = Field(default=None, ge=0, le=1)
     conflict_type: str | None = None
-    # ORM-backed responses need a validation default before the router replaces it with
-    # the severity derived from the conflict's persisted evidence.
     severity: Literal["low", "medium", "high"] = "medium"
     evidence: dict[str, Any] | None = None
     analysis_version: str | None = None

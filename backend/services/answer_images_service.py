@@ -53,12 +53,6 @@ def public_gallery_url(value: str) -> str:
     return public_object_url(settings.minio_bucket_project_images, value.lstrip("/"))
 
 
-# A handful of photos are the exact same file reused across more than one project's
-# gallery — a genuinely shared complex-wide amenity (the one "Santa Monica" pool The
-# Beverly and The London both list), not something that distinguishes either project.
-# Showing the identical photo as the lead image for two different projects reads as a bug
-# ("these two look the same?"), not as "these two share an amenity" — excluded wherever a
-# gallery is read, rather than just at one call site.
 _SHARED_NONDISTINGUISHING_PHOTO_PATTERN = re.compile(r"santan?-monica")
 
 
@@ -66,13 +60,8 @@ def _drop_shared_nondistinguishing_photos(gallery: list[str]) -> list[str]:
     return [url for url in gallery if not _SHARED_NONDISTINGUISHING_PHOTO_PATTERN.search(url.lower())]
 
 
-# Below this, a "match" on a project name is almost certainly a coincidence: two- or
-# three-letter names would otherwise hit on ordinary words in the question.
 _MIN_NAME_LENGTH = 4
 
-# Cap for the automatic route only (see module docstring). Photos nobody asked for are
-# supporting material: a strip of three sits under an answer without displacing it, while
-# a dozen turns a text answer into a gallery the reader has to scroll past.
 _AUTO_ATTACH_MAX_IMAGES = 3
 
 
@@ -84,26 +73,8 @@ class ProjectReferences:
     excluded_ids: tuple[str, ...] = ()
 
 
-# Filename tokens for "a photo of the project overall" — used on the automatic route when
-# the question names no visual topic of its own ("dự án này thế nào?"). These are the
-# establishing shots, the ones that illustrate any answer about the project without
-# claiming to depict a specific thing the asker did not mention.
-#
-# "phoi-canh"/"tong-the"/"toan-canh" alone miss a real gap: several catalogues (The Zurich)
-# tag their establishing CGI render "3d-{project}...jpg" or their exterior shot
-# "mat-ngoai-{project}...jpg" instead — neither word appears anywhere in a floor plan or a
-# per-unit render, so both are safe to add without risking a wrong-topic photo.
 _OVERVIEW_TOKENS = ("phoi-canh", "tong-the", "toan-canh", "3d-", "mat-ngoai")
 
-# Asking for something visual. Two things are deliberately absent. "xem" on its own,
-# because "xem giá căn 2PN" is a text question. And bare "ảnh", because de-accented it is
-# "anh" — a word that also addresses a person ("anh ơi cho hỏi giá") and would fire on
-# every such question; it is only accepted in phrases that can only mean a picture.
-#
-# "toi anh"/"em anh"/"minh anh" cover "cho tôi ảnh ...", "gửi em ảnh ..." — the object
-# pronoun sits directly in front of "ảnh" only when it means "[give] me a picture"; nobody
-# addresses a person as "anh" right after saying "tôi"/"em"/"mình", so this stays
-# unambiguous the same way "xem anh"/"coi anh" already are.
 _IMAGE_INTENT_KEYWORDS = (
     "hinh anh",
     "hinh",
@@ -128,33 +99,18 @@ _IMAGE_INTENT_KEYWORDS = (
     "thu vien anh",
 )
 
-# Only ever meaningful next to a topic — see `wants_images`.
 _LOOK_VERBS = ("xem", "coi", "show")
 
-# The folders MinIO files a subdivision's photos under. `_normalize_filename` prepends one
-# of these to the filename it matches against, so a photo whose topic is recorded only by
-# where it sits still answers a question about that topic. Already de-accented and in the
-# hyphenated form filename tokens use, so `tien_ich` is written `tien-ich` here.
 _CATEGORY_FOLDERS = frozenset({"tien-ich", "mat-bang", "hinh-anh-thuc-te"})
 
-# Topic asked about -> tokens that appear in catalogue filenames. Matching is done on the
-# de-accented filename, so the values here are already in slug form.
 _TOPIC_TOKENS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("mat bang", "layout", "so do", "ban ve", "mat cat"), ("mat-bang", "matbang")),
-    # "phong-" covers catalogues that name amenity photos after the specific room
-    # ("phong-tap-gym-...", "phong-karaoke-...") rather than with the generic word. It is a
-    # FILENAME token only — deliberately not a question phrase, because "phòng" in a
-    # question is far more often "căn 2 phòng ngủ", and matching that would attach gym and
-    # pool photos to a price question.
     (("tien ich",), ("tien-ich", "tienich", "phong-")),
     (("vi tri", "ket noi", "lien ket", "ban do"), ("vi-tri", "ket-noi", "lien-ket", "vitri")),
     (("phoi canh", "toan canh", "tong the"), ("phoi-canh", "tong-the", "toan-canh")),
     (("biet thu",), ("biet-thu", "bietthu")),
     (("shophouse", "shop", "thuong mai"), ("shop", "thuong-mai")),
     (("can ho", "chung cu"), ("can-ho", "chung-cu")),
-    # A bare de-accented `ho-` also occurs in every `can-ho-*` filename (ho with
-    # different Vietnamese accents normalizes identically). Use compound water subjects
-    # so a lake-view question cannot accidentally attach apartment layouts.
     (("be boi", "ho boi"), ("be-boi", "ho-boi")),
     (("ho",), ("ho-dieu-hoa", "ho-canh-quan", "ho-ngoc-trai", "bien-ho")),
     (("bien",), ("bien-ho", "bien-")),
@@ -176,12 +132,6 @@ def wants_images(query: str) -> bool:
     if _contains_phrase(normalized, _IMAGE_INTENT_KEYWORDS):
         return True
 
-    # "xem"/"coi" cannot trigger on their own ("xem giá căn 2PN" wants a number), but
-    # paired with a subject the catalogue has photographs of, it is a request to look:
-    # "cho xem vị trí", "cho xem biệt thự".
-    #
-    # Only *subjects* count here, never the bedroom qualifier: "2PN" narrows which photo
-    # is wanted once images are in play, but "xem giá căn 2PN" is still a price question.
     return _contains_phrase(normalized, _LOOK_VERBS) and bool(_subject_tokens(normalized))
 
 
@@ -205,35 +155,15 @@ def collect_images(db: Session, query: str, answer: str, project_id: str | None 
         if not haystack.strip():
             return []
 
-        # An answer naming several distinct real projects at once (e.g. "The Metropolitan
-        # gồm The Zurich, The London, The Pavilion và The Beverly") is not "about" whichever
-        # one `_best_match` happens to prefer (longest name, first match...) — attaching
-        # that one project's photo under a multi-project answer misrepresents it as THE
-        # answer. Only applies to the auto-illustrate route (nobody asked to see anything
-        # specific) and only when no project was already pinned by the caller; an explicit
-        # "cho xem ảnh X" naming one project by name still resolves to it even if the
-        # surrounding context also happens to mention others.
         if project_id is None and not wants_images(query) and len(resolve_project_ids(db, haystack)) > 1:
             return []
 
-        # A scoped chat session is authoritative. Project names nest ("The Pavilion -
-        # Vinhomes Ocean Park"), so resolving from prose alone can otherwise select the
-        # longer parent project and attach its maps instead of the named P4 plan.
         references = resolve_project_references(db, query)
         excluded_ids = set(references.excluded_ids)
         project = db.get(Project, project_id) if project_id else _best_match(db, haystack)
-        # A negative mention is useful for search scope, never for choosing the image
-        # gallery.  Without this guard, "ngoài Zenpark" attached Zenpark photos under a
-        # response that was explicitly supposed to recommend other subdivisions.
         if project is not None and project.id in excluded_ids:
             return []
         if project is None:
-            # No single project's own name/alias matched — but the question may still name
-            # a product CATEGORY ("ảnh biệt thự") that several real projects share. A
-            # category word is not part of any one project's alias set, so _best_match
-            # above always misses it; without this, a perfectly answerable "ảnh biệt thự"
-            # falls through to "no photos" even though three villa projects have real
-            # galleries.
             return _images_from_category(db, _normalize(query))
 
         details: dict = project.details or {}
@@ -263,9 +193,6 @@ def collect_images(db: Session, query: str, answer: str, project_id: str | None 
         return []
 
 
-# A tower-wide floor-plan sheet's own code, e.g. "toa-ld1" -> "LD1" — distinct from
-# `_UNIT_TYPE_PHOTO_PATTERN`, which is about the unit type shown, not which tower a
-# whole-tower sheet covers.
 _FLOORPLAN_SHEET_TOWER_PATTERN = re.compile(r"toa-([a-z]{1,5}\d+)")
 
 
@@ -312,10 +239,6 @@ def floor_plan_only_towers(db: Session, query: str, answer: str, project_id: str
         return None
 
 
-# Product-category words -> the exact `category` string a project's own pricing tiers use
-# (see catalog_offer_service.build_catalog_overview, which reads the same field). Kept
-# separate from _TOPIC_TOKENS (filename tokens) since this maps to a *catalogue* field,
-# not a *filename* pattern.
 _CATEGORY_MATCH_TERMS: tuple[tuple[str, str], ...] = (
     ("biet thu", "Biệt thự"),
     ("chung cu", "Chung cư"),
@@ -324,8 +247,6 @@ _CATEGORY_MATCH_TERMS: tuple[tuple[str, str], ...] = (
     ("shop thuong mai", "Shophouse"),
 )
 
-# Per project, when pulling from several at once for a category-only request — enough to
-# suggest the project's own gallery without one project's many photos crowding out another.
 _IMAGES_PER_CATEGORY_PROJECT = 2
 
 
@@ -442,8 +363,6 @@ def resolve_project_references(db: Session, text: str) -> ProjectReferences:
             if project_id not in target:
                 target.append(project_id)
 
-        # A project cannot be both scopes in one turn.  The local negative phrase wins:
-        # "Ocean Park, nhưng ngoài Zenpark" includes the parent and excludes the child.
         excluded_set = set(excluded)
         return ProjectReferences(
             included_ids=tuple(project_id for project_id in included if project_id not in excluded_set),
@@ -469,9 +388,6 @@ def _project_matches(db: Session, haystack: str) -> list[tuple[int, int, str]]:
             if match is not None
         ]
 
-        # Tower codes such as P4 are shorter than the normal project-name safety
-        # threshold. Accept one only when it is explicitly a known tower of exactly one
-        # catalogue project; ambiguous tower codes are discarded below.
         details = project.details or {}
         for tower in _known_project_towers(details):
             match = re.search(rf"(?<!\w){re.escape(tower)}(?!\w)", haystack)
@@ -481,9 +397,6 @@ def _project_matches(db: Session, haystack: str) -> list[tuple[int, int, str]]:
             position, length = min(occurrences, key=lambda item: (item[0], -item[1]))
             matches.append((position, -length, project.id))
 
-    # A bare tower identifier is useful only when unique. Names/sub-zones with the same
-    # start position remain multiple on purpose (e.g. The Ocean View scopes a search
-    # across all of its child projects).
     grouped: dict[tuple[int, int], list[str]] = {}
     for position, negative_length, project_id in matches:
         grouped.setdefault((position, negative_length), []).append(project_id)
@@ -500,8 +413,6 @@ _NEGATIVE_PROJECT_PREFIX = re.compile(
 
 
 def _is_negative_reference(haystack: str, position: int) -> bool:
-    # Sixty characters cover natural bridges such as "các phân khu khác ngoài" without
-    # letting a negation from an unrelated clause flip a later positive project mention.
     prefix = haystack[max(0, position - 60) : position]
     return _NEGATIVE_PROJECT_PREFIX.search(prefix) is not None
 
@@ -529,16 +440,6 @@ def _sub_zone_tokens(project_name: str) -> list[str]:
 
 _ZONE_OVERVIEW_UNIT_TYPE = "nhieu loai can"
 
-# A filename tagged for one specific unit type (bedroom count, studio, or villa build
-# type) — see `_unit_type_tokens`, re-expressed as a pattern to test a FILENAME against
-# rather than a query. Used only by the zone-overview branch below: a "Nhiều loại căn"
-# summary card must show photos of the ZONE (exterior/landscape/amenities), not a 3D
-# cutaway render of one particular unit type, even though those renders are not tagged
-# "mat-bang" and would otherwise pass the normal floor-plan-only exclusion.
-#
-# The hyphen before "ngu"/"pn"/"phong-ngu" is optional: catalogues disagree on the
-# convention exactly like `_unit_type_tokens` above does ("can-ho-2pn-..." vs
-# "can-ho-1-ngu-zr1-..."), so both "2pn" and "2-ngu" have to match here too.
 _UNIT_TYPE_PHOTO_PATTERN = re.compile(
     r"(?:^|-)\d-?(?:ngu|pn|phong-ngu)(?:-|$)|(?:^|-)studio(?:-|$)|(?:^|-)(?:don-lap|song-lap|lien-ke)(?:-|$)"
 )
@@ -565,11 +466,6 @@ def select_listing_images(gallery: list[str], unit_type: str, project_name: str 
     if not gallery:
         return []
 
-    # Missed until now: every other gallery read in this module drops the shared
-    # non-distinguishing photos (see _SHARED_NONDISTINGUISHING_PHOTO_PATTERN above), but a
-    # listing card's own gallery came straight from the project record — so two sibling
-    # projects with no photo of their own for a unit type (falling through to `fallback`
-    # below) could both surface the exact same shared pool shot as their lead image.
     gallery = _drop_shared_nondistinguishing_photos(gallery)
     if not gallery:
         return []
@@ -582,34 +478,17 @@ def select_listing_images(gallery: list[str], unit_type: str, project_name: str 
     if type_matches:
         return type_matches
 
-    # No photo tagged for this specific unit type — fall back to every OTHER real photo of
-    # the project (scenic/overview shots, lobby, architecture...), not just the narrowly
-    # "phoi-canh"/"tong-the"-tagged ones. A project like The Palma has several genuine
-    # scenic photos (kien-truc-the-palma.jpg, the-palma.jpg...) that don't happen to carry
-    # those exact keywords; stopping at a narrow set once any match was found under-showed
-    # real photos for no good reason. The one thing still excluded, deliberately, is
-    # anything reading as a floor plan ("mat-bang") — the one photo category proven
-    # misleading when shown for the wrong unit type.
     fallback = [
         url
         for url in gallery
         if "mat-bang" not in _normalize_filename(url) and "matbang" not in _normalize_filename(url)
     ]
 
-    # The zone-summary card (prompts.py's "Nhiều loại căn" listing, shown before the
-    # customer has picked a unit type) additionally excludes every per-unit-type render —
-    # those are correct for a specific-unit-type listing but read as "the floor plan" when
-    # shown under a summary card that has not narrowed to one unit type yet.
     if normalized_unit_type == _ZONE_OVERVIEW_UNIT_TYPE:
         without_unit_photos = [url for url in fallback if not _UNIT_TYPE_PHOTO_PATTERN.search(_normalize_filename(url))]
-        # Only apply the stricter filter if it leaves something — a gallery with nothing
-        # but per-unit renders should still show something rather than an empty card.
         if without_unit_photos:
             fallback = without_unit_photos
 
-    # Exception to that exclusion: a sub-zone's own master plan (see _sub_zone_tokens) is
-    # not a misleading unit/tower floor plan, it is the one real photo that tells this
-    # sub-zone apart from its siblings sharing the same gallery — put it first.
     sub_zone_tokens = _sub_zone_tokens(project_name)
     if sub_zone_tokens:
         sub_zone_matches = [
@@ -643,15 +522,10 @@ def _filter_by_topic(gallery: list[str], normalized_query: str, known_towers: li
     exact_tower_tokens = _tower_tokens(normalized_query, known_towers)
     if exact_tower_tokens:
         exact = [url for url in gallery if any(token in _normalize_filename(url) for token in exact_tower_tokens)]
-        # A named tower is an exact visual request. Showing another tower because this
-        # one has no uploaded plan is materially misleading, so do not use the usual
-        # requested-photo gallery fallback here.
         return exact
 
     view_match = _filter_view_images(gallery, normalized_query)
     if view_match is not None:
-        # Like an exact tower plan, a requested view is a precise visual claim. Falling
-        # back to layouts or amenity photos would imply they depict that view.
         return view_match
 
     tokens = _wanted_tokens(normalized_query)
@@ -676,9 +550,6 @@ def _auto_attach_images(gallery: list[str], normalized_query: str, known_towers:
       illustrate the project without claiming to depict a specific thing, and nothing when
       the catalogue has none of those either.
     """
-    # An exact tower code is a stronger qualifier than the generic subject "tòa". Without
-    # this first pass, "tòa P4" matches every `mat-bang-toa-p*` filename and the cap keeps
-    # P1-P3 while dropping the one image the asker actually named.
     exact_tower_tokens = _tower_tokens(normalized_query, known_towers)
     if exact_tower_tokens:
         exact = [url for url in gallery if any(token in _normalize_filename(url) for token in exact_tower_tokens)]
@@ -688,10 +559,6 @@ def _auto_attach_images(gallery: list[str], normalized_query: str, known_towers:
     if view_match is not None:
         return view_match[:_AUTO_ATTACH_MAX_IMAGES]
 
-    # Keyed off the SUBJECT, not `_wanted_tokens`: that also returns bedroom qualifiers
-    # ("2pn"), and "giá căn 2 phòng ngủ" would then count as naming a visual topic it never
-    # named — yielding no photo at all instead of the overview shots, since no filename
-    # carries a bare bedroom count.
     if _subject_tokens(normalized_query):
         tokens = _wanted_tokens(normalized_query)
     else:
@@ -742,23 +609,12 @@ def _unit_type_tokens(normalized_query: str) -> list[str]:
     """
     tokens: list[str] = []
 
-    # Unit types are written straight into filenames, but different catalogues disagree on
-    # the convention: some use "...-2pn-.../...-3-phong-ngu-...", others (The Zurich, The
-    # Zenpark) instead use "...-1-ngu-..." (from listing.unit_type values like "1 ngủ").
-    # Both are generated so either matches. The extraction regex accepts bare "ngu" too
-    # (not just "phong ngu"), since that shorter form is exactly how those unit_type
-    # values already read once diacritics are stripped ("1 ngủ" -> "1 ngu").
     for bedrooms in re.findall(r"\b(\d)\s*(?:pn|phong\s*ngu|ngu)\b", normalized_query):
         tokens.extend([f"{bedrooms}pn", f"{bedrooms}-phong-ngu", f"{bedrooms}-pn", f"{bedrooms}-ngu"])
 
-    # "Studio" has no bedroom count to extract, so it needs its own check — the catalogue
-    # tags studio floor plans/renders with the literal word ("can-ho-studio-zr1-...").
     if re.search(r"\bstudio\b", normalized_query):
         tokens.append("studio")
 
-    # Villa unit types have no bedroom count at all — they're named by build type instead
-    # ("Biệt thự đơn lập"/"song lập"/"liền kề"), and the catalogue tags villa photos the
-    # same way ("don-lap-hai-au.jpg").
     for phrase, token in (("don lap", "don-lap"), ("song lap", "song-lap"), ("lien ke", "lien-ke")):
         if phrase in normalized_query:
             tokens.append(token)
@@ -812,10 +668,6 @@ def _best_match(db: Session, haystack: str) -> Project | None:
     if best is not None:
         return best
 
-    # Fallback for a multi-word project name written with no space between words (a model
-    # occasionally writes "SaoBiển" instead of "Sao Biển" in a listing's project_name) —
-    # only tried once the spaced match above found nothing, so a real spaced match always
-    # wins and this never changes behaviour for the normal case.
     compact_haystack = haystack.replace(" ", "")
     for project in projects:
         for normalized in _project_aliases(project):
@@ -894,7 +746,6 @@ def _normalize_filename(url: str) -> str:
     name = strip_diacritics(parts[-1]).lower()
     if len(parts) < 3:
         return name
-    # `tien_ich` -> `tien-ich`, so one token form matches folder and filename alike.
     folder = strip_diacritics(parts[-2]).lower().replace("_", "-")
     if folder not in _CATEGORY_FOLDERS:
         return name

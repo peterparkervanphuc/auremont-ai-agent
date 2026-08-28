@@ -1200,6 +1200,12 @@
 .business-notice { padding: 12px 16px; margin-bottom: 18px; border: 1px solid rgba(229, 72, 77, .25); border-radius: var(--radius-sm); color: var(--rose); background: rgba(229, 72, 77, .06); }
 .business-kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
 .business-kpi { min-width: 0; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-2); box-shadow: 0 12px 32px rgba(10, 46, 122, .045); }
+/* Lead tier breakdown on the Admin dashboard — reuses the same `.badge` variants the Sale
+   live inbox uses, so one tier reads identically on both screens. */
+.business-lead-tiers { display: flex; flex-wrap: wrap; gap: 14px; margin: 14px 0 4px; }
+.business-lead-tier { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2); }
+.business-lead-tier strong { font-size: 1.25rem; }
+.business-lead-tier small { color: var(--text-3); }
 .business-kpi--primary { background: linear-gradient(135deg, rgba(0, 80, 239, .11), rgba(41, 185, 205, .05)), var(--bg-2); border-color: rgba(0, 80, 239, .24); }
 .business-kpi span, .business-kpi small { display: block; color: var(--text-2); }
 .business-kpi span { margin-bottom: 14px; font-size: .8rem; font-weight: 600; }
@@ -1461,6 +1467,19 @@
 
 .hitl-body .message-content-list > li::before {
   color: var(--amber);
+}
+
+/* .chat-bubble--user is a dark blue gradient (see its own rule for why) — the light,
+   --bg-1-based card look above reads as washed-out grey pills against it. Same "adapt to
+   what's actually behind it" idea as the .chat-bubble--user .chat-markdown rules further
+   down, just for the plain-bullet renderer instead of the Markdown one. */
+.chat-bubble--user .message-content-list > li {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chat-bubble--user .message-content-list > li::before {
+  color: #fff;
 }
 
 .hitl-sources {
@@ -1743,55 +1762,381 @@
 }
 
 /* ── Live inbox queue (LiveInboxPage.tsx) ──────────────────── */
-.live-inbox-row {
+.live-inbox-head {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-2);
-  padding: 16px 20px;
+  align-items: flex-end;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
 }
-.live-inbox-row-info {
+
+.live-inbox-stats { display: flex; gap: 10px; }
+.live-inbox-stat {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
 }
-.live-inbox-row-name {
-  font-weight: 600;
-  font-size: 0.9375rem;
+.live-inbox-stat strong { font-size: 1.375rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.live-inbox-stat span { font-size: .6875rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); margin-top: 4px; font-weight: 700; }
+.live-inbox-stat--hot {
+  background: color-mix(in srgb, var(--rose) 10%, var(--bg-2));
+  border-color: color-mix(in srgb, var(--rose) 30%, var(--border));
+}
+.live-inbox-stat--hot strong { color: var(--rose); }
+.live-inbox-stat--warm {
+  background: color-mix(in srgb, var(--amber) 12%, var(--bg-2));
+  border-color: color-mix(in srgb, var(--amber) 32%, var(--border));
+}
+.live-inbox-stat--warm strong { color: var(--amber); }
+
+.lead-card-list { display: flex; flex-direction: column; gap: 12px; }
+
+.lead-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 16px 20px 16px 24px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-2);
+  box-shadow: 0 1px 2px rgba(10, 30, 60, .04);
+  transition: box-shadow var(--t-fast), transform var(--t-fast), border-color var(--t-fast);
+}
+/* Left accent bar, colour-coded by tier — the fastest visual cue on the whole row, readable
+   even from a quick scroll before any text registers. */
+.lead-card::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 10px; bottom: 10px;
+  width: 4px;
+  border-radius: 4px;
+  background: var(--border-h);
+}
+.lead-card--hot::before { background: linear-gradient(180deg, var(--rose), #f97316); }
+.lead-card--warm::before { background: var(--amber); }
+.lead-card--cold::before { background: var(--border-h); }
+
+.lead-card--clickable { text-align: left; font: inherit; cursor: pointer; }
+.lead-card:hover {
+  box-shadow: 0 10px 24px rgba(10, 30, 60, .08);
+  transform: translateY(-1px);
+  border-color: var(--border-h);
+}
+
+.lead-card-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .8125rem;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  background: var(--grad-wide);
+}
+.lead-card-avatar--hot {
+  background: linear-gradient(135deg, var(--rose), #f97316);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rose) 18%, transparent);
+}
+.lead-card-avatar--warm { background: linear-gradient(135deg, var(--amber), #f0c463); }
+.lead-card-avatar--cold { background: var(--bg-3); color: var(--text-2); }
+
+.lead-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.lead-card-top { display: flex; align-items: center; gap: 8px; }
+.lead-card-name {
+  font-weight: 700;
+  font-size: .9375rem;
   color: var(--text-1);
-}
-.live-inbox-row-preview {
-  font-size: 0.8125rem;
-  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 520px;
 }
-.live-inbox-row-wait {
+.lead-card-score { margin-left: auto; font-size: .8125rem; font-weight: 700; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.lead-card-preview { font-size: .8125rem; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
+.lead-card-reason { font-size: .75rem; color: var(--text-3); margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lead-card-meta { display: flex; gap: 14px; margin-top: 2px; }
+.lead-card-meta-item { display: inline-flex; align-items: center; gap: 5px; font-size: .75rem; color: var(--text-3); }
+.lead-card-action { flex-shrink: 0; }
+
+.live-inbox-queue-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.live-inbox-queue-head .live-inbox-section-title { margin-bottom: 12px; }
+.live-inbox-filter { margin-bottom: 12px; }
+.live-inbox-filter b { font-weight: 700; opacity: .65; margin-left: 2px; }
+.live-inbox-filter button.is-active b { opacity: 1; }
+
+/* ── Context brief pinned above the transcript (LeadContextCard.tsx) ── */
+.lead-context-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-2);
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+.lead-context-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: .6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+.lead-context-facts { display: flex; flex-wrap: wrap; gap: 8px; }
+.lead-context-fact {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 0.75rem;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: var(--bg-3);
+  font-size: .8125rem;
+}
+.lead-context-fact svg { color: var(--text-3); flex-shrink: 0; }
+.lead-context-fact-label { color: var(--text-3); }
+.lead-context-fact strong { color: var(--text-1); font-weight: 700; }
+.lead-context-note {
+  margin: 10px 0 0;
+  font-size: .8125rem;
+  color: var(--text-2);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* ── Call actions + next-best-action (LeadInsightPanel.tsx) ── */
+.lead-panel-actions { display: flex; gap: 8px; }
+.lead-panel-call { flex: 1; justify-content: center; text-decoration: none; }
+.lead-panel-copy { flex-shrink: 0; }
+
+.lead-panel-next {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-3);
+  border-left: 3px solid var(--border-h);
+}
+.lead-panel-next--hot { background: color-mix(in srgb, var(--rose) 9%, var(--bg-2)); border-left-color: var(--rose); }
+.lead-panel-next--warm { background: color-mix(in srgb, var(--amber) 11%, var(--bg-2)); border-left-color: var(--amber); }
+.lead-panel-next-label {
+  display: block;
+  font-size: .6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
   color: var(--text-3);
+  margin-bottom: 5px;
+}
+.lead-panel-next p { margin: 0; font-size: .8125rem; color: var(--text-1); font-weight: 500; line-height: 1.45; }
+
+/* ── Lead insight panel — the "vì sao" sidebar on LiveChatPage.tsx ── */
+.live-chat-layout { display: flex; height: calc(100vh - 64px); overflow: hidden; }
+.live-chat-layout .chat-page { flex: 1; height: 100%; min-width: 0; }
+
+.lead-panel {
+  width: 320px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-2);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
-.live-inbox-row--clickable {
-  width: 100%;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-  transition: border-color var(--t-fast), background var(--t-fast);
+.lead-panel-loading,
+.lead-panel-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: .8125rem;
+  text-align: center;
+  padding: 40px 24px;
 }
-.live-inbox-row--clickable:hover {
-  border-color: var(--accent);
-  background: var(--bg-glass-h);
+.lead-panel-empty-icon {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-3);
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+.lead-panel-empty p { color: var(--text-2); font-weight: 600; margin: 0 0 2px; }
+.lead-panel-spinner {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border-h);
+  border-top-color: var(--accent);
+  animation: spin .7s linear infinite;
+  margin-bottom: 4px;
 }
 
+/* ── Tier banner: the first thing a Sale's eye lands on, colour-coded and full-bleed so
+   the "how hot is this person" read happens before any text is parsed. ── */
+.lead-panel-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 22px 20px;
+  color: #fff;
+}
+.lead-panel-banner--hot { background: linear-gradient(135deg, var(--rose) 0%, #f97316 100%); }
+.lead-panel-banner--warm { background: linear-gradient(135deg, #d97706 0%, var(--amber) 100%); }
+.lead-panel-banner--cold { background: linear-gradient(135deg, var(--bg-3) 0%, var(--bg-2) 100%); color: var(--text-1); }
+.lead-panel-banner--cold .lead-panel-eyebrow,
+.lead-panel-banner--cold .lead-panel-subtitle { color: var(--text-3); }
+
+.lead-panel-banner-text { min-width: 0; }
+.lead-panel-eyebrow {
+  display: block;
+  font-size: .6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  opacity: .85;
+  margin-bottom: 6px;
+}
+.lead-panel-tier {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -.01em;
+  line-height: 1;
+}
+.lead-panel-subtitle { font-size: .75rem; opacity: .9; margin: 8px 0 0; max-width: 150px; line-height: 1.4; }
+
+.lead-panel-ring { position: relative; flex-shrink: 0; width: 72px; height: 72px; }
+.lead-panel-ring svg { display: block; }
+.lead-panel-ring-track { stroke: rgba(255, 255, 255, .28); }
+.lead-panel-banner--cold .lead-panel-ring-track { stroke: var(--border-h); }
+.lead-panel-ring-value-arc { stroke: #fff; transition: stroke-dashoffset .5s ease; }
+.lead-panel-banner--cold .lead-panel-ring-value-arc { stroke: var(--accent); }
+.lead-panel-ring-label {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.lead-panel-ring-label strong { font-size: 1.125rem; font-weight: 800; line-height: 1; }
+.lead-panel-ring-label span { font-size: .625rem; opacity: .8; margin-top: 1px; }
+
+.lead-panel-content {
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.lead-panel-contact {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-3);
+}
+.lead-panel-contact-avatar {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+.lead-panel-contact-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lead-panel-contact-name { font-weight: 700; font-size: .875rem; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lead-panel-contact-phone { display: flex; align-items: center; gap: 5px; font-size: .8125rem; color: var(--text-2); }
+
+.lead-panel-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.lead-panel-chip {
+  font-size: .75rem;
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: 100px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-2));
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+
+/* Same accent-bar treatment as .hitl-card, but sage instead of amber: this is a note the
+   model volunteered, not a risk that blocks sending. */
+.lead-panel-ai-note {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  padding: 11px 13px 11px 15px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sage) 8%, var(--bg-2));
+  font-size: .8125rem;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.lead-panel-ai-note::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  border-radius: 3px 0 0 3px;
+  background: var(--sage);
+}
+.lead-panel-ai-note svg { flex-shrink: 0; color: var(--sage); margin-top: 2px; }
+.lead-panel-ai-note p { margin: 0; }
+
+.lead-panel-section h4 {
+  font-size: .75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-3);
+  margin: 0 0 10px;
+}
+.lead-panel-no-signals { font-size: .8125rem; color: var(--text-3); }
+.lead-panel-signals { display: flex; flex-direction: column; gap: 6px; list-style: none; padding: 0; margin: 0; }
+.lead-panel-signals li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: var(--bg-3);
+  font-size: .8125rem;
+  color: var(--text-2);
+}
+/* The strongest single signal behind the tier gets its own tint, so a Sale can spot the
+   headline reason without reading the whole list. */
+.lead-panel-signals li.is-top {
+  background: color-mix(in srgb, var(--sage) 10%, var(--bg-2));
+  border: 1px solid color-mix(in srgb, var(--sage) 24%, var(--border));
+}
+.lead-panel-signals b { color: var(--sage); font-weight: 700; flex-shrink: 0; }
+
+.lead-panel-meta {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .75rem;
+  color: var(--text-3);
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
 .live-inbox-section-title {
   font-size: 0.8125rem;
   font-weight: 700;

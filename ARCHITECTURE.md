@@ -132,7 +132,7 @@ One `StateGraph`, 13 nodes: `preflight → scope_resolve → cache_check → ret
 - **tool_call** — live inventory API; only reached when criteria_resolve determines inventory is needed.
 - **criteria_diagnose** — diagnoses/annotates the tool_call result before images are attached.
 - **image_tool** — runs *before* generate, so the model knows what photos will attach. Two strategies: uncapped when explicitly requested, capped at 3 with strict topic match when auto-attached.
-- **generate** — answer + citations + suggested follow-ups (+ quick-replies for customers), one Gemini call. Reads memory profile and reflection lessons from Redis.
+- **generate** — answer + citations + suggested follow-ups (+ quick-replies for customers), one Gemini call. Reads memory profile and reflection lessons from Redis. A listing card whose area *and* price both carry no digit is dropped here (`_drop_figureless_listings`): the prompt tells the model to leave `listings` empty when the context has no figures, and the nightly answer-quality eval caught it inventing a placeholder card anyway on 5 of 6 runs of a plain policy question. Enforced in code rather than left to the prompt, so it cannot drift with the next prompt edit or model upgrade.
 - **verify** — Faithfulness/Relevancy/Completeness (Gemini-as-judge). Rejections are distilled into a reflection lesson.
 - **risk_check** — flags HITL for price/commitment content.
 - **bump_retry / low_confidence** — one retry max, always carrying the Verifier's feedback (never a blind repeat); declines to "insufficient information" when still low.
@@ -166,6 +166,8 @@ Two independent namespaces, both fail-open (Redis down → pipeline still answer
 ### Database (MySQL + Alembic)
 Key tables: `users` (SALE/ADMIN/CUSTOMER share one table), `documents`, `projects`, `document_relations`, `conflict_flags`, `chat_sessions` (shared by Sale self-consult and customer chat, tracks handoff status), `messages` (citations, images, `quick_replies`, `suggested_questions`, `emotion`, Verifier scores), `hitl_logs`, `feedback`, `audit_logs`.
 
+`audit_logs` has **no foreign key on purpose**, so its rows outlive the user they describe — which makes anything personal written there undeletable by deleting the account. Free text bound for it goes through `audit.redact_and_truncate`, which strips Vietnamese mobile numbers, citizen IDs and emails (`backend/utils/pii.py`) before the row is written; plain `truncate` does not redact, because its other callers build the Sale's inbox preview where the customer's number is the point. The redactor is a backstop for free text, not a substitute for the rule at the top of `audit.py`: a contact detail passed as its own field is invisible to it, and names are deliberately not attempted (Vietnamese given names collide with ordinary words). Customer message text is stored unredacted in `messages` — that is the conversation itself, and `leads` stores the phone number deliberately, as the record the Sale calls back.
+
 ### Vector Store & Answer Images
 Qdrant, two collections: main document store (dense, optional BM25 hybrid) and semantic cache. Embedding: `gemini-embedding-001` (768d), direct via `google-genai` — no LlamaIndex. Custom section-aware chunker.
 
@@ -177,12 +179,14 @@ Answer images (`answer_images_service.py`) — two strategies:
 `sanitize_and_scan` (regex prompt-injection check) → `document_classification_service` → MinIO. By default every new upload stops after storing the original and the LLM metadata proposal. Admin approval/correction then triggers category-aware chunking → embedding → conflict scan → Qdrant publication. Pending and `other` documents are excluded again at retrieval as defense in depth. A confidence-based auto-approval path remains feature-configurable for trusted deployments but is disabled by the default approval gate.
 
 ### Eval
-Three complementary layers, none replacing the others:
-1. **Tracing** (`backend/core/tracing.py`) — per-run JSONL trace, off by default.
-2. **Graders** (`eval/graders.py`) — deterministic checks over recorded traces (grounded, tool called when needed, retry carries a correction, latency budget). `scripts/run_eval.py --fail-under RATE` gates CI, but needs prior real traffic.
-3. **Golden regression gate** (`eval/golden_dataset.py`, `tests/test_services/test_golden_regression.py`) — fixed, hand-picked Sale questions run through the real pipeline with stubbed retrieval/inventory/LLM/Verifier — deterministic, no API key, catches routing/HITL/citation regressions on the PR itself.
+Four complementary layers, none replacing the others. They differ in what they can see: layers 1–3 never call a model, so they are cheap, deterministic and safe to gate a PR on; layer 4 is the only one that can tell whether the answer was any *good*, and it pays for that in API calls and variance.
 
-`admin_eval.py` (`/admin/eval`) reads live Verifier scores from MySQL directly — not a DeepEval batch. DeepEval itself is offline-only, never in the request path.
+1. **Tracing** (`backend/core/tracing.py`) — per-run JSONL trace, off by default. Content-free: it records `query_len`, not the question, which is why no judge can be run over traces after the fact.
+2. **Graders** (`eval/graders.py`) — deterministic checks over recorded traces (grounded, tool called when needed, retry carries a correction, latency budget). `scripts/run_eval.py --fail-under RATE` can gate, but needs prior real traffic.
+3. **Golden regression gate** (`eval/golden_dataset.py`, `tests/test_services/test_golden_regression.py`) — fixed Sale questions through the real pipeline with retrieval/inventory/LLM/Verifier stubbed. Deterministic, no API key, runs on every PR, catches routing/HITL/citation regressions.
+4. **Answer quality** (`eval/deepeval_suite.py`, `.github/workflows/answer-quality.yml`) — the same golden questions with the **real model** drafting the answer, run nightly. Each case carries a hand-written `expected_output`, and the gates that decide pass/fail are rules, not opinions: `Required Facts` (the figures the reference commits to appear), `Forbidden Content` (no invented guarantee, no obeying an instruction planted in a document), `Listing Discipline` (no unit card invented to fill a slot). DeepEval's judged metrics — faithfulness, relevancy, correctness-vs-reference, no-invented-figures — sit alongside them and are read as a trend, because a judge on the same vendor as the answer model grades itself generously (`--judge-model` splits them, and also splits the per-model quota). `--repeats` scores each case over several attempts so a flaky case is distinguishable from a broken one.
+
+`admin_eval.py` (`/admin/eval`) reads live Verifier scores from MySQL directly — not a DeepEval batch. DeepEval itself is offline-only, never in the request path, and `deepeval` is in `requirements-eval.txt` so it stays out of the production image.
 
 ## Data Flow
 1. Sale/Customer sends a question.

@@ -104,5 +104,4 @@ def get_question_for_answer(db: Session, answer_message_id: int) -> str | None:
         .order_by(Message.created_at.desc(), Message.id.desc())
         .first()
     )
-    # No preceding question in this session (inconsistent data) -> fall back to the answer text.
     return question.content if question is not None else answer.content

@@ -77,7 +77,6 @@ def _to_summary(row: Project) -> ProjectSummary:
 
 @router.get("", response_model=list[ProjectSummary])
 def get_projects(db: Session = Depends(get_db)) -> list[ProjectSummary]:
-    # Skip rows without `details` — an empty project (catalogue not loaded yet) is not worth browsing.
     return [_to_summary(row) for row in list_projects(db) if row.details]
 
 

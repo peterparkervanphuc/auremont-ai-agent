@@ -14,8 +14,5 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(String(2000), nullable=True)
-    # Full payload (pricing, amenities, highlights, contact, documents...) — richer
-    # than the three structured columns above, used to render project detail views
-    # without adding child tables.
     details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

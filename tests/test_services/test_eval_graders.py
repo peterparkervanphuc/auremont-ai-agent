@@ -27,9 +27,6 @@ def _run(**overrides) -> dict:
     return base | overrides
 
 
-# --- Grounding -------------------------------------------------------------------------
-
-
 def test_answered_run_without_citations_fails():
     assert not grade_answered_runs_are_grounded(_run(citation_count=0)).passed
 
@@ -45,9 +42,6 @@ def test_cache_hit_is_not_judged_on_citations():
 
 def test_declined_run_is_not_judged_on_citations():
     assert grade_answered_runs_are_grounded(_run(outcome="notice", citation_count=0)).passed
-
-
-# --- Retrieval / tool ------------------------------------------------------------------
 
 
 def test_missing_retrieval_when_intent_asked_for_it_fails():
@@ -75,9 +69,6 @@ def test_inventory_not_needed_passes_without_the_tool():
     assert grade_inventory_tool_called_when_needed(run).passed
 
 
-# --- Reflexion --------------------------------------------------------------------------
-
-
 def test_blind_retry_fails():
     """Chinh la hanh vi truoc khi co Reflexion — grader nay phai bat duoc."""
     run = _run(
@@ -101,18 +92,12 @@ def test_corrected_retry_passes():
     assert grade_retries_carry_a_correction(run).passed
 
 
-# --- Latency ----------------------------------------------------------------------------
-
-
 def test_latency_over_budget_fails():
     assert not grade_latency_within_budget(_run(duration_ms=5200.0)).passed
 
 
 def test_latency_within_budget_passes():
     assert grade_latency_within_budget(_run(duration_ms=2900.0)).passed
-
-
-# --- Report ------------------------------------------------------------------------------
 
 
 def test_report_counts_every_grader_against_every_run():

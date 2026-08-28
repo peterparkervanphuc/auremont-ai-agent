@@ -18,9 +18,6 @@ router = APIRouter(prefix="/__test__", include_in_schema=False)
 
 class SeedUserRequest(BaseModel):
     username: str
-    # EmailStr keeps seeding consistent with UserResponse: accepting an email the
-    # response model would reject (e.g. a .local domain) yields a user who can be
-    # created but whose /auth/login blows up with a 500 during serialization.
     email: EmailStr
     password: str
     role: str = "sale"

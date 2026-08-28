@@ -49,9 +49,6 @@ def judge(monkeypatch):
     return _stub
 
 
-# --- Bốn tiêu chí ---------------------------------------------------------------------
-
-
 def test_score_is_the_weakest_of_the_three_criteria():
     """Điểm tổng là min: mạnh ở hai tiêu chí không cứu được tiêu chí còn lại."""
     assert _verdict(faithfulness=0.95, relevancy=0.9, completeness=0.3).score == 0.3
@@ -71,9 +68,6 @@ def test_completeness_defaults_to_one_when_judge_omits_it():
 
     assert verdict.completeness == 1.0
     assert verdict.score == 0.9
-
-
-# --- Structured verdict (chống anti-pattern "chỉ nói incorrect") -----------------------
 
 
 def test_prompt_asks_for_all_three_scores_and_the_verdict(judge):
@@ -103,9 +97,6 @@ def test_failure_mode_and_feedback_survive_to_the_caller(judge):
     assert result.next_action is NextAction.REGENERATE
 
 
-# --- Coercion: judge trả về dữ liệu lỏng lẻo ------------------------------------------
-
-
 def test_unknown_failure_mode_degrades_instead_of_dropping_the_scores():
     """Mất phân loại còn hơn mất cả ba điểm số vì một nhãn lạ."""
     verdict = VerifierResult(faithfulness=0.8, relevancy=0.8, completeness=0.8, failure_mode="chua-ro")
@@ -131,9 +122,6 @@ def test_scores_on_a_0_100_scale_are_rescaled():
     assert VerifierResult(faithfulness=85, relevancy=90, completeness=80).score == pytest.approx(0.8)
 
 
-# --- Fail closed ----------------------------------------------------------------------
-
-
 def test_judge_failure_scores_zero_and_declines(judge, monkeypatch):
     """Verifier hỏng phải trượt kín, và phải nói rõ là hỏng chứ không giả vờ chấm điểm."""
 
@@ -155,7 +143,6 @@ def test_empty_context_cannot_be_called_faithful(judge):
     result = score_answer(QUERY, ANSWER, [])
 
     assert result.score == 0.0
-    # Không có gì để đối chiếu thì không tốn một lần gọi LLM.
     assert calls == []
 
 

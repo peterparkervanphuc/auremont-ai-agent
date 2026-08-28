@@ -41,14 +41,10 @@ from backend.utils.text import strip_diacritics
 
 logger = logging.getLogger(__name__)
 
-# Cap on remembered items per profile. A profile is a hint, and a long one stops being
-# one: it crowds the prompt and buries the current question under old context.
 MAX_ITEMS_PER_FIELD = 5
 
-# Unit types worth remembering, matched as whole tokens ("2PN", "3 PN", "studio").
 UNIT_TYPE_PATTERN = re.compile(r"\b(\d\s?PN|studio|shophouse|penthouse|duplex)\b", re.IGNORECASE)
 
-# "3,6 ty", "3.6 tỷ", "5 ty dong", "800 trieu" — the number plus its unit.
 BUDGET_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu)\b", re.IGNORECASE)
 BUDGET_RANGE_PATTERN = re.compile(
     r"(\d+(?:[.,]\d+)?)\s*(?:-|–|đến|den|tới|toi)\s*"
@@ -56,11 +52,6 @@ BUDGET_RANGE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# A money figure only counts as *this person's budget* when the sentence says so. Without
-# this gate every price the person merely asked about was stored as their budget: "căn 2PN
-# giá 3.6 tỷ có đắt không?" recorded 3.6 tỷ as what they can afford, which is the opposite
-# of what the question means. A missed budget costs a little personalisation; an invented
-# one quietly reshapes how every later answer is framed.
 BUDGET_CONTEXT_PATTERN = re.compile(
     r"(ngân\s*sách|ngan\s*sach|tài\s*chính|tai\s*chinh|budget"
     r"|tầm\s*giá|tam\s*gia|khoảng\s*giá|khoang\s*gia|trong\s*tầm|trong\s*tam"
@@ -70,8 +61,6 @@ BUDGET_CONTEXT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Words that mark a figure as belonging to a *unit* rather than to the person, even when a
-# budget word appears elsewhere in the same sentence.
 PRICE_QUESTION_PATTERN = re.compile(
     r"(giá\s*(?:căn|bán|gốc|niêm)|gia\s*(?:can|ban|goc|niem)"
     r"|bao\s*nhiêu|bao\s*nhieu|có\s*đắt|co\s*dat|đắt\s*hơn|dat\s*hon|rẻ\s*hơn|re\s*hon)",
@@ -86,7 +75,6 @@ class UserProfile:
     unit_types: list[str] = field(default_factory=list)
     budgets: list[str] = field(default_factory=list)
     projects: list[str] = field(default_factory=list)
-    # Free-form topics the person keeps returning to (used for the Sale namespace).
     topics: list[str] = field(default_factory=list)
 
     def is_empty(self) -> bool:
@@ -116,8 +104,6 @@ def load_profile(key: str) -> UserProfile:
     try:
         raw = client.get(key)
     except Exception:
-        # WARNING not ERROR: answers are still correct, only less personalised. Logged
-        # because a permanently dead Redis has no other outward symptom.
         logger.warning(
             "Doc ho so ghi nho that bai; coi nhu chua co ho so.",
             exc_info=True,
@@ -131,7 +117,6 @@ def load_profile(key: str) -> UserProfile:
     try:
         data = json.loads(raw)
     except (ValueError, TypeError):
-        # A corrupt value must not be fatal, and must not be read again next turn.
         logger.warning("Ho so ghi nho hong; bo qua.", extra={"event": "memory.load.corrupt", "key": key})
         return UserProfile()
 
@@ -189,8 +174,6 @@ def remember_many(
             return
         _save_profile(client, key, merged)
     except Exception:
-        # The answer being served is already complete; a failed write changes nothing
-        # the user sees this turn.
         logger.warning(
             "Ghi ho so ghi nho that bai; cau tra loi khong bi anh huong.",
             exc_info=True,
@@ -281,7 +264,6 @@ def extract_facts(question: str, project_id: str | None = None) -> UserProfile:
 
     unit_types: list[str] = []
     for match in UNIT_TYPE_PATTERN.finditer(question):
-        # Normalise "3 PN" and "3pn" to one token so they don't accumulate as duplicates.
         token = re.sub(r"\s+", "", match.group(0)).upper()
         if token not in unit_types:
             unit_types.append(token)

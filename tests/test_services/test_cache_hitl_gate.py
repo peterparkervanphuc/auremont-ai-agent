@@ -25,9 +25,6 @@ def _result(**kw):
     return agent_pipeline.PipelineResult(**base)
 
 
-# --- cổng HITL trên đường cache ------------------------------------------------------
-
-
 def test_cached_price_answer_still_raises_hitl(monkeypatch):
     """Điểm mấu chốt: câu chạm giá lấy từ cache vẫn phải bắt Sale xác nhận."""
     monkeypatch.setattr(agent_pipeline.cache_service, "lookup_cache", lambda *a, **kw: _cached(PRICE_ANSWER))
@@ -60,9 +57,6 @@ def test_hitl_verdict_is_recomputed_not_read_from_the_cache_row(monkeypatch):
     )
 
     assert agent_pipeline._cache_check({"query": "đặt cọc bao nhiêu?"})["requires_hitl"] is True
-
-
-# --- điều kiện ghi cache -------------------------------------------------------------
 
 
 def test_price_answer_is_now_cached(monkeypatch):

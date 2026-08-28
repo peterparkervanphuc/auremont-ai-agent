@@ -10,9 +10,6 @@ from backend.services import agent_pipeline, memory_service
 PROFILE = "- Loai can thuong quan tam: 2PN"
 
 
-# --------------------------------------------------------------------------- prompt
-
-
 def test_profile_reaches_the_prompt():
     prompt = prompts.build_prompt("Gia can 3PN?", [], [], False, False, profile=PROFILE)
 
@@ -44,9 +41,6 @@ def test_profile_sits_above_the_conversation_history():
     prompt = prompts.build_prompt("Con 3PN?", [], [], False, False, history=history, profile=PROFILE)
 
     assert prompt.index("GHI NHỚ VỀ NGƯỜI HỎI") < prompt.index("LỊCH SỬ HỘI THOẠI")
-
-
-# --------------------------------------------------------------------------- cache
 
 
 def test_cache_is_skipped_for_a_personalised_question(monkeypatch):
@@ -88,7 +82,6 @@ def test_personalised_answers_are_never_written_to_the_cache(monkeypatch):
     agent_pipeline.run_pipeline("Gia can 3PN?", memory_profile=PROFILE)
     assert stored == []
 
-    # Same question from someone with no profile is a safe generic answer, so it caches.
     agent_pipeline.run_pipeline("Gia can 3PN?")
     assert stored == ["Gia can 3PN?"]
 

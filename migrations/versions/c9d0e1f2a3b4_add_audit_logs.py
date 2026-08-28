@@ -25,7 +25,6 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
 revision: str = 'c9d0e1f2a3b4'
 down_revision: str | Sequence[str] | None = 'b7c8d9e0f1a2'
 branch_labels: str | Sequence[str] | None = None
@@ -46,7 +45,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id'),
     )
     op.create_index(op.f('ix_audit_logs_id'), 'audit_logs', ['id'])
-    # Mọi truy vấn dashboard đều lọc theo một trong các cột này.
     op.create_index(op.f('ix_audit_logs_event'), 'audit_logs', ['event'])
     op.create_index(op.f('ix_audit_logs_user_id'), 'audit_logs', ['user_id'])
     op.create_index(op.f('ix_audit_logs_created_at'), 'audit_logs', ['created_at'])

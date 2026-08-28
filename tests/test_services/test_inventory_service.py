@@ -17,7 +17,6 @@ from backend.services.inventory_service import (
 
 MOCK_URL = "https://mockapi.io/api/v1/inventory"
 
-# Shape đúng như mock API trả về: có field lạ `id` mà InventoryUnit không khai báo.
 MOCK_UNITS = [
     {
         "id": "1",
@@ -59,8 +58,6 @@ def configured_api(monkeypatch):
     """Trỏ config sang mock API. monkeypatch tự trả lại giá trị cũ sau mỗi test."""
     monkeypatch.setattr(settings, "inventory_api_url", MOCK_URL)
     monkeypatch.setattr(settings, "inventory_api_key", "")
-    # Ghim luôn map dự án: không ghim thì test đọc INVENTORY_PROJECT_MAP trong .env của
-    # máy dev, nên cùng một test lúc xanh lúc đỏ tuỳ file .env. Rỗng = gửi thẳng slug.
     monkeypatch.setattr(settings, "inventory_project_map", "")
 
 
@@ -73,9 +70,6 @@ def _text_response(body: str) -> httpx.Response:
     return httpx.Response(200, text=body, request=httpx.Request("GET", MOCK_URL))
 
 
-# --- Luồng thành công ---------------------------------------------------------------
-
-
 @patch("httpx.get")
 def test_filters_by_unit_type_in_question(mock_get):
     """Câu hỏi nhắc '2PN' thì chỉ trả về căn 2PN."""
@@ -83,7 +77,6 @@ def test_filters_by_unit_type_in_question(mock_get):
 
     result = lookup_inventory("ocean-park-3", "Còn căn 2PN nào trống không em?")
 
-    # "Còn căn" is an availability request, so reserved units are excluded.
     assert [unit.unit_code for unit in result] == ["OP3-A-0203"]
     assert all(unit.unit_type == "2PN" for unit in result)
 
@@ -346,7 +339,6 @@ def test_returns_all_units_when_question_has_no_unit_type(mock_get):
 
     result = lookup_inventory("ocean-park-3", "Dự án còn hàng không?")
 
-    # "Còn hàng" is an availability request, so sold/reserved units are excluded.
     assert [unit.unit_code for unit in result] == ["OP3-A-0102", "OP3-A-0203"]
 
 
@@ -577,9 +569,6 @@ def test_omits_auth_header_when_no_api_key(mock_get):
     assert "Authorization" not in mock_get.call_args.kwargs["headers"]
 
 
-# --- Hết hàng: rỗng, KHÔNG phải lỗi -------------------------------------------------
-
-
 @patch("httpx.get")
 def test_empty_inventory_returns_empty_list(mock_get):
     """Dự án hết sạch hàng là câu trả lời hợp lệ, không phải sự cố API."""
@@ -596,9 +585,6 @@ def test_no_matching_unit_type_returns_empty_list(mock_get):
     assert lookup_inventory("ocean-park-3", "còn Penthouse không") == []
 
 
-# --- Dữ liệu bẩn ---------------------------------------------------------------------
-
-
 @patch("httpx.get")
 def test_skips_records_missing_required_fields(mock_get):
     """Một dòng dữ liệu hỏng không được làm hỏng cả lần tra cứu."""
@@ -611,7 +597,7 @@ def test_skips_records_missing_required_fields(mock_get):
                 "price": 3600000000,
                 "status": "available",
             },
-            {"project_id": "ocean-park-3", "unit_type": "2PN"},  # thiếu unit_code + status
+            {"project_id": "ocean-park-3", "unit_type": "2PN"},
             "không phải object",
         ]
     )
@@ -647,9 +633,6 @@ def test_missing_unit_type_becomes_none(mock_get):
 
     assert result[0].unit_type is None
     assert result[0].price is None
-
-
-# --- Sự cố API: luôn là InventoryApiError -------------------------------------------
 
 
 @patch("httpx.get")
@@ -702,9 +685,6 @@ def test_missing_config_becomes_inventory_api_error(monkeypatch):
 
     with pytest.raises(InventoryApiError, match="is not configured"):
         lookup_inventory("ocean-park-3", "còn căn nào không")
-
-
-# --- Ánh xạ project id: slug catalogue -> mã dự án của inventory API -----------------
 
 
 def test_resolve_uses_star_entry_when_session_has_no_project():

@@ -51,8 +51,6 @@ def test_resolves_project_from_the_current_query_when_session_carries_none(monke
 
     result = agent_pipeline._retrieve({"query": "Ocean Park 1", "project_id": None, "db": object()})
 
-    # Returned for `_tool_call` to pick up (LangGraph merges this into state for the rest
-    # of this turn's run) — see agent_pipeline._tool_call, which reads state["project_id"].
     assert result["project_id"] == "ocean-park-1"
 
 
@@ -75,7 +73,6 @@ def test_resolution_never_scopes_the_qdrant_retrieve_call(monkeypatch):
 
     agent_pipeline._retrieve({"query": "Ocean Park 1", "project_id": None, "db": object()})
 
-    # The session carried no project — `retrieve()` must still see None, not the resolved id.
     assert seen_project_ids == [None]
 
 

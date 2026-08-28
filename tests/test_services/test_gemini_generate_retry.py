@@ -101,7 +101,7 @@ def test_the_backoff_is_capped_so_a_long_retry_delay_cannot_stall_a_turn(monkeyp
     fast beats holding the Sale's screen."""
     slept: list[float] = []
     monkeypatch.setattr(gemini_client.time, "sleep", lambda seconds: slept.append(seconds))
-    monkeypatch.setattr(gemini_client, "_retry_delay_seconds", lambda _exc: 30.0)
+    monkeypatch.setattr(gemini_client, "retry_delay_seconds", lambda _exc: 30.0)
     _stub_generate(monkeypatch, [_api_error(429), _FakeResponse("ok")])
 
     gemini_client.client_models_generate("câu hỏi", None)

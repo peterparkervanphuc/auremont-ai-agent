@@ -9,17 +9,24 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from backend.core.config import get_settings
 from backend.core.deps import require_role
-from backend.core.enums import UserRole
+from backend.core.enums import LeadTier, UserRole
 from backend.core.mysql_client import get_db
 from backend.models.chat_session import ChatSession
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
 from backend.models.feedback import Feedback
 from backend.models.hitl_log import HitlLog
+from backend.models.lead import Lead
 from backend.models.message import Message
 from backend.models.project import Project
 from backend.models.user import User
-from backend.schemas.admin_dashboard import BusinessDashboardResponse
+from backend.schemas.admin_dashboard import (
+    BusinessDashboardResponse,
+    LeadEnrichmentStats,
+    LeadStatsResponse,
+    LeadTierCounts,
+    LeadTrendPoint,
+)
 from backend.services.document_coverage_service import (
     COVERAGE_CATEGORIES,
     document_coverage_state,
@@ -62,8 +69,6 @@ def _period_metrics(
         if agent_messages
         else []
     )
-    # A message may receive more than one feedback row. The latest assessment is
-    # authoritative so one answer never inflates several donut slices at once.
     latest_feedback: dict[int, Feedback] = {}
     for row in sorted(raw_feedback_rows, key=lambda item: (item.created_at, item.id)):
         latest_feedback[row.message_id] = row
@@ -86,10 +91,6 @@ def _period_metrics(
     active_sale_ids.update(
         owner
         for row in sale_messages
-        # Both halves are needed: `session_id` is nullable on the message row, and the
-        # owner it maps to is itself nullable. Bound with a walrus so the `is not None`
-        # guard narrows — a repeated `sale_by_session[...]` lookup reads as a fresh
-        # `int | None` every time and never narrows.
         if row.session_id is not None and (owner := sale_by_session.get(row.session_id)) is not None
     )
 
@@ -175,9 +176,6 @@ async def get_business_dashboard(
     previous_start_day = start_day - timedelta(days=days)
     previous_start_at = _utc_boundary(previous_start_day, zone)
 
-    # Use the same official-team scope for every business metric. Otherwise the
-    # headline session/question totals include Admin and E2E traffic while the
-    # active-Sale card excludes it, producing an internally inconsistent dashboard.
     official_sales = db.query(User).filter(User.role == "sale", ~User.username.like("e2e_sale_%")).all()
     sale_names = {row.id: row.username for row in official_sales}
     official_sale_ids = set(sale_names)
@@ -201,9 +199,6 @@ async def get_business_dashboard(
         if official_sale_ids
         else []
     )
-    # Messages are filtered by their own timestamp and joined to the scoped Sale
-    # sessions. This keeps long-running sessions accurate without loading all
-    # historical sessions into application memory.
     period_message_rows = (
         db.query(Message, ChatSession.sale_id)
         .join(ChatSession, Message.session_id == ChatSession.id)
@@ -303,8 +298,6 @@ async def get_business_dashboard(
             }
         )
 
-    # Keep all documents here: company-wide uploads can still carry precise
-    # ``subdivision_names`` metadata and therefore cover a subdivision row.
     documents = db.query(Document).all()
     document_coverage: list[dict[str, Any]] = []
     coverage_projects = [project for project in projects if not project_id or project.id == project_id]
@@ -368,4 +361,68 @@ async def get_business_dashboard(
             "confirmed": summary["hitl_confirmed"],
         },
         "document_coverage": document_coverage[:8],
+    }
+
+
+@router.get("/leads", response_model=LeadStatsResponse)
+async def get_lead_stats(
+    days: int = Query(default=14, ge=7, le=90),
+    project_id: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Lead capture and scoring over the last `days`.
+
+    Deliberately NOT part of /business: that endpoint scopes everything to sessions owned by
+    an official Sale, while a customer-chat session has no Sale until it is claimed. Merging
+    the two would make one response describe two different populations.
+    """
+    zone = _dashboard_timezone()
+    today = datetime.now(UTC).astimezone(zone).date()
+    start_at = _utc_boundary(today - timedelta(days=days - 1), zone)
+
+    query = db.query(Lead).filter(Lead.scored_at.isnot(None), Lead.scored_at >= start_at)
+    if project_id:
+        query = query.filter(Lead.project_id == project_id)
+    leads = query.all()
+
+    totals = LeadTierCounts(
+        hot=sum(1 for lead in leads if lead.tier == LeadTier.HOT),
+        warm=sum(1 for lead in leads if lead.tier == LeadTier.WARM),
+        cold=sum(1 for lead in leads if lead.tier == LeadTier.COLD),
+        total=len(leads),
+    )
+
+    by_day: dict[str, LeadTrendPoint] = {}
+    for offset in range(days):
+        key = (today - timedelta(days=days - 1 - offset)).isoformat()
+        by_day[key] = LeadTrendPoint(date=key)
+    for lead in leads:
+        if lead.scored_at is None:
+            continue
+        key = lead.scored_at.replace(tzinfo=UTC).astimezone(zone).date().isoformat()
+        point = by_day.get(key)
+        if point is not None:
+            setattr(point, str(lead.tier), getattr(point, str(lead.tier)) + 1)
+
+    registered = sum(1 for lead in leads if lead.customer_id is not None)
+    customer_ids = [lead.customer_id for lead in leads if lead.customer_id is not None]
+    contactable = (
+        db.query(User).filter(User.id.in_(customer_ids), User.phone.isnot(None)).count() if customer_ids else 0
+    )
+    llm_calls = sum(1 for lead in leads if lead.detection_method == "rule+llm")
+
+    return {
+        "period_days": days,
+        "totals": totals,
+        "trend": list(by_day.values()),
+        "registered": registered,
+        "anonymous": len(leads) - registered,
+        "contactable": contactable,
+        "contact_rate": round(contactable / len(leads), 3) if leads else 0.0,
+        "avg_score": round(sum(lead.score for lead in leads) / len(leads), 1) if leads else 0.0,
+        "llm_enrichment": LeadEnrichmentStats(
+            scored=len(leads),
+            llm_calls=llm_calls,
+            call_rate=round(llm_calls / len(leads), 3) if leads else 0.0,
+        ),
     }

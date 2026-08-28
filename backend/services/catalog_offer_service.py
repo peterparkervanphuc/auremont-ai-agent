@@ -61,8 +61,6 @@ def search_offers(
     )
     scoped_ids = set(project_ids or [])
     excluded_ids = set(excluded_project_ids or [])
-    # See `_project_is_in_scope`: a bare "which tiers does this project have" question
-    # stays on the named project; a unit-filtering question reaches into its sub-zones.
     include_children = bool(active.constraints)
     rows = db.query(Project).all()
     offers: list[CatalogOffer] = []
@@ -70,24 +68,12 @@ def search_offers(
     for project in rows:
         if scoped_ids and not _project_is_in_scope(project, scoped_ids, include_children=include_children):
             continue
-        # Exclusions always cover children: rejecting a parent rejects everything under it.
         if excluded_ids and _project_is_in_scope(project, excluded_ids):
             continue
         details = project.details or {}
         info = details.get("project") or {}
         pricing = details.get("pricing") or []
 
-        # The umbrella "Vinhomes Ocean Park" catalogue entry mixes "Chung cư" together with
-        # "Biệt thự"/"Shophouse" — no real sub-zone does that (an apartment tower is never
-        # also a villa cluster), so that specific combination is the umbrella record's own
-        # signature, unlike a real sub-zone that legitimately sells two non-apartment
-        # product types together (e.g. villas plus a few shophouse units in the same
-        # sub-zone — those must stay searchable). Left in, VHOP's own chung-cư tier
-        # surfaces as a peer "phân khu" option next to The Beverly/The Zurich in a broad
-        # search — confusing, since it is the whole master development, not a comparable
-        # product. Only excluded from a BROAD search (`scoped_ids` empty or naming
-        # something else); a question that explicitly names this project still gets its
-        # own tiers back.
         categories = {tier["category"] for tier in pricing if isinstance(tier, dict) and tier.get("category")}
         if "Chung cư" in categories and len(categories) > 1 and project.id not in scoped_ids:
             continue
@@ -99,7 +85,6 @@ def search_offers(
             if _matches(offer, active):
                 offers.append(offer)
 
-    # Stable and useful for broad searches: known/lower prices first, then area and name.
     offers.sort(
         key=lambda item: (
             -_preference_score(item, active),
@@ -319,8 +304,6 @@ def _ranges_intersect(
     wanted_min: float,
     wanted_max: float,
 ) -> bool:
-    # Unknown catalogue figures are not evidence that a tier violates the filter. Keep
-    # the row and let the answer say that this field needs a current price list/check.
     if item_min is None and item_max is None:
         return True
     lower = item_min if item_min is not None else item_max

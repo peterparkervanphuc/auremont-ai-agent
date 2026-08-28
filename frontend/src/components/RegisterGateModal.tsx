@@ -4,6 +4,7 @@ import { customerApi } from "../api/customerChat";
 import { clearVisitorSession } from "../hooks/useVisitorToken";
 import { useAuth } from "../hooks/useAuth";
 import type { CustomerChatSessionResponse, CustomerGate, TokenResponse, UserRole } from "../types";
+import { PHONE_ERROR, isValidPhone, normalisePhone } from "../utils/phone";
 import { EyeIcon, EyeOffIcon, LoaderIcon, XIcon } from "./Icons";
 
 const GATE_COPY: Record<CustomerGate, { title: string; body: string }> = {
@@ -46,6 +47,8 @@ interface Props {
 export function RegisterGateModal({ gate, sessionId, visitorToken, onClose, onAuthenticated }: Props) {
   const [mode, setMode] = useState<"register" | "login">("register");
   const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -53,7 +56,10 @@ export function RegisterGateModal({ gate, sessionId, visitorToken, onClose, onAu
   const { login } = useAuth();
 
   const copy = GATE_COPY[gate];
-  const canSubmit = Boolean(email.trim() && password) && !loading;
+  // The phone is only required when registering — logging in needs email + password only.
+  const phoneOk = mode === "login" || isValidPhone(phone);
+  const canSubmit = Boolean(email.trim() && password) && phoneOk && !loading;
+  const showPhoneError = mode === "register" && phone.trim().length > 0 && !isValidPhone(phone);
 
   const applySession = (token: TokenResponse, resumedSessionId?: number) => {
     login(token.access_token, token.refresh_token, token.user.role, token.user.username);
@@ -70,6 +76,8 @@ export function RegisterGateModal({ gate, sessionId, visitorToken, onClose, onAu
       const token = await customerApi.post<TokenResponse>("/customer/register", {
         email: email.trim(),
         password,
+        full_name: fullName.trim() || null,
+        phone: normalisePhone(phone),
         session_id: sessionId,
         visitor_token: visitorToken,
       });
@@ -152,6 +160,44 @@ export function RegisterGateModal({ gate, sessionId, visitorToken, onClose, onAu
               disabled={loading}
             />
           </div>
+
+          {mode === "register" && (
+            <>
+              <div className="login-field">
+                <label className="login-label" htmlFor="gate-name">
+                  Họ và tên
+                </label>
+                <input
+                  id="gate-name"
+                  type="text"
+                  className="login-input"
+                  placeholder="Nguyễn Văn A"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  autoComplete="name"
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="login-field">
+                <label className="login-label" htmlFor="gate-phone">
+                  Số điện thoại
+                </label>
+                <input
+                  id="gate-phone"
+                  type="tel"
+                  inputMode="tel"
+                  className="login-input"
+                  placeholder="0912345678"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  autoComplete="tel"
+                  disabled={loading}
+                />
+                {showPhoneError && <span className="login-field-error">{PHONE_ERROR}</span>}
+              </div>
+            </>
+          )}
 
           <div className="login-field">
             <label className="login-label" htmlFor="gate-password">

@@ -38,14 +38,8 @@ from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# One writer lock per process. Traces are appended from request threads, and an
-# interleaved write would produce a line that no JSONL reader can parse.
 _write_lock = threading.Lock()
 
-# The run currently being traced, per request. A ContextVar rather than a parameter
-# threaded through every node: the pipeline's node signatures are fixed by LangGraph,
-# and passing a tracer through PipelineState would put a non-serialisable object into
-# state that is otherwise plain data.
 _current_run: ContextVar["TraceRun | None"] = ContextVar("current_trace_run", default=None)
 
 
@@ -54,8 +48,6 @@ class TraceStep:
     """One step of a run: a decision taken, a tool called, or a retry started."""
 
     name: str
-    # Milliseconds from the start of the run, so steps order and time themselves without
-    # each one carrying a full timestamp.
     at_ms: float
     fields: dict[str, Any] = field(default_factory=dict)
 
@@ -71,7 +63,6 @@ class TraceRun:
     started_at: str
     started_perf: float
     steps: list[TraceStep] = field(default_factory=list)
-    # Set by `finish`; the outcome fields the eval set is built from.
     outcome: dict[str, Any] = field(default_factory=dict)
 
     def step(self, name: str, **fields: Any) -> None:
@@ -160,7 +151,6 @@ def finish(**outcome: Any) -> None:
 
     if settings.observability_metrics_enabled:
         try:
-            # Lazy import avoids a config/Base/model cycle during application startup.
             from backend.core.observability_sink import persist_trace_run
 
             persist_trace_run(record)

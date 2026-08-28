@@ -55,9 +55,6 @@ def broken_redis(monkeypatch):
     monkeypatch.setattr(memory_service, "get_redis_client", lambda: _BrokenRedis())
 
 
-# --------------------------------------------------------------------------- extraction
-
-
 def test_unit_type_and_budget_are_extracted():
     profile = memory_service.extract_facts("Ngan sach 3,6 ty thi nen xem can 2PN nao?")
 
@@ -120,9 +117,6 @@ def test_project_is_remembered_when_the_session_has_one():
 def test_a_question_with_nothing_durable_yields_an_empty_profile():
     assert memory_service.extract_facts("Chao ban, cho hoi chut").is_empty()
     assert memory_service.extract_facts("   ").is_empty()
-
-
-# --------------------------------------------------------------------------- round trip
 
 
 def test_remember_then_load(fake_redis):
@@ -199,9 +193,6 @@ def test_forget_clears_the_profile(fake_redis):
     assert memory_service.load_profile(key).is_empty()
 
 
-# --------------------------------------------------------------------------- failing open
-
-
 def test_load_returns_an_empty_profile_when_redis_is_down(broken_redis):
     assert memory_service.load_profile(memory_service.customer_key(7)).is_empty()
 
@@ -236,9 +227,6 @@ def test_unexpected_shape_is_ignored(fake_redis):
     fake_redis.store[key] = json.dumps({"unit_types": "2PN", "budgets": None})
 
     assert memory_service.load_profile(key).is_empty()
-
-
-# --------------------------------------------------------------------------- rendering
 
 
 def test_empty_profile_renders_as_nothing():

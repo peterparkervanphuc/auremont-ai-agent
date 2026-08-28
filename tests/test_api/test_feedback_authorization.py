@@ -88,7 +88,6 @@ class TestSubmitFeedback:
 
         response = as_user(users["intruder"]).post("/api/v1/feedback", json={"message_id": message.id, "type": "wrong"})
 
-        # 404, not 403 — a 403 would confirm the message id exists.
         assert response.status_code == 404
         assert db_session.query(Feedback).count() == 0
 

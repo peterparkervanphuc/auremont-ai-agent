@@ -21,8 +21,6 @@ from scripts._gallery import gallery_by_slug  # noqa: E402
 
 SOURCE_JSON_DIR = REPO_ROOT / "seed-data" / "villas-shops"
 
-# (json filename, project slug — MUST match "project.id" inside the file
-# and the folder name in project-images-source/ where images were copied).
 PROJECTS = [
     ("hai_au.json", "hai-au"),
     ("ngoc_trai.json", "ngoc-trai"),
@@ -56,11 +54,6 @@ def main() -> None:
             if row is None:
                 row = Project(id=slug)
                 db.add(row)
-            # The 3 Villa sub-zones have full_name already starting with "Tieu khu ..." —
-            # the FE (TowerSpotlight) prepends "Tieu khu" itself when rendering, so using
-            # full_name as-is would duplicate it ("Tieu khu Tieu khu Hai Au..."). Use the
-            # short name + project suffix instead, for consistency with other projects
-            # (e.g. "The Zurich - Vinhomes Ocean Park").
             short_name = project_info.get("name") or ""
             row.name = (
                 f"{short_name} - Vinhomes Ocean Park"

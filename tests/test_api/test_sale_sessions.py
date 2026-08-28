@@ -111,7 +111,6 @@ def test_clear_messages_keeps_the_session(as_sale, sales, stub_pipeline):
     assert client.delete(f"/api/v1/sale/sessions/{session_id}/messages").status_code == 204
 
     assert client.get(f"/api/v1/sale/sessions/{session_id}/messages").json() == []
-    # The session itself must survive so the Sale keeps the customer thread.
     assert [s["id"] for s in client.get("/api/v1/sale/sessions").json()] == [session_id]
 
 
@@ -135,7 +134,6 @@ def test_admin_cannot_read_a_sales_session(as_sale, sales, admin, stub_pipeline)
     admin_client = as_sale(admin)
     assert admin_client.get(f"/api/v1/sale/sessions/{session_id}/messages").status_code == 404
     assert admin_client.delete(f"/api/v1/sale/sessions/{session_id}").status_code == 404
-    # Phiên của sale không lọt vào danh sách của admin.
     assert admin_client.get("/api/v1/sale/sessions").json() == []
 
 
@@ -146,12 +144,10 @@ def test_a_sale_cannot_touch_another_sales_session(as_sale, sales, stub_pipeline
 
     other_client = as_sale(intruder)
 
-    # 404 (not 403) so session ids of other sales stay unguessable.
     assert other_client.get(f"/api/v1/sale/sessions/{session_id}/messages").status_code == 404
     assert other_client.delete(f"/api/v1/sale/sessions/{session_id}").status_code == 404
     assert other_client.post(f"/api/v1/sale/sessions/{session_id}/messages", json={"content": "hi"}).status_code == 404
 
-    # And the owner's session is untouched.
     assert [s["id"] for s in as_sale(owner).get("/api/v1/sale/sessions").json()] == [session_id]
 
 

@@ -22,8 +22,6 @@ from backend.core.gemini_client import generate_json, is_gemini_quota_error
 
 logger = logging.getLogger(__name__)
 
-# Server-owned provenance marker. Unlike the LLM's free-text reason this can be queried
-# reliably when selecting legacy rows for a controlled reclassification backfill.
 DOCUMENT_CLASSIFICATION_VERSION = "llm-v3-grounded-facts"
 
 
@@ -163,10 +161,6 @@ class DocumentClassificationQuotaError(DocumentClassificationError):
 class DocumentClassification(BaseModel):
     """Structured metadata returned by the document-classification LLM."""
 
-    # Gemini's response_schema endpoint currently rejects JSON Schema's
-    # `additionalProperties`, which Pydantic emits for extra="forbid". Structured
-    # decoding still constrains the declared fields; validation below enforces their
-    # values after the response is returned.
     model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
 
     category: DocumentCategory = Field(description="The document's single primary business category.")
@@ -294,8 +288,6 @@ class DocumentClassification(BaseModel):
     def _normalise_building_codes(cls, values: list[str] | None) -> list[str] | None:
         if values is None:
             return None
-        # Building/tower identifiers are case-insensitive business keys.  Upper-casing
-        # them prevents BE1, be1 and Be1 from fragmenting conflict/coverage scopes.
         return [value.upper() for value in values]
 
     @field_validator("unit_types", mode="before")
@@ -350,10 +342,6 @@ class DocumentClassification(BaseModel):
             if key not in seen:
                 seen.add(key)
                 deduplicated.append(fact)
-                # Gemini 3.6 rejects the generated response schema when this limit is
-                # expressed as JSON Schema maxItems=200. Enforce the same contract after
-                # structured decoding so the provider receives a compatible schema while
-                # downstream persistence remains bounded.
                 if len(deduplicated) == 200:
                     break
         return deduplicated
@@ -430,9 +418,6 @@ def classify_document(
     if not raw_text.strip():
         raise DocumentClassificationError("Document has no text to classify.")
 
-    # JSON encoding provides an unambiguous data boundary even when the source contains
-    # XML-like markers or prompt-shaped prose. The full parsed text is sent: unlike the old
-    # rule classifier, this does not decide from only the first 12,000 characters.
     document_input = json.dumps(
         {"filename": filename, "content": raw_text},
         ensure_ascii=False,
@@ -452,8 +437,6 @@ def classify_document(
             prompt,
             DocumentClassification,
             system_instruction=_CLASSIFICATION_SYSTEM_INSTRUCTION,
-            # Classification is a control-plane decision rather than creative prose.
-            # Scope determinism to this call; chat generation keeps its own defaults.
             temperature=0.0,
         )
     except Exception as exc:
@@ -481,8 +464,6 @@ def classify_document(
 
     allowed_project_ids = {str(entry["id"]) for entry in safe_project_catalog}
     if classification.project_id and classification.project_id not in allowed_project_ids:
-        # Structured decoding guarantees a string, not that the string is a real foreign
-        # key.  Quarantine the suggestion instead of allowing an invented id into MySQL.
         classification = classification.model_copy(
             update={
                 "project_id": None,

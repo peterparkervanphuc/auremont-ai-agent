@@ -125,7 +125,4 @@ def document_coverage_state(
     if is_actionable_review:
         return "pending_review"
 
-    # A latest failed/blocked/processing/rejected/quarantined record means the
-    # category exists but AI cannot currently use it. This is distinct from no
-    # document at all and directs the Admin to the document list for recovery.
     return "unavailable"

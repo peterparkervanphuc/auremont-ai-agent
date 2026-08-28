@@ -76,7 +76,6 @@ def test_parse_pdf_extracts_ruled_table_as_markdown():
 
     table_text = table_sections[0].text
     assert table_sections[0].page == 1
-    # Every row must survive — none silently promoted into a dropped header.
     assert "Ten du an" in table_text
     assert "The Senique Hanoi" in table_text
     assert "Chu dau tu" in table_text
@@ -94,7 +93,6 @@ def test_parse_pdf_excludes_table_text_from_prose_section():
     prose_text = prose_sections[0].text
     assert "Day la doan van truoc bang." in prose_text
     assert "Day la doan van sau bang." in prose_text
-    # The table's cell values must not be duplicated into the prose section.
     assert "The Senique Hanoi" not in prose_text
     assert "CapitaLand Development" not in prose_text
 
@@ -149,9 +147,7 @@ def test_parse_docx_reads_tables_in_document_order(tmp_path):
 
     assert "2PN" in text and "5%" in text
     assert "3PN" in text and "7%" in text
-    # Thứ tự đọc phải giữ: tiêu đề trước bảng, ghi chú sau bảng.
     assert text.index("CHINH SACH CHIET KHAU") < text.index("2PN") < text.index("khong cong don")
-    # Dạng pipe + dòng phân cách để chunking_service nhận ra là bảng và lặp header.
     assert "| Loai can | Chiet khau | Dieu kien |" in text
     assert "| --- | --- | --- |" in text
 

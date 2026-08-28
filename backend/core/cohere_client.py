@@ -29,9 +29,6 @@ class CohereRerankError(RuntimeError):
 def get_cohere_client() -> cohere.ClientV2:
     global _client
     if _client is None:
-        # Reranking improves relevance but is not required for an answer. Keep its
-        # latency below the whole request budget and disable the SDK's implicit retries;
-        # rag_service immediately falls back to deterministic local ranking on failure.
         _client = cohere.ClientV2(
             api_key=settings.cohere_api_key,
             timeout=settings.cohere_rerank_timeout_seconds,

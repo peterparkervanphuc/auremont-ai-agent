@@ -9,7 +9,12 @@ from backend.utils.time import utcnow
 
 
 class User(Base):
-    """Internal actor: Sale or Admin."""
+    """An account: a Sale, an Admin, or a registered customer (`UserRole.CUSTOMER`).
+
+    Customer accounts are created by the public chat's registration gate
+    (`routers.customer_chat.register_customer`), which is why the contact columns below
+    exist and why they are nullable.
+    """
 
     __tablename__ = "users"
 
@@ -18,13 +23,13 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     email: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
 
-    # Stores the hashed string, never plaintext
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
 
     role: Mapped[str] = mapped_column(String(20), default=UserRole.SALE, nullable=False)
 
-    # Extra per-user grants layered on top of `role`, e.g. ["documents:delete"].
-    # NULL/empty means the user gets exactly what their role allows.
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+
     permissions: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

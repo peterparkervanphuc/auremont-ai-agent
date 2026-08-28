@@ -95,11 +95,8 @@ def test_resolving_keeps_the_chosen_document_and_blocks_the_other(client, db_ses
     assert response.json()["status"] == "resolved"
     assert response.json()["severity"] == "medium"
 
-    # Bản bị bác bỏ phải bị vô hiệu hoá, nếu không Agent vẫn trích dẫn nó.
     assert get_document(db_session, new.id).status != DocumentStatus.BLOCKED
     assert get_document(db_session, old.id).status == DocumentStatus.BLOCKED
-    # Chọn bản thắng là một quyết định có xác thực của Admin: bản đó phải đủ điều
-    # kiện retrieval ngay, thay vì tiếp tục mắc kẹt ở pending sau khi conflict đóng.
     assert get_document(db_session, new.id).review_status == DocumentReviewStatus.APPROVED
     assert get_document(db_session, new.id).is_current is True
 
@@ -137,8 +134,6 @@ def test_existing_conflict_is_enriched_by_semantic_rescan_and_exposed_by_api(cli
     assert enriched.analysis_version == "semantic-conflict-v1"
     assert enriched.evidence == {
         "rule_signals": ["price_changed"],
-        # The rescan called create_conflict in reverse order; evidence is stored in
-        # the original flag's A/B orientation so the split-view cannot swap sources.
         "facts": [{"fact_key": "unit.price", "document_a": "3.10 tỷ", "document_b": "2.88 tỷ"}],
         "sources": {
             "rule": {"unit_code": "OCP1-S1-0203"},
@@ -289,7 +284,6 @@ def test_rejects_a_document_outside_the_conflict(client, db_session, conflict):
     response = client.post(f"/api/v1/admin/conflicts/{flag.id}/resolve", json={"keep_document_id": unrelated.id})
     assert response.status_code == 400
 
-    # Không tài liệu nào bị chặn nhầm, flag vẫn mở.
     assert get_document(db_session, old.id).status != DocumentStatus.BLOCKED
     assert get_document(db_session, new.id).status != DocumentStatus.BLOCKED
     assert [c["id"] for c in client.get("/api/v1/admin/conflicts").json()] == [flag.id]
@@ -439,9 +433,6 @@ def test_winner_activation_failure_keeps_committed_decision_and_quarantine(
     assert db_session.get(type(flag), flag.id).status == ConflictStatus.RESOLVED
     assert get_document(db_session, old.id).is_current is False
     assert get_document(db_session, new.id).is_current is True
-    # Both endpoints are quarantined before MySQL commits. A phase-2 timeout never
-    # compensates back to the old decision; the write may already have applied and is
-    # authorised either way because the resolution is committed.
     assert calls == [
         (old.id, False),
         (new.id, False),

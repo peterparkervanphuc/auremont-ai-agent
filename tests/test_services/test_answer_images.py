@@ -134,9 +134,6 @@ def test_negative_project_mention_never_selects_its_gallery():
     assert images == []
 
 
-# --- Automatic route --------------------------------------------------------------------
-
-
 def test_amenity_question_attaches_amenity_photos_without_being_asked():
     """The headline case: asking what the amenities ARE now shows them too."""
     images = answer_images_service.collect_images(_FakeDb(), "tiện ích dự án The Palma có gì", "")
@@ -324,9 +321,6 @@ def test_unknown_project_attaches_nothing():
     assert images == []
 
 
-# --- Requested route (regression guards — this behaviour predates the automatic route) ---
-
-
 def test_requested_photos_are_not_capped():
     """Someone who explicitly asked to see the amenities gets all four, not the automatic
     route's three."""
@@ -350,9 +344,6 @@ def test_floor_plan_request_still_narrows_to_floor_plans():
     assert _urls(images) == ["https://cdn/p/the-palma/mat-bang-tang-5.jpg"]
 
 
-# --- Failure posture --------------------------------------------------------------------
-
-
 def test_a_broken_catalogue_never_costs_the_answer():
     """Images are a nice-to-have; collect_images swallows its own failures."""
 
@@ -362,8 +353,6 @@ def test_a_broken_catalogue_never_costs_the_answer():
 
     assert answer_images_service.collect_images(_ExplodingDb(), "tiện ích The Palma có gì", "") == []
 
-
-# --- select_listing_images / select_listing_amenities (property listing cards) ----------
 
 SENIQUE_GALLERY = [
     "https://cdn/p/senique/be-boi-50m-the-senique-hanoi.jpg",
@@ -462,11 +451,6 @@ class _FakeProjectWithoutAmenities:
 def test_select_listing_amenities_handles_missing_data():
     assert answer_images_service.select_listing_amenities(_FakeProjectWithoutAmenities()) == []
 
-
-# ── Catalogue folder as the topic label ──
-# MinIO files a subdivision's photos under tien_ich/, mat_bang/ and hinh_anh_thuc_te/, and
-# for many photos that folder is the ONLY record of what they show: The Zenpark's amenity
-# shots are named be-boi-4-mua/san-the-thao/vuon-nhat, none of which says "tien ich".
 
 ZENPARK_FOLDERED_GALLERY = [
     "https://cdn/p/the-zenpark/tien_ich/be-boi-4-mua-the-zenpark.jpg",

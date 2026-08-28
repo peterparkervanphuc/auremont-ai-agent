@@ -84,9 +84,6 @@ def _run(
     return seen
 
 
-# --- Hoc giua cac cau hoi ----------------------------------------------------------------
-
-
 def test_a_lesson_from_one_question_reaches_the_next(reflection_redis, monkeypatch):
     """Diem cot loi: cau hoi sau duoc nhac ve loi cua cau hoi truoc, TRUOC khi sinh."""
     _run(monkeypatch, "Chinh sach thanh toan the nao?", verdicts=[_verdict(0.3), _verdict(0.9)])
@@ -152,9 +149,6 @@ def test_pipeline_reads_and_writes_reflections_in_the_same_session_scope(reflect
     assert "BÀI HỌC TỪ CÁC LỖI TRƯỚC ĐÂY" in same_customer[0]
 
 
-# --- Tat/hong thi khong duoc anh huong cau tra loi -----------------------------------------
-
-
 def test_disabled_flag_neither_reads_nor_writes(reflection_redis, monkeypatch):
     monkeypatch.setattr(settings, "reflection_memory_enabled", False)
 
@@ -172,9 +166,6 @@ def test_redis_outage_still_answers(monkeypatch):
     seen = _run(monkeypatch, "Chinh sach thanh toan the nao?", verdicts=[_verdict(0.9)])
 
     assert seen
-
-
-# --- Thu tu trong prompt --------------------------------------------------------------------
 
 
 def test_correction_is_read_after_the_lessons():

@@ -50,26 +50,14 @@ def _storage_key(scope: str | None = None) -> str:
     return _KEY if not scope else f"{_KEY}:{scope}"
 
 
-# Hard cap on lessons kept. The whole point is that memory stays short: a prompt carrying
-# twenty lessons costs tokens on every question and buries the current one. When the cap
-# is reached the least recently reinforced lesson is dropped.
 MAX_LESSONS = 12
 
-# How many lessons may enter a single prompt. Even with twelve stored, only the few that
-# match the question at hand are worth their tokens.
 MAX_LESSONS_PER_PROMPT = 2
 
-# Below this many matching words a lesson is not considered relevant to the question.
-# One shared word is almost always a coincidence in Vietnamese ("của", "là").
 _MIN_TRIGGER_OVERLAP = 2
 
-# Stripped from the edges of each token by `_tokenise`. Vietnamese questions almost always
-# end in "?", and the trailing word is usually the one naming the project.
 _PUNCTUATION = "?!.,;:()[]{}\"'“”‘’…-–—/\\"
 
-# Words too common to carry any signal about what a question is about. "du an" is on the
-# list for the same reason as "la"/"cua": nearly every question in this system is about a
-# project, so matching on it makes an unrelated lesson look relevant.
 _STOPWORDS = frozenset(
     """
     la cua co khong duoc va hay thi mot cac nhung o tai voi cho ve tu den nhu
@@ -87,10 +75,7 @@ class Lesson:
     lesson: str
     fix: str
     failure_mode: str
-    # Times this lesson has been re-learned. A lesson the agent keeps re-earning is a
-    # real recurring defect, so it outranks a one-off when the prompt has room for two.
     hits: int = 1
-    # Unix seconds, used to break ties and to evict the stalest lesson at the cap.
     updated_at: float = 0.0
 
     def render(self) -> str:
@@ -197,8 +182,6 @@ def relevant_lessons(
     for lesson in load_lessons(scope):
         overlap = len(words & _keywords(lesson.trigger))
         if overlap >= _MIN_TRIGGER_OVERLAP:
-            # Overlap first (is this lesson about this question?), then how often the
-            # agent has re-earned it (is this a recurring defect or a one-off?).
             scored.append((overlap, lesson.hits, lesson))
 
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
@@ -239,8 +222,6 @@ def _build(trigger: str, failure_mode: str, feedback: str) -> Lesson:
     )
 
 
-# One generalised corrective action per failure mode. Short on purpose — this text goes
-# into a prompt on every matching question.
 _FIX_BY_MODE = {
     "hallucinated-fact": "chỉ nêu con số có trong ngữ cảnh, không suy diễn",
     "incomplete-answer": "trả lời đủ từng ý của câu hỏi trước khi dừng",
@@ -310,8 +291,6 @@ def _merge(existing: list[Lesson], new: Lesson) -> list[Lesson]:
             merged.append(
                 Lesson(
                     trigger=lesson.trigger,
-                    # Keep the earlier wording: it has already been reinforced, and
-                    # rewriting it every time would make the memory churn.
                     lesson=lesson.lesson,
                     fix=lesson.fix or new.fix,
                     failure_mode=lesson.failure_mode,
@@ -324,14 +303,8 @@ def _merge(existing: list[Lesson], new: Lesson) -> list[Lesson]:
             merged.append(lesson)
 
     if not reinforced:
-        # Prepended, not appended: `time.time()` on Windows only ticks every ~15ms, so a
-        # burst of writes all carry an identical `updated_at`. A stable sort then leaves a
-        # freshly appended lesson last among its equals, evicting it on the very same call
-        # that stored it — it could never survive to be reinforced a second time.
         merged.insert(0, new)
 
-    # Evict by least reinforced, then stalest — a lesson earned once and never again is
-    # the cheapest one to lose.
     merged.sort(key=lambda item: (item.hits, item.updated_at), reverse=True)
     return merged[:MAX_LESSONS]
 

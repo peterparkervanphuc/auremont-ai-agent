@@ -47,15 +47,10 @@ class FailureMode(StrEnum):
     """
 
     NONE = "none"
-    # Figures or claims that the context does not support — the dangerous one.
     HALLUCINATED_FACT = "hallucinated-fact"
-    # On-topic and grounded, but only part of a multi-part question was answered.
     INCOMPLETE_ANSWER = "incomplete-answer"
-    # Answers something other than what was asked.
     OFF_TOPIC = "off-topic"
-    # The context genuinely does not contain the answer; regenerating cannot fix this.
     MISSING_EVIDENCE = "missing-evidence"
-    # Promises or guarantees the assistant is not allowed to make on the developer's behalf.
     UNSUPPORTED_COMMITMENT = "unsupported-commitment"
 
 
@@ -63,9 +58,7 @@ class NextAction(StrEnum):
     """What the pipeline should do next. The judge proposes; `agent_pipeline` decides."""
 
     ACCEPT = "accept"
-    # Re-generate with the judge's feedback attached as a correction note.
     REGENERATE = "regenerate"
-    # Nothing in the context supports an answer — decline rather than retry.
     DECLINE = "decline"
 
 
@@ -138,9 +131,6 @@ class VerifierResult(BaseModel):
 
     faithfulness: float = Field(ge=0.0, le=1.0, description="Is every claim supported by the context?")
     relevancy: float = Field(ge=0.0, le=1.0, description="Does the answer address the question asked?")
-    # Defaulted, unlike the two above: an older judge response (or a model that ignores
-    # the new field) would otherwise fail validation and be scored 0.0, turning a prompt
-    # regression into a system-wide refusal.
     completeness: float = Field(
         default=1.0,
         ge=0.0,
@@ -230,8 +220,6 @@ _FAILED_VERIFICATION = VerifierResult(
     relevancy=0.0,
     completeness=0.0,
     failure_mode=FailureMode.MISSING_EVIDENCE,
-    # Phrased for the Admin dashboard, which is where an operator sees this: it has to be
-    # distinguishable from a genuine judge verdict of "the answer was bad".
     feedback="Không chấm điểm được câu trả lời (Verifier lỗi hoặc thiếu ngữ cảnh).",
     next_action=NextAction.DECLINE,
 )
@@ -245,7 +233,6 @@ def score_answer(query: str, draft_answer: str, retrieved_context: list[str]) ->
     refusal does.
     """
     if not draft_answer.strip() or not retrieved_context:
-        # With no context there is nothing to check against, so nothing can be called faithful.
         return _FAILED_VERIFICATION
 
     prompt = _JUDGE_PROMPT.format(
@@ -257,9 +244,6 @@ def score_answer(query: str, draft_answer: str, retrieved_context: list[str]) ->
     try:
         result = generate_json(prompt, VerifierResult, system_instruction=_JUDGE_SYSTEM_INSTRUCTION)
     except Exception:
-        # ERROR, not WARNING: without this line a broken Verifier looks exactly like a
-        # low-quality answer on the Admin dashboard — both show 0.0. That is the most
-        # dangerous misdiagnosis this system can make.
         logger.exception(
             "Judge LLM call failed; scoring 0.0 (fail closed).",
             extra={"event": "verifier.judge.failed", "context_count": len(retrieved_context)},
@@ -274,9 +258,6 @@ def score_answer(query: str, draft_answer: str, retrieved_context: list[str]) ->
         return _FAILED_VERIFICATION
 
     if result.failure_mode is not FailureMode.NONE:
-        # The record that lets Admin Tab 2 group failures by cause rather than showing an
-        # undifferentiated list of low scores. The question text is deliberately absent —
-        # `log_query_text` governs that, and this line must stay safe to emit either way.
         logger.info(
             "Verifier rejected a draft answer.",
             extra={

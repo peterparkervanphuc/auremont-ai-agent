@@ -26,10 +26,6 @@ logger = logging.getLogger(__name__)
 
 INVENTORY_TIMEOUT_SECONDS = 5.0
 
-# Unit types a Sale commonly mentions: "2PN", "3 pn", "2 phòng ngủ", "2 ngủ",
-# "Penthouse", "Studio", "Shophouse", "Duplex".  The captured bedroom forms
-# are normalised to the API convention (for example, "2 phòng ngủ" -> "2PN").
-# \b at both ends so "21PN" is not mis-matched as "1PN".
 _UNIT_TYPE_PATTERN = re.compile(
     r"\b("
     r"\d+\s*(?:pn|br|phòng\s*ngủ|phong\s*ngu|ngủ|ngu)(?:\s*\+\s*(?:1)?)?"
@@ -203,7 +199,7 @@ def _scope_to_slug_subdivision(units: list[InventoryUnit], project_id: str | Non
     if not has_exact_project_mapping(project_id):
         return units
 
-    assert project_id is not None  # implied by has_exact_project_mapping
+    assert project_id is not None
     slug_text = project_id.replace("-", " ")
     wanted = {
         _normalize_text(unit.subdivision)
@@ -229,8 +225,6 @@ def resolve_api_project_id(project_id: str | None) -> str | None:
     mapping = _project_map()
 
     if project_id:
-        # An exact mapping wins; otherwise fall through to the catch-all, and finally to
-        # the slug itself so an API keyed by the same slugs needs no configuration.
         return mapping.get(project_id) or mapping.get("*") or project_id
 
     return mapping.get("*")
@@ -294,12 +288,8 @@ def _fetch_units(project_id: str) -> list:
         response.raise_for_status()
         payload = response.json()
     except httpx.HTTPError as exc:
-        # Catch the whole HTTPError branch: ConnectError, TimeoutException and
-        # HTTPStatusError (raised by raise_for_status) are all subclasses of it.
         raise InventoryApiError(f"Inventory API unreachable: {exc}") from exc
     except ValueError as exc:
-        # json.JSONDecodeError subclasses ValueError — hit when the API returns an HTML
-        # error page instead of JSON, usually because the URL points somewhere wrong.
         raise InventoryApiError("Inventory API returned a body that is not JSON.") from exc
 
     if not isinstance(payload, list):
@@ -327,8 +317,6 @@ def _parse_unit(item: object) -> InventoryUnit | None:
 
     data = {key: value for key, value in item.items() if key in _FIELD_NAMES}
     if not {"unit_code", "project_id", "status"} <= data.keys():
-        # Log only the NAMES of missing fields, not the values: the record may contain
-        # the unit code and price.
         logger.warning(
             "Skipping an inventory record missing required fields.",
             extra={
@@ -338,10 +326,6 @@ def _parse_unit(item: object) -> InventoryUnit | None:
         )
         return None
 
-    # Every string below is interpolated into the Generate and Verifier prompts verbatim,
-    # and none of it originates in this system. Flatten them at the boundary so a crafted
-    # value cannot smuggle prompt structure in (see sanitize_external_field); the numeric
-    # fields are already parsed to floats and carry no such risk.
     unit_type = data.get("unit_type")
     subdivision = data.get("subdivision")
     tower = data.get("tower")
@@ -370,7 +354,6 @@ def _parse_view_field(value: object) -> tuple[str, ...]:
     elif value is None:
         raw_values = []
     else:
-        # APIs commonly serialise multi-select values with commas, pipes or slashes.
         raw_values = re.split(r"\s*[,|/]\s*", str(value))
     return tuple(
         dict.fromkeys(cleaned for item in raw_values if (cleaned := sanitize_external_field(str(item)).strip()))
@@ -385,8 +368,6 @@ def _to_float(value: object) -> float | None:
     try:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        # DEBUG: an unparseable price only blanks the price field; the unit record is
-        # still valid and kept.
         logger.debug(
             "Unreadable inventory price; leaving it blank.",
             extra={"event": "inventory.price.unparseable", "value_type": type(value).__name__},
@@ -562,7 +543,6 @@ def _soft_match_score(unit: InventoryUnit, field_name: str, value) -> int:
         "floors": [unit.floor] if unit.floor else [],
     }.get(field_name)
     if field_values is None:
-        # Existing range/type preferences are fully supported by `_apply_one`.
         return 2 if unit in _apply_one([unit], field_name, value) else 0
     if not field_values:
         return 1
@@ -682,9 +662,6 @@ def _apply_query_filters(
     """
     filter_queries = [query, *(context_queries or [])]
 
-    # Resolve identifiers against the complete inventory before narrowing by another
-    # field. Otherwise an incompatible unit type can hide an explicitly named
-    # subdivision, and a multi-segment unit code can be mistaken for its prefix.
     source_units = list(units)
     wanted_codes = next(
         (codes for value in filter_queries if (codes := _extract_unit_codes(value, source_units))),

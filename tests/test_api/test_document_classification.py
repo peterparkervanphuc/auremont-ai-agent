@@ -83,7 +83,6 @@ def sale(db_session):
 def client(db_session, admin, monkeypatch):
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_current_user] = lambda: admin
-    # API tests exercise the DB contract; Qdrant is tested independently.
     original_metadata_sync = documents_router.update_document_vector_metadata
     original_clear_cache = documents_router.clear_cache
     vector_sync_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
@@ -148,9 +147,6 @@ def test_metadata_list_returns_every_ingested_document(
 
     assert response.status_code == 200, response.text
 
-    # Not an approval queue any more: metadata stays editable for the life of a document,
-    # so an already-approved one belongs in the list too. Only a document still ingesting
-    # is excluded, because its metadata is not settled yet.
     document_ids = [item["id"] for item in response.json()]
     assert pending.id in document_ids
     assert approved.id in document_ids
@@ -815,7 +811,6 @@ def test_sale_cannot_approve_document_classification(
     document.status = DocumentStatus.COMPLETED
     db_session.commit()
 
-    # Đổi user hiện tại trong dependency override thành Sale.
     app.dependency_overrides[get_current_user] = lambda: sale
 
     response = client.patch(
@@ -839,11 +834,6 @@ def test_classifying_an_unknown_document_returns_404(client):
     )
 
     assert response.status_code == 404
-
-
-# --- Changing visibility must reach Qdrant, not just MySQL — rag_service's retrieval
-# filter reads the payload it baked in at ingestion time, so a stale payload means the
-# dropdown in DocumentsTab.tsx silently has no effect on what customers can retrieve. ---
 
 
 def test_changing_visibility_clears_the_semantic_cache(client, db_session, admin):

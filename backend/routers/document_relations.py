@@ -89,8 +89,6 @@ async def review_relation(
             )
         except VectorStoreError as exc:
             try:
-                # No MySQL commit has been attempted yet, so restoring the previous
-                # active state is valid. Keep the target row locked while doing it.
                 if previous_vector_metadata is not None:
                     _restore_document_vector_metadata(attempted_document_id, previous_vector_metadata)
             finally:
@@ -103,9 +101,6 @@ async def review_relation(
     try:
         db.commit()
     except SQLAlchemyError as exc:
-        # COMMIT may have succeeded before the connection lost its acknowledgement.
-        # The target is already quarantined; do not compensate it back to current and
-        # risk reviving a relation that MySQL actually committed.
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

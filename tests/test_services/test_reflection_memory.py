@@ -52,9 +52,6 @@ def _record(query: str, mode: str = "incomplete-answer", feedback: str = "Chua t
     reflection_memory.record_lesson(query=query, failure_mode=mode, feedback=feedback)
 
 
-# --- Ghi bai hoc -----------------------------------------------------------------------
-
-
 def test_a_rejection_becomes_a_lesson(fake_redis):
     _record("Chinh sach thanh toan du an The Palma the nao?")
 
@@ -83,9 +80,6 @@ def test_the_fix_generalises_from_the_failure_mode(fake_redis):
     _record("Chinh sach thanh toan the nao?", mode="hallucinated-fact", feedback="Ghi 4,1 ty nhung ngu canh co 3,6 ty.")
 
     assert "không suy diễn" in reflection_memory.load_lessons()[0].fix
-
-
-# --- Nen va khong phinh to ---------------------------------------------------------------
 
 
 def test_the_same_mistake_twice_reinforces_one_lesson(fake_redis):
@@ -131,9 +125,6 @@ def test_the_least_reinforced_lesson_is_evicted_first(fake_redis):
     assert any("thanh toan" in trigger for trigger in triggers)
 
 
-# --- Lay ra dung bai hoc lien quan --------------------------------------------------------
-
-
 def test_a_similar_question_gets_the_lesson(fake_redis):
     _record("Chinh sach thanh toan du an The Palma the nao?")
 
@@ -172,9 +163,6 @@ def test_accents_do_not_prevent_a_match(fake_redis):
     assert reflection_memory.relevant_lessons("chinh sach thanh toan ra sao") != []
 
 
-# --- Render ------------------------------------------------------------------------------
-
-
 def test_rendered_lesson_carries_trigger_lesson_and_fix():
     rendered = Lesson(
         trigger="chinh sach thanh toan",
@@ -190,9 +178,6 @@ def test_rendered_lesson_carries_trigger_lesson_and_fix():
 
 def test_no_lessons_render_as_an_empty_string():
     assert reflection_memory.format_lessons([]) == ""
-
-
-# --- Fail open ----------------------------------------------------------------------------
 
 
 def test_redis_down_yields_no_lessons(broken_redis):
@@ -252,9 +237,6 @@ def test_sale_session_scopes_are_isolated_and_cleared_independently(fake_redis):
     assert len(reflection_memory.load_lessons(customer_b)) == 1
 
 
-# --- Dau cau khong duoc lam mat tu ------------------------------------------------------
-
-
 def test_trailing_question_mark_does_not_swallow_the_last_word():
     """Cau hoi tieng Viet nao cung ket thuc bang '?', va tu cuoi thuong la ten du an.
 
@@ -283,9 +265,6 @@ def test_the_right_project_lesson_ranks_first(fake_redis):
     assert top[0].lesson == "Bia gia Palma"
 
 
-# --- Gop bai hoc bat ke Verifier gan nhan gi -------------------------------------------
-
-
 def test_one_defect_labelled_two_ways_stays_one_lesson(fake_redis):
     """Du lieu that tung co 'gia 2pn con' luu hai lan — mot lan incomplete-answer, mot lan
     missing-evidence — cung mot cau chu "Chua tra loi ton kho". Voi
@@ -299,7 +278,6 @@ def test_one_defect_labelled_two_ways_stays_one_lesson(fake_redis):
 
     assert len(lessons) == 1
     assert lessons[0].hits == 3
-    # Giu nhan dau tien, va giu luon dong `fix` da duoc cung co theo no.
     assert lessons[0].failure_mode == "incomplete-answer"
 
 

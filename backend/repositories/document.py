@@ -70,9 +70,6 @@ def get_document(
 ) -> Document | None:
     query = db.query(Document).filter(Document.id == doc_id)
     if for_update:
-        # A locking read under MySQL is current, but SQLAlchemy can otherwise hand
-        # back an older instance already present in the identity map. Refresh it so
-        # decisions made after waiting for the row lock use the committed state.
         query = query.populate_existing().with_for_update()
     return query.first()
 
@@ -95,8 +92,6 @@ def list_completed_siblings(db: Session, project_id: str | None, exclude_id: int
         Document.status == DocumentStatus.COMPLETED,
     )
     if project_id:
-        # A company-wide document can override a local one, so project uploads must
-        # include global policies in their semantic comparison set.
         query = query.filter(or_(Document.project_id == project_id, Document.project_id.is_(None)))
 
     return query.order_by(Document.created_at.desc()).all()
@@ -198,8 +193,6 @@ def update_document_classification(
     document = get_document(db, document_id, for_update=True)
     if document is None:
         raise ValueError(f"Document with id={document_id} not found.")
-    # No "already reviewed" guard: metadata remains editable for the life of the
-    # document. A PENDING suggestion is also approved through this endpoint.
     if document.status != DocumentStatus.COMPLETED:
         raise ValueError(f"Document {document_id} is not ready for classification review (status={document.status}).")
 
@@ -220,8 +213,6 @@ def update_document_classification(
             f"{', '.join(changed_scope_fields)}."
         )
 
-    # PATCH semantics: omitted optional fields retain the classifier suggestion instead
-    # of being silently overwritten with None/default values.
     for field_name, value in updates.items():
         setattr(document, field_name, value)
 
@@ -315,9 +306,6 @@ def update_document_classification_suggestion(
     document.project_id = classification.project_id
     document.subdivision_names = classification.subdivision_names
     document.building_codes = classification.building_codes
-    # Rebuilt as plain `str` rather than assigned through: the classifier types this as
-    # `list[Literal[...]]`, and `list` is invariant, so it is not a `list[str]` the column
-    # can take. The values are identical; only the static type differs.
     document.unit_types = [str(unit) for unit in classification.unit_types] if classification.unit_types else None
     document.applicable_area = classification.applicable_area
 
@@ -333,8 +321,6 @@ def update_document_classification_suggestion(
     document.legal_issuer = classification.legal_issuer
     document.legal_domain = classification.legal_domain
     document.legal_status = classification.legal_status
-    # [] means the current classifier completed and found no grounded assertions;
-    # NULL is reserved for legacy/incomplete rows that still require backfill.
     document.conflict_facts = [fact.model_dump(mode="json") for fact in classification.conflict_facts]
 
     document.classification_confidence = classification.confidence
@@ -343,11 +329,8 @@ def update_document_classification_suggestion(
     document.classification_version = DOCUMENT_CLASSIFICATION_VERSION
     document.classified_at = utcnow()
 
-    # The model's explicit safety signal is authoritative even if a caller accidentally
-    # asks to auto-approve. Confidence policy is applied by the ingestion service.
     if auto_approve and not classification.requires_admin_review:
         document.review_status = DocumentReviewStatus.APPROVED
-        # This approval is made by the configured system rule, not an Admin.
         document.reviewed_by = None
         document.reviewed_at = utcnow()
     else:

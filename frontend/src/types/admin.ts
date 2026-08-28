@@ -296,3 +296,39 @@ export interface ReclassificationApplyResponse {
   applied: number;
   failed: number;
 }
+
+
+// ── Lead capture & scoring — mirrors backend/schemas/admin_dashboard.py::LeadStatsResponse ──
+
+export interface LeadTierCounts {
+  hot: number;
+  warm: number;
+  cold: number;
+  total: number;
+}
+
+export interface LeadTrendPoint {
+  date: string;
+  hot: number;
+  warm: number;
+  cold: number;
+}
+
+export interface LeadEnrichmentStats {
+  scored: number;
+  llm_calls: number;
+  call_rate: number;
+}
+
+export interface LeadStats {
+  period_days: number;
+  totals: LeadTierCounts;
+  trend: LeadTrendPoint[];
+  registered: number;
+  anonymous: number;
+  /** Leads whose account carries a phone number — the lead-capture KPI. */
+  contactable: number;
+  contact_rate: number;
+  avg_score: number;
+  llm_enrichment: LeadEnrichmentStats;
+}

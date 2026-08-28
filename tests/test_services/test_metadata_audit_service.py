@@ -445,8 +445,8 @@ def test_cli_rereads_locks_and_reports_verified_post_apply_state(monkeypatch, ca
     assert output["repaired_qdrant_payload_document_ids"] == [1]
     assert output["payload_sync_document_ids"] == []
     assert qdrant.payload["visibility"] == "internal"
-    assert qdrant.scroll_calls == 3  # initial audit, immediate pre-apply read, post-apply verification
-    assert db.read_count == 4  # the same three snapshots plus the locked row query
+    assert qdrant.scroll_calls == 3
+    assert db.read_count == 4
     assert db.rollback_count >= 3
     assert db.lock_count == 1
     assert db.commit_count == 1

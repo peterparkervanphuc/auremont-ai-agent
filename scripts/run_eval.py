@@ -18,7 +18,6 @@ import json
 import sys
 from pathlib import Path
 
-# Import from the repository root when run as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.core.tracing import read_runs  # noqa: E402

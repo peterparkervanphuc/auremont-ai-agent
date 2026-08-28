@@ -9,9 +9,6 @@ from backend.models.user import User
 from backend.repositories.user import get_user_by_username
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
-# auto_error=False: the customer chat flow accepts both anonymous visitors and logged-in
-# customers on the same endpoints, so a missing/bad token must fall through to `None`
-# instead of raising — see get_optional_current_user.
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 

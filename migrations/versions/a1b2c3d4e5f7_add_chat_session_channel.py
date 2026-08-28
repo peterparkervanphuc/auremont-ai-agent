@@ -28,7 +28,6 @@ def upgrade() -> None:
         sa.Column("channel", sa.String(length=10), nullable=False, server_default="ai"),
     )
     op.create_index("ix_chat_sessions_channel", "chat_sessions", ["channel"])
-    # Sessions already handed to a Sale keep working as the live thread they are.
     op.execute("UPDATE chat_sessions SET channel = 'live' WHERE status IN ('waiting_sale', 'sale_handling')")
 
 

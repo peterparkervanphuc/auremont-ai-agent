@@ -29,9 +29,6 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depen
     user = get_user_by_username(db, form.username)
 
     if not user or not verify_password(form.password, user.hashed_password):
-        # Cung mot `reason` cho ca "khong co user" lan "sai mat khau": neu phan
-        # biet, log tro thanh cong cu do xem username nao co that.
-        # Tuyet doi khong log form.password.
         log_event("auth.login.failure", username=form.username, reason="bad_credentials")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -64,8 +61,6 @@ async def refresh(payload: RefreshRequest, db: Session = Depends(get_db)) -> Tok
     )
 
     claims = decode_token(payload.refresh_token)
-    # Require type == "refresh": an access token must not be able to renew itself forever.
-    # Khong bao gio log token, ke ca mot phan.
     if claims is None:
         log_event("auth.refresh.failure", reason="invalid_token")
         raise credentials_error

@@ -61,9 +61,6 @@ class SecurityScanResult:
 
 _FLAGS = re.IGNORECASE | re.DOTALL
 
-# High-risk rules require an override instruction AND a requested action.  This is the
-# important difference from the previous scanner, where merely discussing "system prompt"
-# or "jailbreak" quarantined an otherwise ordinary business document.
 _RULES: tuple[SecurityRule, ...] = (
     SecurityRule(
         rule_id="instruction_override_with_action",

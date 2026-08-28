@@ -30,8 +30,6 @@ logger = logging.getLogger(__name__)
 
 CACHE_COLLECTION = "salesmate_qa_cache"
 
-# Deliberately high. Serving the answer to a merely "similar" question is far worse than
-# spending a few more tokens: the Sale would read wrong figures without ever noticing.
 CACHE_SIMILARITY_THRESHOLD = 0.95
 
 
@@ -40,8 +38,6 @@ class CachedAnswer:
     answer: str
     citations: list[dict]
     verifier_score: float
-    # Cached alongside the answer so a cache hit still shows the photos the question
-    # asked for. Defaulted because rows written before this field existed have no key.
     images: list[dict] = field(default_factory=list)
 
 
@@ -71,10 +67,6 @@ def lookup_cache(
             with_payload=True,
         )
     except Exception:
-        # Qdrant down or a Gemini embedding failure -> treat as a cache miss and let the
-        # pipeline take the full path. Logged at WARNING rather than ERROR: the answer is
-        # still correct, only more expensive. But it must be logged — a permanently dead
-        # cache burns tokens on every single request with no other outward symptom.
         logger.warning(
             "Cache lookup failed; treating as a miss.",
             exc_info=True,
@@ -86,8 +78,6 @@ def lookup_cache(
         return None
 
     hit = response.points[0]
-    # Qdrant returns cosine in [-1, 1]; rescale to [0, 1] to share one scale with
-    # CACHE_SIMILARITY_THRESHOLD and with rag_service scores.
     similarity = (hit.score + 1.0) / 2.0
     if similarity < CACHE_SIMILARITY_THRESHOLD:
         return None
@@ -135,10 +125,6 @@ def store_cache(
             collection_name=CACHE_COLLECTION,
             points=[
                 models.PointStruct(
-                    # ID derived from clearance + question + project: re-asking the exact
-                    # same question at the same clearance overwrites the old row instead of
-                    # bloating the cache with near-duplicates; different clearance tiers for
-                    # the same text/project stay physically separate points.
                     id=str(
                         uuid.uuid5(
                             uuid.NAMESPACE_URL,
@@ -159,7 +145,6 @@ def store_cache(
             ],
         )
     except Exception:
-        # A failed cache write has no bearing on the answer already being served.
         logger.warning(
             "Cache write failed; the answer already served is unaffected.",
             exc_info=True,
@@ -204,10 +189,6 @@ def _ensure_cache_collection() -> None:
             distance=models.Distance.COSINE,
         ),
     )
-    # Qdrant Cloud strict mode rejects a filter on an unindexed field outright rather than
-    # falling back to an unindexed scan — without these, _cache_filter's query 400s on
-    # every lookup. Caught and swallowed by lookup_cache's fail-silent design, so the
-    # symptom is invisible (just a permanently-missing cache), not an error anyone sees.
     client.create_payload_index(
         collection_name=CACHE_COLLECTION,
         field_name="project_id",
