@@ -10,6 +10,19 @@ outside the public request path. It polls only these verified publisher pages:
 It stores title, short description, image, publish date and the canonical source
 URL. It never copies the article body and never writes to Documents or Qdrant.
 
+The current business scope is intentionally restricted to **OCP1, OCP2 and
+OCP3**. The workflow reads the five newest official Vinhomes Market news pages,
+filters candidate URLs before downloading article metadata, and only sends an article
+when its normalized title/summary/URL maps to at least one of:
+
+- `Vinhomes Ocean Park` (OCP1)
+- `Vinhomes Ocean Park 2` (OCP2)
+- `Vinhomes Ocean Park 3` (OCP3)
+
+`Ocean City` articles are tagged with all three projects. Expanding the project
+scope requires an explicit update to the mapping in the `Normalise metadata`
+node.
+
 ## Local setup
 
 1. Set strong, identical `NEWS_INGESTION_KEY` and `N8N_ENCRYPTION_KEY` values in
