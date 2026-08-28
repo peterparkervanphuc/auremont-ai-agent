@@ -5,6 +5,7 @@ pydantic[email]>=2.10.0
 pydantic-settings>=2.7.0
 python-dotenv>=1.0.0
 python-multipart>=0.0.12
+prometheus-client>=0.21.0
 # IANA timezone database for ZoneInfo on Windows/minimal containers.
 tzdata>=2025.2
 

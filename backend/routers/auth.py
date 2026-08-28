@@ -95,4 +95,3 @@ async def logout(user: User = Depends(get_current_user)) -> None:
     TODO: add a token denylist (Redis) if immediate revocation becomes necessary.
     """
     log_event("auth.logout", username=user.username, user_id=user.id)
-    return None

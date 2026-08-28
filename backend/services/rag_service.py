@@ -1,26 +1,18 @@
-"""Retrieval over Qdrant, filtered by each document's RBAC label.
+"""Retrieval over Qdrant, filtered by each document's RBAC label — the R in RAG.
 
-This is the R in RAG: find the handful of document passages most relevant to the question
-to ground the Generate step, instead of stuffing the whole corpus into the prompt.
+Hybrid when `hybrid_search_enabled`: a dense vector and BM25 sparse vector search
+independently, fused by Reciprocal Rank Fusion. They fail in opposite directions — dense
+blurs "2PN" into "3PN", BM25 matches a unit code exactly but can't read meaning — and RRF
+ranks by position so neither channel's scale needs reconciling.
 
-Retrieval is hybrid when `hybrid_search_enabled` is on: a dense Gemini vector and a BM25
-sparse vector search the same points independently, and Qdrant fuses the two rankings
-with Reciprocal Rank Fusion. The channels fail in opposite directions, which is the whole
-point — dense understands a paraphrase but blurs "2PN" into "3PN", BM25 cannot read
-meaning but matches a unit code exactly. RRF ranks by position rather than score, so
-neither channel's scale has to be reconciled with the other's.
+An optional Cohere Rerank v3.5 stage further narrows candidates when `rerank_enabled`,
+scoring query and passage together rather than comparing embeddings independently. Falls
+back to the cheaper identifier-overlap heuristic on a disabled flag or a failed call, so an
+outage degrades quality, not availability.
 
-An optional third stage narrows the over-fetched candidates further when `rerank_enabled`
-is on: Cohere Rerank v3.5, a cross-encoder that scores query and passage together rather
-than comparing independent embeddings. It catches relevance that neither retrieval channel
-can — a passage can rank high on cosine or token overlap and still not answer the question.
-Falls back to the cheaper identifier-overlap heuristic whenever reranking is disabled or
-the API call fails, so a Cohere outage degrades quality rather than availability.
-
-Serves **static** ingested data only (price lists, policies, amenities). Unit inventory
-changes constantly and is therefore never ingested into Qdrant — questions needing the
-real-time inventory table must go through `inventory_service.lookup_inventory()`. Routing
-between the two belongs to `agent_pipeline`, not to this module.
+Serves static ingested data only; unit inventory changes constantly and goes through
+`inventory_service.lookup_inventory()` instead. Routing between the two is
+`agent_pipeline`'s job.
 """
 
 import logging
@@ -114,12 +106,11 @@ def _build_query_filter(
             )
         )
 
-    query_filter = models.Filter(
+    return models.Filter(
         must=conditions,
         should=project_scope,
         must_not=exclusions,
     )
-    return query_filter
 
 
 def _points_to_hits(points: Iterable[Any], *, fused: bool) -> list[dict]:
@@ -347,15 +338,9 @@ def _valid_rerank_results(scored: Sequence[tuple[int, float]], *, candidate_coun
 def _rerank_heuristic(query: str, hits: list[dict], fused: bool = False) -> list[dict]:
     """Re-order by vector score, boosting passages that match codes from the question.
 
-    Skipped entirely once results are fused, for two reasons. BM25 already matched those
-    codes properly — this identifier boost is a crude stand-in for the keyword channel
-    that now exists for real. And the arithmetic no longer holds: it mixes a score with a
-    0-1 overlap ratio, which assumes the score is itself roughly 0-1. RRF scores are
-    around 1/60 per channel, so the overlap term would swamp them and re-sort the results
-    by "mentions a number" alone, discarding the fusion ranking.
-
-    Deliberately lightweight and dependency-free — the fallback for when Cohere Rerank
-    (`_rerank_cohere` above) is disabled or unavailable.
+    Skipped once results are fused: BM25 already matches codes properly, and RRF scores
+    (~1/60 per channel) are too small for this 0-1 overlap ratio without swamping them and
+    discarding the fusion ranking. The fallback for when Cohere Rerank is unavailable.
     """
     if fused:
         return hits
@@ -377,14 +362,10 @@ def _rerank_heuristic(query: str, hits: list[dict], fused: bool = False) -> list
 def _select_context(query: str, hits: list[dict], *, top_k: int) -> list[dict]:
     """Choose a compact, non-redundant context after all retrieval scoring.
 
-    Ranking models are deliberately fuzzy, but identifiers are not: when the current
-    question says ``2PN`` or ``OP3-CT1-0504``, a passage carrying that exact token must
-    precede an otherwise semantic-near ``3PN`` passage. This final stable ordering applies
-    to dense, RRF and hosted rerank results alike.
-
-    The second pass removes near-duplicate overlap from the same document and enforces a
-    total context budget. It never truncates a chunk (which could sever a table row or
-    legal clause), and always keeps the best hit even when that one chunk exceeds budget.
+    Identifiers are exact where ranking models are fuzzy: a passage naming "2PN" must
+    precede an otherwise semantic-near "3PN" one. A second pass removes near-duplicate
+    overlap and enforces a context budget — never truncating a chunk, always keeping the
+    best hit even past budget.
     """
     if not hits or top_k <= 0:
         return []

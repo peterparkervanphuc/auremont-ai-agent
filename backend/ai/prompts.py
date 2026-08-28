@@ -17,22 +17,24 @@ from backend.ai.answer_cleanup import wants_images_for_prompt
 from backend.services.inventory_service import InventoryUnit
 from backend.services.search_criteria import ZeroResultDiagnosis, format_zero_result
 
-SYSTEM_INSTRUCTION_VERSION = "2026-08-23.2"
+SYSTEM_INSTRUCTION_VERSION = "2026-08-28.1"
 
 _BEDROOM_PN_PATTERN = re.compile(r"\b(?P<count>\d+)PN(?P<plus>\+1)?\b", re.IGNORECASE)
 _BEDROOM_BR_PATTERN = re.compile(r"\b(?P<count>\d+)BR(?P<plus>\+)?(?=\W|$)", re.IGNORECASE)
 
 SYSTEM_INSTRUCTION = (
-    "Bạn là chuyên viên tư vấn bất động sản nhiều năm kinh nghiệm, đang brief nhanh cho đồng "
-    "nghiệp trong đội sale sắp gặp khách. Họ đọc câu trả lời của bạn ngay trước mặt khách, nên "
-    "phải nắm được ý trong vài giây.\n"
+    "Bạn là chuyên viên tư vấn bất động sản nhiều năm kinh nghiệm, đang hỗ trợ một bạn sale "
+    "trong đội. Họ đọc câu trả lời của bạn ngay trước mặt khách, nên hãy viết đúng giọng lịch "
+    "sự, dễ nghe như đang tư vấn cho chính khách hàng — xưng 'em', gọi người hỏi là 'anh/chị' "
+    "— để họ đọc gần như nguyên văn cho khách. Vẫn phải nắm được ý trong vài giây.\n"
     "\n"
     "ĐỘ DÀI — ưu tiên hàng đầu:\n"
     "- Tối đa 6 gạch đầu dòng, mỗi dòng 1-2 câu. Câu hỏi đơn giản chỉ cần 2-3 dòng.\n"
     "- Ngắn nhưng không thiếu ý chính. Nếu phải cắt, giữ lại con số và điều kiện kèm theo, "
     "bỏ phần diễn giải.\n"
-    "- Không lặp lại câu hỏi, không mở bài, không tóm tắt lại ở cuối, không khuyên chung chung "
-    "kiểu 'nên tư vấn kỹ cho khách'.\n"
+    "- Không lặp lại câu hỏi, không tóm tắt lại ở cuối, không khuyên chung chung kiểu 'nên tư "
+    "vấn kỹ cho khách'. Được phép mở đầu bằng một lời dẫn lịch sự RẤT ngắn ('Dạ, ...') nhưng "
+    "phải vào thẳng nội dung ngay trong chính câu đó, không viết cả một câu mở bài rỗng.\n"
     "\n"
     "TRÌNH BÀY — luôn dùng gạch đầu dòng:\n"
     "- Mỗi ý một dòng, bắt đầu bằng '- '. Không viết đoạn văn xuôi dài.\n"
@@ -426,8 +428,11 @@ _INVENTORY_PRESENTATION_RULES = (
     "căn; area_range lấy CHÍNH XÁC diện tích của RIÊNG căn đó (vd '54 m²' — một con số, không "
     "phải một khoảng); price_range lấy CHÍNH XÁC giá của RIÊNG căn đó (vd '2,88 tỷ đồng', không "
     "viết '2.880.000.000 VNĐ' khi số tiền từ một tỷ đồng trở lên); unit_code lấy đúng mã căn; "
-    "status dịch ngắn gọn sang tiếng Việt ('còn trống'/'đã giữ chỗ'/'đã bán'). KHÔNG giới hạn số "
-    "lượng thẻ — bao nhiêu căn khớp thì điền đủ bấy nhiêu, giao diện có mũi tên lướt qua từng thẻ.\n"
+    "status dịch ngắn gọn sang tiếng Việt ('còn trống'/'đã giữ chỗ'/'đã bán'); tower chép NGUYÊN "
+    "VĂN trường tower của chính căn đó (vd 'S1.06', 'R1-02') — đây là căn cứ để hệ thống gắn đúng "
+    "ảnh của tòa đó, KHÔNG được tự suy ra từ mã căn và để trống nếu bản ghi không có tower. KHÔNG "
+    "giới hạn số lượng thẻ — bao nhiêu căn khớp thì điền đủ bấy nhiêu, giao diện có mũi tên lướt "
+    "qua từng thẻ.\n"
     "- text khi đó CHỈ còn đúng MỘT câu tóm tắt (tổng số căn phù hợp + khoảng giá chung), KHÔNG "
     "lặp lại mã căn/diện tích/giá của từng căn — số liệu đó đã hiển thị đủ trong thẻ listings.\n"
     "- Với yêu cầu tìm/chọn/tư vấn căn chung chung, chỉ điền vào listings những căn còn trống. "
@@ -446,18 +451,15 @@ SYSTEM_INSTRUCTION_PUBLIC = (
 
 
 class PropertyListing(BaseModel):
-    """One recommended unit/subdivision, rendered as its own card (with arrows to page
-    between cards) instead of as a bullet line inside `ConsultAnswer.text` — see the
-    LISTINGS block in SYSTEM_INSTRUCTION_PUBLIC. The model fills in the text fields
-    straight from retrieved context; `agent_pipeline._resolve_listing_images` is what
-    attaches a real subdivision photo afterwards — the model never supplies an image URL.
+    """One recommended unit/subdivision, its own card rather than a bullet in
+    `ConsultAnswer.text` — see the LISTINGS block in SYSTEM_INSTRUCTION_PUBLIC. The model
+    fills text fields from context; `agent_pipeline._resolve_listing_images` attaches the
+    photo afterwards.
 
-    `unit_code`/`status` are only ever filled from TỒN KHO REAL-TIME (one specific unit
-    the internal API confirmed, e.g. "OCP1-S1-0203" / "còn trống") — see TRÌNH BÀY KẾT QUẢ
-    TỒN KHO. A catalogue-only listing (a project/subdivision summary, or a unit type with
-    no live mã căn behind it) leaves both empty; the frontend only renders the unit-code/
-    status badge when `unit_code` is present, so leaving it empty on a catalogue card is
-    not a degraded case, it is the normal one.
+    `unit_code`/`status`/`tower` are filled only from TỒN KHO REAL-TIME (a confirmed live
+    unit); a catalogue-only listing leaves them empty, which is the normal case, not
+    degraded. `tower` lets image resolution show the unit's actual tower — copied verbatim
+    from the inventory record, never guessed from the mã căn.
     """
 
     project_name: str
@@ -466,27 +468,20 @@ class PropertyListing(BaseModel):
     price_range: str
     unit_code: str = ""
     status: str = ""
+    tower: str = ""
 
 
 class ConsultAnswer(BaseModel):
-    """Structured output for SYSTEM_INSTRUCTION_PUBLIC (generate_json, schema-constrained
-    decoding — not a second LLM call, just how this one call's output is shaped).
+    """Structured output for SYSTEM_INSTRUCTION_PUBLIC (schema-constrained decoding, not a
+    second LLM call).
 
-    `quick_replies` is a plain list of strings, not markdown/buttons baked into `text`:
-    the frontend renders them as real tappable pills under the bubble, so they have to
-    arrive as data the UI can act on, not prose it would need to parse back apart. Always
-    present; empty for an ordinary answer — see the QUICK_REPLIES block in
-    SYSTEM_INSTRUCTION_PUBLIC for when the model is expected to fill it in.
+    `quick_replies` are tappable pills the frontend renders as data, not markdown baked
+    into `text` — see the QUICK_REPLIES block. `listings` is the same idea for per-unit
+    figures — see LISTINGS.
 
-    `listings` is the same idea for per-unit numbers: always present, empty unless the
-    answer recommends 1-2 specific units with a full set of figures — see the LISTINGS
-    block in SYSTEM_INSTRUCTION_PUBLIC.
-
-    `suggested_questions` is a different thing entirely and the two must not be conflated:
-    quick_replies ANSWER a question the assistant just asked ("Để ở" / "Đầu tư"), while
-    these are the asker's plausible NEXT questions about the topic already on the table
-    ("Giá căn 2PN bao nhiêu?"). Both can be empty; they are rarely both useful at once,
-    since a turn that ends in a survey question is not a turn that invites a new topic.
+    `suggested_questions` must not be conflated with `quick_replies`: those ANSWER a
+    question the assistant just asked ("Để ở" / "Đầu tư"), these are the asker's plausible
+    NEXT questions on the topic already on the table.
     """
 
     text: str
@@ -497,20 +492,9 @@ class ConsultAnswer(BaseModel):
 
 class SaleAnswer(BaseModel):
     """Structured output for SYSTEM_INSTRUCTION (Sale/INTERNAL), mirroring `ConsultAnswer`
-    minus `quick_replies`.
-
-    Sale/INTERNAL previously ran on plain `generate_text` because it had no structured UI
-    to feed. Follow-up suggestions are that UI, so the INTERNAL path moves to
-    schema-constrained decoding too — the same single call, no extra latency or spend, and
-    the answer text itself is unchanged in shape.
-
-    There is deliberately no `quick_replies` here: those exist to spare a customer typing
-    on a phone, whereas a Sale is at a keyboard mid-consultation and the survey-question
-    flow that produces them is a customer-chat behaviour (see SYSTEM_INSTRUCTION_PUBLIC).
-
-    `listings` IS shared with `ConsultAnswer` — a Sale asking the same recommendation
-    question a customer would ask must get the same photo-carrying cards back, not a
-    text-only bullet list. See the LISTINGS block in SYSTEM_INSTRUCTION.
+    minus `quick_replies` — a Sale is at a keyboard mid-consultation, not typing on a phone,
+    so the survey-pill flow that produces those doesn't apply. `listings` is still shared:
+    the same recommendation question gets the same photo-carrying cards back.
     """
 
     text: str
@@ -694,21 +678,33 @@ def _public_answer_rules(*, units: list[InventoryUnit], catalog_offer_context: s
 
 
 def _sale_answer_rules(*, units: list[InventoryUnit]) -> str:
-    """How the assistant answers a Sale: a dense brief they read in front of a client."""
+    """How the assistant answers a Sale: the same courteous consulting voice the customer
+    chat uses, over the fuller set of figures a Sale is cleared to see.
+
+    The voice deliberately matches `_public_answer_rules` rather than reading as a terse
+    internal brief: a Sale usually has this open in front of a client, so an answer that
+    already sounds like something they can say out loud saves them rewriting it. Only the
+    tone is shared — clearance, the figures available and the suggested questions still
+    follow the internal rules.
+    """
     internal_layout = (
         "- Mỗi căn trong TỒN KHO REAL-TIME đã hiện thành một thẻ listings riêng kèm ảnh — không "
         "lặp lại thành gạch đầu dòng trong text (xem quy tắc TRÌNH BÀY KẾT QUẢ TỒN KHO). Chỉ viết "
-        "đúng MỘT dòng tóm tắt tổng số căn còn trống và khoảng giá chung, KHÔNG bắt đầu bằng '- '.\n"
+        "đúng MỘT câu tóm tắt tổng số căn còn trống và khoảng giá chung, KHÔNG bắt đầu bằng '- '.\n"
         if units
         else (
-            "- Dòng đầu tiên trả lời thẳng điều Sale hỏi, kèm con số chính và KHÔNG bắt đầu bằng '- '.\n"
+            "- Câu đầu tiên trả lời thẳng điều được hỏi, kèm con số chính và KHÔNG bắt đầu bằng '- '.\n"
             "- Nếu còn nội dung liệt kê, mỗi lựa chọn sau đó mới bắt đầu bằng '- '. Tối đa 6 dòng tổng cộng.\n"
         )
     )
     return (
-        "Trả lời câu hỏi trên với tư cách chuyên viên tư vấn dự án, ngắn gọn và đúng trọng "
-        "tâm như đang brief cho đồng nghiệp sắp gặp khách. Văn bản thuần, không dùng ký tự "
-        "Markdown nào (không dấu sao, không thăng).\n"
+        "Trả lời câu hỏi trên với vai trò chuyên viên tư vấn đang trò chuyện trực tiếp, lịch "
+        "sự và đúng trọng tâm: xưng 'em', gọi người hỏi là 'anh/chị', mở đầu tự nhiên bằng "
+        "'Dạ' và kết câu bằng 'ạ' khi phù hợp — viết sao cho người hỏi có thể đọc gần như "
+        "nguyên văn cho khách nghe. Văn bản thuần, không dùng ký tự Markdown nào (không dấu "
+        "sao, không thăng) — NÊN có đúng 1 emoji phù hợp ngữ cảnh cho sinh động.\n"
+        "- Giọng lịch sự KHÔNG được làm loãng số liệu: vẫn nêu đủ và chính xác từng con số "
+        "được hỏi, không thay số cụ thể bằng lời hứa chung chung.\n"
         + internal_layout
         + "- Nếu Sale hỏi nhiều ý trong cùng một câu (ví dụ giá VÀ diện tích), phải trả lời đủ từng ý "
         "được hỏi. Trước khi nói một ý là chưa có dữ liệu, rà soát toàn bộ các đoạn và bảng trong NGỮ CẢNH; "
@@ -984,13 +980,11 @@ def _annotate_bedroom_aliases(doc: dict, aliases: dict[str, str]) -> dict:
 
 
 def _format_history(history: list[dict] | None, is_public: bool) -> str | None:
-    """Render the capped recent-turns list (see agent_pipeline.MAX_HISTORY_MESSAGES) as a
-    transcript the model can read like a conversation. Labels differ by audience: a
-    customer reads the AI's own past turns as "Em" (matches how SYSTEM_INSTRUCTION_PUBLIC
-    has it speak); a Sale reads them as "Bạn" (matches SYSTEM_INSTRUCTION's framing, which
-    already addresses the model as "Bạn"). "sale" can appear inside a CUSTOMER session's
-    history too — a live-handoff reply — labelled distinctly so it isn't mistaken for the
-    AI's own earlier words.
+    """Render the capped recent-turns list as a transcript the model can read.
+
+    Labels differ by audience to match how each system instruction addresses the model
+    ("Em" for a customer, "Bạn" for a Sale). A live-handoff "sale" reply inside a customer
+    session is labelled distinctly so it isn't mistaken for the AI's own words.
     """
     if not history:
         return None
@@ -1004,15 +998,12 @@ def _format_history(history: list[dict] | None, is_public: bool) -> str | None:
 
 
 def _repeat_warning(history: list[dict] | None) -> str | None:
-    """Quote the AI's own immediately-preceding turn back at it when that turn ended in a
-    question — a code-level backstop for the "parrot loop" failure: a short affirmative
-    reply ("có") to the AI's own CTA question, when there's nothing new to add on that
-    topic, repeatedly got answered with the same sentence and the same closing question,
-    over and over, because SYSTEM_INSTRUCTION_PUBLIC's anti-repetition rule (a general
-    policy statement buried among many others) wasn't reliably enough to stop it — verified
-    live after that rule alone shipped and the loop still reproduced. Quoting the exact
-    prior text here, not just restating the rule, gives the model something concrete to
-    check the new answer against instead of a policy to remember.
+    """Quote the AI's own immediately-preceding turn back at it when it ended in a
+    question — a code-level backstop for the "parrot loop": a short "có" to the AI's own
+    CTA question kept getting the same sentence and question back, because
+    SYSTEM_INSTRUCTION_PUBLIC's anti-repetition rule alone (verified live) didn't reliably
+    stop it. Quoting the exact prior text gives the model something concrete to check
+    against, not just a policy to remember.
     """
     if not history:
         return None

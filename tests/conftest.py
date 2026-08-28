@@ -36,6 +36,19 @@ def _reset_request_id():
 
 
 @pytest.fixture(autouse=True)
+def _stub_dependency_readiness(monkeypatch):
+    """Unit/API tests do not require live MySQL, Qdrant, and Redis processes."""
+
+    async def healthy_readiness():
+        return {
+            "status": "ok",
+            "checks": {name: {"status": "ok", "latency_ms": 0.0} for name in ("mysql", "qdrant", "redis")},
+        }
+
+    monkeypatch.setattr("backend.main.check_readiness", healthy_readiness)
+
+
+@pytest.fixture(autouse=True)
 def _disable_live_semantic_conflict_calls(monkeypatch):
     """Unit tests opt in explicitly; no test may accidentally spend an LLM request."""
 

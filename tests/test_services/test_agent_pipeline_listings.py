@@ -98,6 +98,7 @@ def test_resolve_listing_images_attaches_real_gallery_photos_and_amenities(monke
             "project_id": "the-sapphire-2",
             "unit_code": "",
             "status": "",
+            "tower": "",
         }
     ]
 
@@ -118,6 +119,7 @@ def test_resolve_listing_images_keeps_the_listing_when_nothing_resolves(monkeypa
             "project_id": None,
             "unit_code": "",
             "status": "",
+            "tower": "",
         }
     ]
 

@@ -143,10 +143,6 @@ def get_or_create_customer_session(db: Session, customer_id: int, schema: Custom
     return create_customer_session(db, customer_id, schema)
 
 
-def get_session_by_visitor_token(db: Session, visitor_token: str) -> ChatSession | None:
-    return db.query(ChatSession).filter(ChatSession.visitor_token == visitor_token).first()
-
-
 def list_sessions_for_customer(db: Session, customer_id: int) -> list[ChatSession]:
     session = get_latest_customer_session(db, customer_id)
     return [session] if session is not None else []

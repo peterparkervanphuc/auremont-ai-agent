@@ -226,8 +226,7 @@ async def get_customer_chat_session(
     way (WAITING_SALE/SALE_HANDLING) to know when to switch to live-chat rendering, since the
     ask endpoint stops returning a reply the moment a Sale is involved."""
     session = get_session(db, session_id)
-    session = _resolve_customer_asker(db, session, user, x_visitor_token)
-    return session
+    return _resolve_customer_asker(db, session, user, x_visitor_token)
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageResponse])
@@ -312,7 +311,8 @@ async def ask_in_customer_session(
         answer_text = _TURN_LIMIT_MESSAGE
         verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
     elif not is_anonymous and needs_human_handoff(payload.content):
-        assert session.customer_id is not None
+        if session.customer_id is None:
+            raise RuntimeError("An authenticated customer session has no customer id.")
         live = get_or_create_live_session(db, session.customer_id, project_id=session.project_id)
         new_status = SessionStatus.WAITING_SALE
         if live.status == SessionStatus.BOT_HANDLING:

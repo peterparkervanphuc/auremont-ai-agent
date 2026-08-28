@@ -14,6 +14,7 @@ import asyncio
 from dataclasses import dataclass
 
 import pytest
+from fastapi import HTTPException
 
 from backend.core.audit import redact_and_truncate, truncate
 from backend.utils.phone import normalise_vn_mobile
@@ -129,7 +130,7 @@ def test_a_failed_registration_records_no_email(monkeypatch):
     monkeypatch.setattr(customer_chat, "log_event", lambda event, **fields: events.append((event, fields)))
     monkeypatch.setattr(customer_chat, "get_user_by_email", lambda _db, _email: object())
 
-    with pytest.raises(Exception):
+    with pytest.raises(HTTPException):
         asyncio.run(
             customer_chat.register_customer(
                 _RegisterPayload(email="someone@example.com", password="x", full_name="A"),

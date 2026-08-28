@@ -17,13 +17,14 @@ class Settings(BaseSettings):
     app_name: str = "AI20K Project"
     app_env: str = "development"
     app_port: int = Field(default=8000, ge=1, le=65535)
-    app_host: str = "0.0.0.0"
+    app_host: str = "0.0.0.0"  # noqa: S104 - containers must listen beyond loopback
     business_timezone: str = "Asia/Bangkok"
     log_level: str = "INFO"
     log_json: bool | None = None
     log_query_text: bool = True
+    health_check_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
 
-    DEFAULT_INSECURE_SECRET_KEY: ClassVar[str] = "dev-secret-key-change-in-production"
+    DEFAULT_INSECURE_SECRET_KEY: ClassVar[str] = "dev-secret-key-change-in-production"  # noqa: S105
     secret_key: str = Field(default=DEFAULT_INSECURE_SECRET_KEY, description="Secret key for JWT signing")
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
@@ -86,7 +87,7 @@ class Settings(BaseSettings):
 
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"  # noqa: S105 - local MinIO development credential
     minio_secure: bool = False
     minio_bucket_documents: str = "salesmate-documents"
     minio_bucket_project_images: str = "project-images"

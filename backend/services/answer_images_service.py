@@ -1,25 +1,13 @@
 """Image tool: attach the project photos that illustrate an answer.
 
-Photos arrive by two different routes, and the distinction runs through this whole module:
+Two routes with opposite postures. **Requested** ("cho xem mặt bằng") returns every
+matching photo uncapped and falls back to the whole gallery — refusing someone who asked
+to see something is the worse failure. **Automatic** (photos riding along an answer nobody
+asked to illustrate) is capped at `_AUTO_ATTACH_MAX_IMAGES` and returns nothing on no
+match — an unasked-for photo of the wrong thing is worse than no photo.
 
-**Requested** — the question asks to see something ("cho xem mặt bằng The Palma").
-`wants_images` is true, and the Sale gets every photo matching the topic they named, with
-no cap: each one is a photo they asked for. When the topic matches no filename the whole
-project gallery is returned rather than nothing, because refusing someone who explicitly
-asked to see something is the worse failure.
-
-**Automatic** — the question asks to *know* something, and photos ride along to illustrate
-the answer ("tiện ích dự án có gì" gets the amenity photos alongside the text). Nobody
-asked, so the bar is higher and the posture inverts: capped at
-`_AUTO_ATTACH_MAX_IMAGES`, and when the topic matches no filename the answer goes out with
-no photos at all. An unasked-for photo of the wrong thing is worse than no photo, whereas
-an unasked-for photo of the right thing is the point of this route.
-
-Both routes then share the same subject filter: the project has to be named in the
-question or the answer, and each photo's filename has to match the topic. Catalogue
-filenames carry that topic (`mat-bang-phan-khu-...`, `phoi-canh-sao-bien-...`,
-`vi-tri-...`), which is what makes per-image relevance possible rather than dumping the
-whole gallery.
+Both require the project to be named and the filename to carry the topic, which is what
+makes per-image relevance possible instead of dumping the gallery.
 """
 
 import logging
@@ -37,16 +25,11 @@ logger = logging.getLogger(__name__)
 
 
 def public_gallery_url(value: str) -> str:
-    """Normalise one `project.details["images"]["gallery"]` entry into a URL a browser can
-    actually load.
+    """Normalise a gallery entry into a URL a browser can load.
 
-    Two shapes exist in the data today, both from the same `scripts/_gallery.py` loader:
-    a full external URL when `PROJECT_IMAGES_BASE_URL` was set at load time, and a bare
-    MinIO object key with a stray leading slash (`/the-sapphire/mat-bang-...jpg`) when it
-    wasn't — the common case in this dev catalogue, since the env var was never set before
-    `scripts/load_apartment_projects.py`/`load_villa_shop_projects.py` ran. The object
-    itself still exists — `scripts/upload_project_images.py` populated the same bucket
-    under the same key names — so the fix is building the URL, not re-uploading anything.
+    Entries are either a full external URL (PROJECT_IMAGES_BASE_URL was set at load time)
+    or a bare MinIO object key with a stray leading slash. The object exists either way,
+    so the fix is building the URL, not re-uploading.
     """
     if value.startswith("http://") or value.startswith("https://"):
         return value
@@ -125,8 +108,7 @@ _TOPIC_TOKENS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
 def wants_images(query: str) -> bool:
     """True when the question asks to see something, not merely to know something.
 
-    Diacritic-insensitive: a Sale typing fast on a phone writes "cho xem mat bang" as
-    often as "cho xem mặt bằng".
+    Diacritic-insensitive: "cho xem mat bang" is as common as "cho xem mặt bằng".
     """
     normalized = _normalize(query)
     if _contains_phrase(normalized, _IMAGE_INTENT_KEYWORDS):
@@ -138,17 +120,11 @@ def wants_images(query: str) -> bool:
 def collect_images(db: Session, query: str, answer: str, project_id: str | None = None) -> list[dict]:
     """Photos to show under this answer — those asked for, or those that illustrate it.
 
-    Takes whichever of the two routes in the module docstring applies. `wants_images`
-    decides which: an explicit request gets everything matching, uncapped, falling back to
-    the project gallery; anything else gets at most `_AUTO_ATTACH_MAX_IMAGES` and only when
-    they genuinely match the topic.
+    Takes whichever of the module docstring's two routes `wants_images` selects. Reads the
+    project name from question *and* answer, because "cho xem mặt bằng" often names no
+    project and the name only appears in the grounded answer.
 
-    Reads the project name from question *and* answer: a Sale often asks "cho xem mặt
-    bằng" without naming the project, and the name only appears in the answer that
-    retrieval grounded on.
-
-    Never raises — images are a nice-to-have, and a failure here must not cost the Sale
-    their answer.
+    Never raises: images are a nice-to-have and must not cost the Sale their answer.
     """
     try:
         haystack = _normalize(f"{query}\n{answer}")
@@ -197,18 +173,13 @@ _FLOORPLAN_SHEET_TOWER_PATTERN = re.compile(r"toa-([a-z]{1,5}\d+)")
 
 
 def floor_plan_only_towers(db: Session, query: str, answer: str, project_id: str | None = None) -> list[str] | None:
-    """None when the resolved project's gallery has real per-unit-type floor-plan photos —
-    nothing extra to tell the model. Otherwise, the tower codes of whatever tower-wide
-    floor-plan SHEETS exist in the gallery (e.g. ["LD1", "LD2", "LD3"]), possibly an empty
-    list when the project has no floor-plan asset of either kind.
+    """Tower codes of the gallery's tower-wide floor-plan sheets, or None when it has real
+    per-unit-type plans instead.
 
-    Some catalogues (The London) were only ever digitised as one big architectural sheet
-    per tower, showing every unit type on the floor at once (see PAVILION_GALLERY's sibling
-    fixture in tests) — `select_listing_images` correctly excludes those from a "2PN" card
-    (a tower-wide sheet is not a photo of one unit type), but that leaves the model with no
-    way to know a bedroom-count follow-up ("xem thêm mặt bằng 2PN?") has no photo to answer
-    it, while a tower-named one ("xem mặt bằng tòa LD1?") does. This is what lets
-    `build_prompt` steer the suggestion toward the one that actually works.
+    Some catalogues (The London) were only digitised as one sheet per tower. Those are
+    excluded from a "2PN" card, so without this the model cannot know that a bedroom-count
+    follow-up has no photo while a tower-named one does — it lets `build_prompt` steer the
+    suggestion toward the question that actually has an answer.
     """
     try:
         haystack = _normalize(f"{query}\n{answer}")
@@ -251,32 +222,30 @@ _IMAGES_PER_CATEGORY_PROJECT = 2
 
 
 def named_category(text: str) -> str | None:
-    """The product category (as `catalog_offer_service`/`Project.details["pricing"]` spell
-    it) named in free text, or None. Used by `agent_pipeline._scope_resolve` to tell a real
-    topic switch ("biệt thự" after discussing an apartment project) apart from a follow-up
-    on the same project — see the module docstring on `_CATEGORY_MATCH_TERMS`.
+    """The product category named in free text, spelled as `Project.details["pricing"]`
+    spells it, or None.
+
+    Lets `agent_pipeline._scope_resolve` tell a real topic switch ("biệt thự" while
+    discussing an apartment project) from a follow-up on the same project.
     """
     normalized = _normalize(text)
     return next((label for phrase, label in _CATEGORY_MATCH_TERMS if phrase in normalized), None)
 
 
 def project_categories(project: Project) -> set[str]:
-    """Every product category this project's own catalogue pricing sells, e.g. {"Biệt thự"}
-    for a single-category sub-zone or {"Chung cư", "Biệt thự", "Shophouse"} for the umbrella
-    "Vinhomes Ocean Park" entry."""
+    """Every product category this project's catalogue pricing sells — one for a sub-zone,
+    several for the umbrella "Vinhomes Ocean Park" entry."""
     pricing = (project.details or {}).get("pricing") or []
     return {tier["category"] for tier in pricing if isinstance(tier, dict) and tier.get("category")}
 
 
 def _images_from_category(db: Session, normalized_query: str) -> list[dict]:
-    """A few real photos from every project of the product category named in the query
-    ("ảnh biệt thự" -> Hải Âu, Ngọc Trai, Sao Biển each), for when no single project's own
-    name matched anything (see the `project is None` branch in `collect_images`) because
-    the question named a category, not a specific project — a category word is never part
-    of any one project's own alias set, so it can never resolve to exactly one project the
-    way "ảnh The Zurich" does. Excludes any project whose pricing spans MULTIPLE categories
-    (the umbrella "Vinhomes Ocean Park" catalogue entry) — that one photo of everything
-    would dominate every category's results with an unrelated overview shot.
+    """A few photos from every project of the category named in the query ("ảnh biệt thự"),
+    for when the question named a category rather than one project.
+
+    A category word belongs to no project's alias set, so it can never resolve to a single
+    project. Projects spanning multiple categories (the umbrella catalogue entry) are
+    excluded: their overview shot would dominate every category's results.
     """
     category = next((label for phrase, label in _CATEGORY_MATCH_TERMS if phrase in normalized_query), None)
     if category is None:
@@ -307,13 +276,11 @@ def _images_from_category(db: Session, normalized_query: str) -> list[dict]:
 
 
 def resolve_project_id(db: Session, text: str) -> str | None:
-    """The catalogue id of the project named in `text`, or None when none is.
+    """The catalogue id of the project named in `text`, or None.
 
-    Exposed for long-term memory, which has to recognise "dự án The Palma" inside a
-    question: sessions stopped carrying a `project_id` when the picker was dropped from
-    session creation, so the question itself is the only place the project appears.
-
-    Never raises — a caller that cannot identify the project simply remembers less.
+    Sessions stopped carrying a `project_id` when the picker was dropped, so the question
+    itself is the only place the project appears. Never raises: a caller that cannot
+    identify the project simply remembers less.
     """
     try:
         references = resolve_project_references(db, text)
@@ -346,10 +313,9 @@ def resolve_project_ids(db: Session, text: str) -> list[str]:
 def resolve_project_references(db: Session, text: str) -> ProjectReferences:
     """Split catalogue mentions into included and excluded projects.
 
-    Name resolution alone cannot distinguish "Zenpark" from "ngoài Zenpark".  The
-    latter must keep the surrounding search broad and remove Zenpark from it; treating
-    every mention as positive hard-scoped RAG and catalogue lookup to the one project the
-    customer had just rejected.
+    Name resolution alone cannot tell "Zenpark" from "ngoài Zenpark". Treating every
+    mention as positive hard-scoped retrieval to the one project the customer had just
+    rejected.
     """
     try:
         haystack = _normalize(text or "")
@@ -423,13 +389,9 @@ _SUB_ZONE_NAME_PATTERN = re.compile(r"([a-z]+)\s+(\d+)$")
 def _sub_zone_tokens(project_name: str) -> list[str]:
     """Filename tokens for a numbered sub-zone name ("The Sapphire 2" -> "sapphire-2").
 
-    The Sapphire is the one catalogue project where two distinct sub-zones (Sapphire 1,
-    Sapphire 2) share a single Project row and gallery — every other tier/tower has its
-    own row. Their only visually distinguishing photo is a single sub-zone-level master
-    plan each ("mat-bang-khu-sapphire-1-...jpg"), which the generic "mat-bang" exclusion
-    in `select_listing_images` would otherwise treat identically to a misleading
-    tower/unit floor plan and drop — leaving both sub-zones' cards showing the exact same
-    generic park photos, with nothing telling them apart.
+    The Sapphire is the one project whose two sub-zones share a single row and gallery.
+    Their only distinguishing photo is a per-sub-zone master plan, which the generic
+    "mat-bang" exclusion would drop — leaving both cards showing identical park photos.
     """
     match = _SUB_ZONE_NAME_PATTERN.search(_normalize(project_name))
     if not match:
@@ -441,27 +403,28 @@ def _sub_zone_tokens(project_name: str) -> list[str]:
 _ZONE_OVERVIEW_UNIT_TYPE = "nhieu loai can"
 
 _UNIT_TYPE_PHOTO_PATTERN = re.compile(
-    r"(?:^|-)\d-?(?:ngu|pn|phong-ngu)(?:-|$)|(?:^|-)studio(?:-|$)|(?:^|-)(?:don-lap|song-lap|lien-ke)(?:-|$)"
+    r"(?:^|-)\d-?(?:ngu|pn|phong-ngu)(?:-?\+?1)?(?:-|$)|"
+    r"(?:^|-)(?:studio|duplex|penthouse)(?:-|$)|"
+    r"(?:^|-)(?:don-lap|song-lap|lien-ke)(?:-|$)"
 )
 
 
-def select_listing_images(gallery: list[str], unit_type: str, project_name: str = "") -> list[str]:
-    """Pick photos to illustrate one recommended listing (agent_pipeline.PropertyListing):
-    photos of that exact unit type when the catalogue has any, otherwise every other real
-    photo of the subdivision except floor plans — never a floor plan for the wrong unit
-    type, and never padded out to some fixed count with photos that do not actually match.
+def select_listing_images(
+    gallery: list[str], unit_type: str, project_name: str = "", tower: str = "", unit_code: str = ""
+) -> list[str]:
+    """Pick photos to illustrate one recommended listing (agent_pipeline.PropertyListing).
 
-    Matches on `_unit_type_tokens` only (bedroom count / "studio"), deliberately not the
-    broader `_wanted_tokens`/`_subject_tokens` used elsewhere in this module — those also
-    match the generic "mat-bang" topic token, which would let a whole-tower floor plan
-    (any filename with "mat-bang" in it) count as a match for every unit type in that
-    tower. A listing is about one specific unit type; a tower-wide floor plan is not a
-    photo of it, it just happens to share a topic word.
+    A live inventory card (`unit_code` present) gets `_inventory_listing_images`' fixed set
+    describing that one unit, falling through to the catalogue route when it composes
+    nothing — the villa zones file no photos under the catalogue folders it reads, and an
+    empty card is worse than general photos of the right subdivision. A catalogue card gets
+    photos of its unit type, else every non-floor-plan photo of the subdivision.
 
-    No cap on how many are returned: accuracy matters more than a fixed count, and a real
-    unit type rarely has more than a handful of photos in the catalogue anyway. Also no
-    floor — a listing that only has 1-2 real photos of its exact type shows exactly those,
-    never padded with an unrelated exterior/skyline shot just to hit a round number.
+    Matches on `_unit_type_tokens` only, never the broader `_subject_tokens`: those include
+    the generic "mat-bang" token, which would make a whole-tower floor plan match every
+    unit type in that tower.
+
+    Uncapped and unpadded — a type with two real photos shows exactly those.
     """
     if not gallery:
         return []
@@ -470,10 +433,19 @@ def select_listing_images(gallery: list[str], unit_type: str, project_name: str 
     if not gallery:
         return []
 
+    if unit_code.strip():
+        composed = _inventory_listing_images(gallery, unit_type, tower, unit_code)
+        if composed:
+            return composed
+
+    tower_matches = _tower_photos(gallery, tower)
+    if tower_matches:
+        return tower_matches
+
     normalized_unit_type = _normalize(unit_type)
     unit_tokens = _unit_type_tokens(normalized_unit_type)
     type_matches = list(
-        dict.fromkeys(url for url in gallery if any(token in _normalize_filename(url) for token in unit_tokens))
+        dict.fromkeys(url for url in gallery if _matches_any_filename_token(_normalize_filename(url), unit_tokens))
     )
     if type_matches:
         return type_matches
@@ -500,12 +472,150 @@ def select_listing_images(gallery: list[str], unit_type: str, project_name: str 
     return fallback
 
 
-def select_listing_amenities(project: Project, max_amenities: int = 4) -> list[str]:
-    """A few named amenities from the project's own catalogue record, for a listing card.
+_REAL_PHOTO_FOLDER = "hinh-anh-thuc-te/"
+_AMENITY_FOLDER = "tien-ich/"
 
-    Deterministic, read straight from `project.details["amenities"]` — never left for the
-    model to invent, same reasoning as `select_listing_images` never letting it guess a URL.
+_FLOOR_PLAN_SPEC_PATTERN = re.compile(r"mat-bang-tang-([0-9a-z\-]*?)-toa-")
+_FLOOR_PLAN_SHEET_PATTERN = re.compile(r"mat-bang-(?:tang|toa|khu)-")
+
+
+def _inventory_listing_images(gallery: list[str], unit_type: str, tower: str, unit_code: str) -> list[str]:
+    """The four photos that describe one confirmed unit, in reading order: layout, its
+    floor's plan, one real subdivision photo, one amenity photo. Without a layout the real
+    photo leads, so the card opens on something concrete rather than a technical drawing.
+
+    Each component is simply absent when the catalogue has no such photo — padding the gap
+    would put a picture of the wrong thing under a specific mã căn.
     """
+    layouts = _unit_layout_photos(gallery, unit_type, tower)
+    floor_plan = _floor_plan_photo(gallery, tower, unit_code)
+    real_photo = _first_in_folder(gallery, _REAL_PHOTO_FOLDER)
+    amenity = _first_in_folder(gallery, _AMENITY_FOLDER)
+
+    ordered = [*layouts, floor_plan, real_photo, amenity] if layouts else [real_photo, floor_plan, amenity]
+    return list(dict.fromkeys(url for url in ordered if url))
+
+
+def _unit_layout_photos(gallery: list[str], unit_type: str, tower: str) -> list[str]:
+    """Layout drawings of this unit type (`can-ho-2-ngu-zr1...`), the unit's own tower
+    preferred when the filename names one.
+
+    Floor/tower/zone sheets are excluded even when they carry a matching bedroom count:
+    those draw a whole floor, not this apartment, and `_floor_plan_photo` places the right
+    one of those separately.
+    """
+    tokens = _unit_type_tokens(_normalize(unit_type))
+    if not tokens:
+        return []
+
+    matches = [
+        url
+        for url in gallery
+        if _matches_any_filename_token(_normalize_filename(url), tokens)
+        and not _FLOOR_PLAN_SHEET_PATTERN.search(_normalize_filename(url))
+    ]
+    if not matches:
+        return []
+
+    same_tower = [url for url in matches if _names_tower(_normalize_filename(url), tower)]
+    return list(dict.fromkeys(same_tower or matches))
+
+
+def _floor_plan_photo(gallery: list[str], tower: str, unit_code: str) -> str | None:
+    """The floor plan for this unit's own floor, falling back to its tower's whole-tower
+    sheet, or None when the tower has neither.
+
+    The floor is the first two digits of the unit code's last segment (`OCP1-ZR1-0101` ->
+    floor 1), which is how the inventory numbers a unit; the sheets name the floors they
+    cover in the filename. A sheet for the wrong floor is never returned — the tower-wide
+    sheet is the honest fallback, since it genuinely does describe every floor.
+    """
+    sheets = _tower_photos(gallery, tower)
+    if not sheets:
+        return None
+
+    floor = _floor_from_unit_code(unit_code)
+    if floor is not None:
+        for url in sheets:
+            covered = _floor_plan_floors(_normalize_filename(url))
+            if covered and floor in covered:
+                return url
+
+    for url in sheets:
+        if _floor_plan_floors(_normalize_filename(url)) is None:
+            return url
+    return None
+
+
+def _floor_from_unit_code(unit_code: str) -> int | None:
+    """Floor number encoded in a mã căn: the first two digits of its last segment."""
+    digits = "".join(char for char in unit_code.strip().rsplit("-", 1)[-1] if char.isdigit())
+    return int(digits[:2]) if len(digits) >= 2 else None
+
+
+def _floor_plan_floors(filename: str) -> set[int] | None:
+    """Floors one sheet covers, or None when its filename names no floor at all.
+
+    Two numbers are an inclusive range (`tang-3-24`); three or more are exactly those
+    floors (`tang-22-24-26-28`, whose odd neighbours have their own sheet). `-va-` joins
+    two groups. None means a whole-tower sheet, which `_floor_plan_photo` uses as its
+    fallback — distinct from a set that merely lacks this floor.
+    """
+    match = _FLOOR_PLAN_SPEC_PATTERN.search(filename)
+    if not match:
+        return None
+
+    floors: set[int] = set()
+    for group in match.group(1).split("-va-"):
+        numbers = [int(part) for part in group.split("-") if part.isdigit()]
+        if not numbers:
+            continue
+        if len(numbers) == 1:
+            floors.add(numbers[0])
+        elif len(numbers) == 2:
+            floors.update(range(min(numbers), max(numbers) + 1))
+        else:
+            floors.update(numbers)
+    return floors or None
+
+
+def _first_in_folder(gallery: list[str], folder: str) -> str | None:
+    """The first photo filed under one catalogue folder, or None when it holds none."""
+    return next((url for url in gallery if _normalize_filename(url).startswith(folder)), None)
+
+
+def _names_tower(filename: str, tower: str) -> bool:
+    """Whether a filename names this exact tower, in either spelling."""
+    if not tower.strip():
+        return False
+    slug = _normalize(tower).replace(" ", "-")
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", filename) for token in {slug, slug.replace(".", "-")}
+    )
+
+
+def _tower_photos(gallery: list[str], tower: str) -> list[str]:
+    """Photos filed under one exact tower code, or [] when the gallery has none.
+
+    The API and the filenames spell a tower differently (`S1.06` vs `toa-s1-07`), so both
+    the dot and hyphen forms are tried. Empty on no match is the point: callers fall
+    through rather than showing a photo of the wrong tower.
+    """
+    if not tower.strip():
+        return []
+
+    slug = _normalize(tower).replace(" ", "-")
+    tokens = {f"toa-{slug}", f"toa-{slug.replace('.', '-')}"}
+    return [
+        url
+        for url in gallery
+        if any(re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", _normalize_filename(url)) for token in tokens)
+    ]
+
+
+def select_listing_amenities(project: Project, max_amenities: int = 4) -> list[str]:
+    """A few named amenities for a listing card, read straight from the catalogue record —
+    never left for the model to invent, like the image URLs."""
     amenities = (project.details or {}).get("amenities") or []
     names = [item["name"] for item in amenities if isinstance(item, dict) and isinstance(item.get("name"), str)]
     return names[:max_amenities]
@@ -514,15 +624,12 @@ def select_listing_amenities(project: Project, max_amenities: int = 4) -> list[s
 def _filter_by_topic(gallery: list[str], normalized_query: str, known_towers: list[str] | None = None) -> list[str]:
     """Narrow the gallery to the topic the question named.
 
-    Falls back to the whole gallery in two cases, both deliberate: the question named no
-    topic ("cho xem hình ảnh The Palma" — they want the project's photos), or it named one
-    the catalogue has no picture of. Returning nothing to someone who explicitly asked to
-    see something is worse than returning that project's photos.
+    Falls back to the whole gallery when the question named no topic, or one the catalogue
+    has no picture of: returning nothing to someone who asked to see something is worse.
     """
     exact_tower_tokens = _tower_tokens(normalized_query, known_towers)
     if exact_tower_tokens:
-        exact = [url for url in gallery if any(token in _normalize_filename(url) for token in exact_tower_tokens)]
-        return exact
+        return [url for url in gallery if any(token in _normalize_filename(url) for token in exact_tower_tokens)]
 
     view_match = _filter_view_images(gallery, normalized_query)
     if view_match is not None:
@@ -539,16 +646,9 @@ def _filter_by_topic(gallery: list[str], normalized_query: str, known_towers: li
 def _auto_attach_images(gallery: list[str], normalized_query: str, known_towers: list[str] | None = None) -> list[str]:
     """The automatic route's selection: matching photos only, capped.
 
-    Two deliberate differences from `_filter_by_topic`, both following from nobody having
-    asked for these (see module docstring):
-
-    * No fall back to the whole gallery. A topic the catalogue has no photo of yields no
-      photo — attaching an unrelated one to an answer that never mentioned pictures reads
-      as the system padding itself out.
-    * A question naming no visual topic at all ("chính sách thanh toán thế nào?") is not
-      treated as "anything goes" either. It gets the project's establishing shots, which
-      illustrate the project without claiming to depict a specific thing, and nothing when
-      the catalogue has none of those either.
+    Unlike `_filter_by_topic` it never widens to the whole gallery — nobody asked for these,
+    so an unmatched topic yields no photo. A question naming no visual topic gets the
+    establishing shots, which illustrate without claiming to depict anything specific.
     """
     exact_tower_tokens = _tower_tokens(normalized_query, known_towers)
     if exact_tower_tokens:
@@ -559,22 +659,18 @@ def _auto_attach_images(gallery: list[str], normalized_query: str, known_towers:
     if view_match is not None:
         return view_match[:_AUTO_ATTACH_MAX_IMAGES]
 
-    if _subject_tokens(normalized_query):
-        tokens = _wanted_tokens(normalized_query)
-    else:
-        tokens = list(_OVERVIEW_TOKENS)
+    tokens = _wanted_tokens(normalized_query) if _subject_tokens(normalized_query) else list(_OVERVIEW_TOKENS)
 
     matched = [url for url in gallery if any(token in _normalize_filename(url) for token in tokens)]
     return matched[:_AUTO_ATTACH_MAX_IMAGES]
 
 
 def _filter_view_images(gallery: list[str], normalized_query: str) -> list[str] | None:
-    """Require filename evidence before claiming that a photo depicts a unit's view.
+    """Require filename evidence before claiming a photo depicts a unit's view.
 
-    ``None`` means this is not a view question. A generic view question accepts a file
-    explicitly labelled as a view. If the asker qualifies it (lake, sea, landscape...),
-    the filename must carry both the view label and a requested subject. Image order and
-    project identity alone cannot prove which direction a photograph faces.
+    None means this is not a view question. A qualified view ("view hồ") needs both the
+    view label and that subject in the filename — image order and project identity cannot
+    prove which direction a photograph faces.
     """
     view_filename_tokens = ("view-", "tam-nhin", "huong-nhin")
     if not _contains_phrase(normalized_query, ("view", "tam nhin", "huong nhin", "huong can")):
@@ -601,25 +697,44 @@ def _subject_tokens(normalized_query: str) -> list[str]:
 def _unit_type_tokens(normalized_query: str) -> list[str]:
     """Filename tokens for a bedroom count or "studio" named in the text — nothing else.
 
-    Kept separate from `_subject_tokens` (which includes the generic "mat-bang"/"matbang"
-    topic token) on purpose: `select_listing_images` needs ONLY the unit-type-specific
-    tokens, precisely so a whole-tower floor plan (any filename with "mat-bang" in it,
-    regardless of which unit type it shows) does not qualify as a match for "2PN" just
-    because both happen to say "mat-bang" somewhere.
+    Kept separate from `_subject_tokens`, which carries the generic "mat-bang" token: with
+    that included, any whole-tower floor plan would match every unit type in the tower.
     """
     tokens: list[str] = []
 
-    for bedrooms in re.findall(r"\b(\d)\s*(?:pn|phong\s*ngu|ngu)\b", normalized_query):
-        tokens.extend([f"{bedrooms}pn", f"{bedrooms}-phong-ngu", f"{bedrooms}-pn", f"{bedrooms}-ngu"])
+    plus_one = re.search(r"\b(\d)\s*(?:pn|phong\s*ngu|ngu)\s*\+\s*1\b", normalized_query)
+    if plus_one:
+        bedrooms = plus_one.group(1)
+        tokens.extend(
+            [
+                f"{bedrooms}pn1",
+                f"{bedrooms}pn-1",
+                f"{bedrooms}-pn-1",
+                f"{bedrooms}-phong-ngu-1",
+                f"{bedrooms}-ngu-1",
+            ]
+        )
+    else:
+        for bedrooms in re.findall(r"\b(\d)\s*(?:pn|phong\s*ngu|ngu)\b", normalized_query):
+            tokens.extend([f"{bedrooms}pn", f"{bedrooms}-phong-ngu", f"{bedrooms}-pn", f"{bedrooms}-ngu"])
 
     if re.search(r"\bstudio\b", normalized_query):
         tokens.append("studio")
+
+    for unit_type in ("duplex", "penthouse"):
+        if re.search(rf"\b{unit_type}\b", normalized_query):
+            tokens.append(unit_type)
 
     for phrase, token in (("don lap", "don-lap"), ("song lap", "song-lap"), ("lien ke", "lien-ke")):
         if phrase in normalized_query:
             tokens.append(token)
 
     return tokens
+
+
+def _matches_any_filename_token(filename: str, tokens: list[str]) -> bool:
+    """Match complete slug tokens, so a 2PN listing never selects a 2PN+1 layout."""
+    return any(re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", filename) for token in tokens)
 
 
 def _wanted_tokens(normalized_query: str) -> list[str]:
@@ -650,9 +765,8 @@ def _tower_tokens(normalized_query: str, known_towers: list[str] | None = None) 
 def _best_match(db: Session, haystack: str) -> Project | None:
     """The project whose name or slug appears in the text, longest match winning.
 
-    Longest wins because catalogue names nest: "Vinhomes Ocean Park" is a substring of
-    the text whenever "Vinhomes Ocean Park 3" is, and the more specific one is the one
-    the Sale is asking about.
+    Catalogue names nest — "Vinhomes Ocean Park" matches whenever "Vinhomes Ocean Park 3"
+    does — and the more specific one is what was asked about.
     """
     best: Project | None = None
     best_length = 0
@@ -712,35 +826,25 @@ def _known_project_towers(details: dict) -> set[str]:
 def _contains_phrase(haystack: str, phrases: tuple[str, ...]) -> bool:
     """Whole-word phrase match.
 
-    Plain substring matching is wrong here and quietly so: "anh" is inside "thanh toán"
-    and "ho" is inside "cho", so an unbounded search fires the image tool on questions
-    about payment schedules.
+    Substring matching fails quietly here: "anh" sits inside "thanh toán" and "ho" inside
+    "cho", firing the image tool on payment-schedule questions.
     """
     return any(re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", haystack) for phrase in phrases)
 
 
 def _normalize(text: str) -> str:
-    """Lowercase, strip diacritics and collapse separators.
-
-    A Sale typing quickly writes "hai au" for "Hải Âu", and slugs arrive as "hai-au",
-    so all three forms have to reduce to the same string before comparison.
-    """
+    """Lowercase, strip diacritics and collapse separators, so "Hải Âu", "hai au" and the
+    slug "hai-au" all reduce to one comparable string."""
     return " ".join(strip_diacritics(text).lower().replace("-", " ").split())
 
 
 def _normalize_filename(url: str) -> str:
-    """The filename in slug form, so topic tokens can be matched against it.
+    """The filename in slug form, prefixed with its catalogue folder when it sits in one.
 
-    Prefixed with the catalogue folder when the photo sits in one. MinIO files a
-    subdivision's photos under `tien_ich/`, `mat_bang/` and `hinh_anh_thuc_te/`, and that
-    folder is frequently the ONLY record of what the photo shows: The Zenpark's amenity
-    shots are named `be-boi-4-mua-...`, `san-the-thao-...`, `vuon-nhat-...`, none of which
-    contains "tien ich", so matching the bare filename found 2 of its 5 amenity photos.
-
-    Only the three names in `_CATEGORY_FOLDERS` are treated as folders. Gallery entries
-    are stored as full URLs, so the segment before the filename is usually the project
-    slug — and four catalogues are named `shop-thuong-mai-*`, which would then make every
-    photo in them match "shop"/"thuong mai" no matter what it depicts.
+    The folder is often the only record of what a photo shows — Zenpark's amenity shots are
+    named `be-boi-4-mua-...`, `vuon-nhat-...`, never "tien ich". Only `_CATEGORY_FOLDERS`
+    count: the preceding segment is usually the project slug, and four catalogues are named
+    `shop-thuong-mai-*`, which would match "shop" for every photo in them.
     """
     parts = url.rsplit("/", 2)
     name = strip_diacritics(parts[-1]).lower()

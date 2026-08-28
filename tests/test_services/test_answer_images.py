@@ -426,6 +426,202 @@ def test_select_listing_images_empty_gallery_returns_empty():
     assert answer_images_service.select_listing_images([], "2PN") == []
 
 
+SAPPHIRE_TOWER_GALLERY = [
+    "https://cdn/p/the-sapphire/mat-bang-toa-S1-02-vinhomes-ocean-park.jpg",
+    "https://cdn/p/the-sapphire/mat-bang-toa-S1.06.jpg",
+    "https://cdn/p/the-sapphire/mat-bang-toa-s1-07-vinhomes-ocean-park.jpg",
+    "https://cdn/p/the-sapphire/phoi-canh-tong-the-sapphire.jpg",
+]
+
+
+def test_select_listing_images_prefers_the_units_own_tower():
+    """A card for one confirmed unit shows a photo of the tower that unit stands in.
+    The inventory record spells the tower "S1.06" while the filename spells it the same
+    way — the exact-tower photo wins over every other photo in the subdivision."""
+    selected = answer_images_service.select_listing_images(SAPPHIRE_TOWER_GALLERY, "2PN", tower="S1.06")
+
+    assert selected == ["https://cdn/p/the-sapphire/mat-bang-toa-S1.06.jpg"]
+
+
+def test_select_listing_images_matches_a_tower_across_dot_and_hyphen_spellings():
+    """The two spellings are the same tower: the API says "S1-07", the file says
+    "toa-s1-07". Matching has to survive that, and the dot form has to reach the hyphen
+    form too — otherwise half the gallery is unreachable for no real reason."""
+    assert answer_images_service.select_listing_images(SAPPHIRE_TOWER_GALLERY, "2PN", tower="S1-07") == [
+        "https://cdn/p/the-sapphire/mat-bang-toa-s1-07-vinhomes-ocean-park.jpg"
+    ]
+    assert answer_images_service.select_listing_images(SAPPHIRE_TOWER_GALLERY, "2PN", tower="S1.02") == [
+        "https://cdn/p/the-sapphire/mat-bang-toa-S1-02-vinhomes-ocean-park.jpg"
+    ]
+
+
+def test_select_listing_images_never_shows_a_different_tower():
+    """A tower the gallery has no photo of falls through to the ordinary routes rather
+    than borrowing a neighbouring tower's floor plan — showing "toa S1.06" under a unit
+    in S1.10 is precisely the wrong-photo failure this parameter exists to prevent."""
+    selected = answer_images_service.select_listing_images(SAPPHIRE_TOWER_GALLERY, "2PN", tower="S1.10")
+
+    assert all("toa-s1-02" not in url.lower() and "toa-s1.06" not in url.lower() for url in selected)
+    assert selected == ["https://cdn/p/the-sapphire/phoi-canh-tong-the-sapphire.jpg"]
+
+
+ZURICH_GALLERY = [
+    "https://cdn/p/the-zurich/mat_bang/can-ho-studio-zr1-vinhomes-ocean-park.jpg",
+    "https://cdn/p/the-zurich/mat_bang/can-ho-2-ngu-zr1-vinhomes-ocean-park.jpg",
+    "https://cdn/p/the-zurich/mat_bang/can-ho-2-ngu-zr2-vinhomes-ocean-park.jpg",
+    "https://cdn/p/the-zurich/mat_bang/mat-bang-toa-zr1-the-zurich-vinhomes-ocean-park.jpg",
+    "https://cdn/p/the-zurich/mat_bang/mat-bang-tang-10-12-va-14-30-toa-zr3-the-zurich.jpg",
+    "https://cdn/p/the-zurich/hinh_anh_thuc_te/canh-quan-the-zurich.jpg",
+    "https://cdn/p/the-zurich/hinh_anh_thuc_te/mat-ngoai-the-zurich.jpg",
+    "https://cdn/p/the-zurich/tien_ich/phong-gym-the-zurich.jpg",
+    "https://cdn/p/the-zurich/tien_ich/phong-yoga-the-zurich.jpg",
+]
+
+
+def test_inventory_card_shows_layout_floor_plan_one_real_photo_and_one_amenity():
+    """A card for one confirmed mã căn describes THAT unit: its own layout, the plan of
+    the floor it sits on, one real photo of the subdivision and one amenity photo — one
+    each, in that order, not four near-identical shots of whichever topic matched."""
+    selected = answer_images_service.select_listing_images(
+        ZURICH_GALLERY, "2PN", project_name="The Zurich", tower="ZR1", unit_code="OCP1-ZR1-0201"
+    )
+
+    assert selected == [
+        "https://cdn/p/the-zurich/mat_bang/can-ho-2-ngu-zr1-vinhomes-ocean-park.jpg",
+        "https://cdn/p/the-zurich/mat_bang/mat-bang-toa-zr1-the-zurich-vinhomes-ocean-park.jpg",
+        "https://cdn/p/the-zurich/hinh_anh_thuc_te/canh-quan-the-zurich.jpg",
+        "https://cdn/p/the-zurich/tien_ich/phong-gym-the-zurich.jpg",
+    ]
+
+
+def test_inventory_card_without_a_layout_leads_with_the_real_photo():
+    """No layout drawing exists for a studio in ZR3, so the card opens on something
+    concrete — the real photo — rather than on a technical drawing, and still carries the
+    floor plan and one amenity."""
+    selected = answer_images_service.select_listing_images(
+        ZURICH_GALLERY, "3PN", project_name="The Zurich", tower="ZR3", unit_code="OCP1-ZR3-1201"
+    )
+
+    assert selected == [
+        "https://cdn/p/the-zurich/hinh_anh_thuc_te/canh-quan-the-zurich.jpg",
+        "https://cdn/p/the-zurich/mat_bang/mat-bang-tang-10-12-va-14-30-toa-zr3-the-zurich.jpg",
+        "https://cdn/p/the-zurich/tien_ich/phong-gym-the-zurich.jpg",
+    ]
+
+
+BEVERLY_LAYOUT_GALLERY = [
+    "https://cdn/p/the-beverly/mat_bang/mat-bang-can-ho-1pn-beverly-vinhomes-ocean-park.jpg",
+    "https://cdn/p/the-beverly/mat_bang/mat-bang-can-ho-2pn-beverly-vinhomes-ocean-park.jpg",
+    "https://cdn/p/the-beverly/mat_bang/mat-bang-can-ho-2pn1-beverly-vinhomes-ocean-park.jpg",
+    "https://cdn/p/the-beverly/mat_bang/mat-bang-can-ho-3pn-beverly-vinhomes-ocean-park.jpg",
+]
+
+
+def test_beverly_inventory_cards_use_the_matching_room_layout():
+    expected_by_type = {
+        "1PN": BEVERLY_LAYOUT_GALLERY[0],
+        "2PN": BEVERLY_LAYOUT_GALLERY[1],
+        "2PN+1": BEVERLY_LAYOUT_GALLERY[2],
+        "3PN": BEVERLY_LAYOUT_GALLERY[3],
+    }
+
+    for unit_type, expected in expected_by_type.items():
+        selected = answer_images_service.select_listing_images(
+            BEVERLY_LAYOUT_GALLERY,
+            unit_type,
+            project_name="The Beverly",
+            tower="BE1",
+            unit_code="OCP1-BE1-0801",
+        )
+        assert selected == [expected]
+
+
+def test_two_bedroom_and_two_bedroom_plus_one_layouts_do_not_cross_match():
+    assert answer_images_service.select_listing_images(BEVERLY_LAYOUT_GALLERY, "2PN") == [BEVERLY_LAYOUT_GALLERY[1]]
+    assert answer_images_service.select_listing_images(BEVERLY_LAYOUT_GALLERY, "2PN+1") == [BEVERLY_LAYOUT_GALLERY[2]]
+
+
+def test_senique_duplex_layouts_are_selectable():
+    gallery = [
+        "https://cdn/p/the-senique-hanoi/mat_bang/can-ho-duplex-medium-1337-m2-tang-1-the-senique-hanoi.jpg",
+        "https://cdn/p/the-senique-hanoi/mat_bang/can-ho-duplex-medium-1337-m2-tang-2-the-senique-hanoi.jpg",
+        "https://cdn/p/the-senique-hanoi/phoi-canh-tong-the-the-senique-hanoi.jpg",
+    ]
+
+    assert answer_images_service.select_listing_images(gallery, "Căn Duplex") == gallery[:2]
+
+
+def test_inventory_card_picks_the_floor_plan_covering_that_unit_floor():
+    """The floor is the first two digits of the mã căn's last segment, and each sheet
+    names the floors it covers. Floor 7 belongs to the 6-17 sheet, floor 29 to the sheet
+    drawn for floor 29 alone — a unit is never shown another floor's plan."""
+    gallery = [
+        "https://cdn/p/the-palma/mat_bang/mat-bang-tang-3-5-toa-palma-1-lumiere-orient-pearl.jpg",
+        "https://cdn/p/the-palma/mat_bang/mat-bang-tang-6-17-toa-palma-1-lumiere-orient-pearl.jpg",
+        "https://cdn/p/the-palma/mat_bang/mat-bang-tang-29-toa-palma-1-lumiere-orient-pearl.jpg",
+    ]
+
+    def plan_for(unit_code):
+        return answer_images_service.select_listing_images(
+            gallery, "2PN", project_name="The Palma", tower="palma-1", unit_code=unit_code
+        )
+
+    assert plan_for("OCP1-PLM1-0701") == [
+        "https://cdn/p/the-palma/mat_bang/mat-bang-tang-6-17-toa-palma-1-lumiere-orient-pearl.jpg"
+    ]
+    assert plan_for("OCP1-PLM1-2901") == [
+        "https://cdn/p/the-palma/mat_bang/mat-bang-tang-29-toa-palma-1-lumiere-orient-pearl.jpg"
+    ]
+    assert plan_for("OCP1-PLM1-0401") == [
+        "https://cdn/p/the-palma/mat_bang/mat-bang-tang-3-5-toa-palma-1-lumiere-orient-pearl.jpg"
+    ]
+
+
+def test_inventory_card_shows_no_floor_plan_when_no_sheet_covers_that_floor():
+    """Floor 40 is above every sheet the tower has. Showing the nearest one anyway would
+    put a drawing of a different floor under a specific mã căn, so the component is simply
+    absent and the card carries the photos it can stand behind."""
+    gallery = [
+        "https://cdn/p/the-palma/mat_bang/mat-bang-tang-6-17-toa-palma-1-lumiere-orient-pearl.jpg",
+        "https://cdn/p/the-palma/hinh_anh_thuc_te/kien-truc-the-palma.jpg",
+        "https://cdn/p/the-palma/tien_ich/be-boi-the-palma.jpg",
+    ]
+
+    selected = answer_images_service.select_listing_images(
+        gallery, "2PN", project_name="The Palma", tower="palma-1", unit_code="OCP1-PLM1-4001"
+    )
+
+    assert selected == [
+        "https://cdn/p/the-palma/hinh_anh_thuc_te/kien-truc-the-palma.jpg",
+        "https://cdn/p/the-palma/tien_ich/be-boi-the-palma.jpg",
+    ]
+
+
+def test_inventory_card_falls_back_when_the_gallery_has_no_catalogue_folders():
+    """The villa zones' photos sit at the top level with no tien_ich/hinh_anh_thuc_te
+    folder and no tower sheets, so nothing can be composed. The card shows that zone's
+    real photos rather than going out empty."""
+    gallery = [
+        "https://cdn/p/ngoc-trai/anh-biet-thu-1.jpg",
+        "https://cdn/p/ngoc-trai/vinhomes-ocean-park-song-lap.jpg",
+    ]
+
+    selected = answer_images_service.select_listing_images(
+        gallery, "BTSL", project_name="Ngọc Trai", tower="NT-01", unit_code="OCP1-NT-01-02"
+    )
+
+    assert selected == gallery
+
+
+def test_select_listing_images_without_a_tower_is_unchanged():
+    """Low-rise subdivisions carry no tower photos at all, and catalogue-only cards carry
+    no tower — both must behave exactly as before this parameter existed."""
+    assert answer_images_service.select_listing_images(SENIQUE_GALLERY, "2PN", tower="") == [
+        "https://cdn/p/senique/can-ho-2pn-large-813-m2-the-senique-hanoi.jpg",
+        "https://cdn/p/senique/can-ho-2pn-medium-643-m2-the-senique-hanoi.jpg",
+    ]
+
+
 class _FakeProjectWithAmenities:
     details = {
         "amenities": [

@@ -59,6 +59,10 @@ _INVENTORY_FOLLOWUP_FIELD_KEYWORDS = (
     "giá",
     "trạng thái",
     "loại căn",
+    "tầng",
+    "tòa",
+    "hướng",
+    "view",
     "unit_code",
     "project_id",
     "subdivision",
@@ -66,8 +70,19 @@ _INVENTORY_FOLLOWUP_FIELD_KEYWORDS = (
     "area_m2",
     "price_vnd",
     "status",
+    "tower",
+    "floor",
+    "direction",
+    "view_type",
     "m2",
     "m²",
+)
+
+_INVENTORY_FOLLOWUP_FIELD_PATTERN = re.compile(
+    "|".join(
+        rf"(?<![a-z0-9]){re.escape(strip_diacritics(keyword))}(?![a-z0-9])"
+        for keyword in _INVENTORY_FOLLOWUP_FIELD_KEYWORDS
+    )
 )
 
 _FILTERED_UNIT_QUERY_PATTERN = re.compile(
@@ -136,10 +151,15 @@ def needs_inventory(query: str) -> bool:
 
 
 def mentions_inventory_followup_field(query: str) -> bool:
-    """Whether a follow-up asks for another field of the inventory rows already in scope."""
+    """Whether a follow-up asks for another field of the inventory rows already in scope.
+
+    Matched on word boundaries, not raw substrings: several of these keywords are short
+    enough to hide inside unrelated words once diacritics are stripped — "tòa" sits inside
+    "thanh toán", which would route every payment-policy question into an inventory lookup.
+    """
 
     normalized = strip_diacritics(query)
-    return any(strip_diacritics(keyword) in normalized for keyword in _INVENTORY_FOLLOWUP_FIELD_KEYWORDS)
+    return bool(_INVENTORY_FOLLOWUP_FIELD_PATTERN.search(normalized))
 
 
 def needs_document_retrieval(query: str) -> bool:
@@ -433,6 +453,43 @@ def wants_human_agent(query: str) -> bool:
     """`True` when the visitor explicitly asked to talk to a person, regardless of topic."""
     normalized = strip_diacritics(query)
     return any(strip_diacritics(keyword) in normalized for keyword in _WANTS_HUMAN_KEYWORDS)
+
+
+# These phrases are stronger than ordinary browsing or a generic price question: the
+# customer is asking for a concrete transaction step, a current unit action, a calculation
+# they can act on, or a human appointment. Keep this separate from
+# `needs_registration_gate`: routing/registration and lead priority are different business
+# decisions, and broadening the gate would hide otherwise answerable questions.
+_TRANSACTION_READY_PATTERNS = (
+    re.compile(r"\b(?:hom nay|bay gio)\b.{0,50}\bdat coc\b", re.IGNORECASE),
+    re.compile(r"\bdat coc\b.{0,50}\b(?:chuyen|can|bao nhieu)\b", re.IGNORECASE),
+    re.compile(r"\b(?:gui|cho|xin)\b.{0,30}\bbang hang\b.{0,40}\b(?:con trong|moi nhat)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:muon|can|dat|sap xep)\b.{0,40}\b(?:xem can thuc te|xem can mau|tham quan du an)\b", re.IGNORECASE
+    ),
+    re.compile(r"\bcan (?:nay|do|[a-z0-9.-]+)\b.{0,24}\b(?:hien )?con (?:khong|trong)\b", re.IGNORECASE),
+    re.compile(r"\b(?:giu can|giu cho)\b.{0,40}\b(?:den|toi|qua|ngay mai|hom sau)\b", re.IGNORECASE),
+    re.compile(r"\b(?:gui|cho|xin)\b.{0,30}\b(?:chinh sach|tien do thanh toan)\b", re.IGNORECASE),
+    re.compile(
+        r"\btinh\b.{0,60}\b(?:thanh toan tung dot|tung dot|khoan vay|tra hang thang|tra moi thang)\b", re.IGNORECASE
+    ),
+    re.compile(r"\b(?:giay to|ho so)\b.{0,50}\b(?:ky hop dong|ky.{0,20}dat coc)\b", re.IGNORECASE),
+    re.compile(r"\b(?:khi nao|muon|co the)\b.{0,50}\b(?:ky thoa thuan dat coc|ky.{0,20}dat coc)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:gap|noi chuyen|ket noi)\b.{0,30}\b(?:nhan vien tu van|chuyen vien|sale|tu van vien)\b", re.IGNORECASE
+    ),
+)
+
+
+def is_transaction_ready_lead(query: str) -> bool:
+    """Whether this turn explicitly asks for a concrete next step toward a purchase.
+
+    The matcher is intentionally narrow. Questions such as "giá bán bao nhiêu?" or
+    "chính sách thanh toán thế nào?" remain browsing signals; asking us to send the exact
+    policy, calculate instalments, hold a unit, or arrange a visit is transaction-ready.
+    """
+    normalized = strip_diacritics(query)
+    return wants_human_agent(query) or any(pattern.search(normalized) for pattern in _TRANSACTION_READY_PATTERNS)
 
 
 _FRUSTRATION_KEYWORDS = (

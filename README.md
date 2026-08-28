@@ -119,6 +119,9 @@ flowchart TB
 
 ## 🌐 Infrastructure & Ports
 
+Production probes and observability are exposed at `/health/live`, `/health/ready`, and `/metrics`. Reliability
+targets, PromQL examples, and the error-budget policy are defined in [SLO.md](SLO.md).
+
 | Service | Container / Service | Port (Host) | Internal URL | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
 | **Backend** | `ai20k_backend` | `8000` | `http://localhost:8000` | REST API, OpenAPI docs (`/docs`) |

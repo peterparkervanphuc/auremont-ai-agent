@@ -60,7 +60,11 @@ def persist_event(event: str, fields: dict) -> None:
             try:
                 session.close()
             except Exception:
-                pass
+                logger.warning(
+                    "Could not close audit persistence session",
+                    exc_info=True,
+                    extra={"event": "audit.session.close.failed"},
+                )
 
 
 def _json_safe(fields: dict) -> dict:

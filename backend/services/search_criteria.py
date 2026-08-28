@@ -1,34 +1,19 @@
 """Search criteria — the filters a person has built up over a conversation.
 
-`inventory_service` parses filters out of one question and forgets them. That is correct
-for a single lookup and wrong for a consultation: "giữ nguyên điều kiện, tăng giá lên 5
-tỷ" means the 3PN filter from two turns ago must survive, and re-parsing only the current
-sentence silently drops it. This module is the missing state — what has been asked for so
-far, merged turn by turn.
+`inventory_service` parses one question and forgets it, which drops "giữ nguyên điều
+kiện, tăng giá lên 5 tỷ"'s earlier 3PN filter. This module is that missing state, merged
+turn by turn.
 
-Three things separate it from the two memory modules next to it, and each difference is
-deliberate:
+Differs from the memory modules next to it: `memory_service` stores durable hints about a
+*person* and refuses the multi-figure sentences this one must parse; criteria are hard
+constraints, not hints. TTL is 24h, not 90 days — a stale filter from yesterday would
+invisibly hide units today. Three strengths, not one flat AND: "bắt buộc" excludes, "ưu
+tiên" only ranks.
 
-- **`memory_service` is about a person; this is about a search.** That module stores
-  durable hints ("this customer tends to ask about 2PN") and explicitly refuses
-  multi-figure sentences and price questions — exactly the sentences this one must parse.
-  Its own docstring says preferences are "hints about a person, not facts about a
-  project"; criteria are the opposite, they are hard constraints on what may be shown.
-- **TTL is 24h, not 90 days.** Criteria are working memory for one consultation. A filter
-  from yesterday's session waking up today would quietly hide units the person wants to
-  see — the failure is invisible, which is what makes it bad.
-- **Three strengths, not one flat AND.** A "bắt buộc" filter excludes; a "ưu tiên" filter
-  only ranks. Collapsing them is the fastest route to zero results, or to recommending a
-  unit that violates the one thing the person actually cared about.
-
-Fails open like every other Redis-backed module here: no Redis, a corrupt value, or any
-exception yields empty criteria and the stateless behaviour that existed before. Losing
-criteria costs the person a repeated sentence; it never produces a wrong number, because
-grounding still comes from inventory and documents.
-
-Deterministic regex throughout, no model call — same rationale as `backend/ai/intent.py`:
-this runs on every filtering question, and a classifier would add a round trip and a
-failure mode to the hot path.
+Fails open like every Redis-backed module here — losing criteria costs a repeated
+sentence, never a wrong number, since grounding still comes from inventory and documents.
+Deterministic regex throughout: this runs on every filtering question, so a model call
+would add a failure mode to the hot path.
 """
 
 import json
@@ -66,10 +51,9 @@ class Strength(StrEnum):
 class Source(StrEnum):
     """Where a criterion came from, which decides what may be relaxed when nothing matches.
 
-    An `INFERRED` bound was this module's own guess at a vague phrase ("tầm 3 tỷ" -> ±15%),
-    so widening it later corrects our guess rather than overriding the person. An
-    `EXPLICIT` bound is what they actually typed and must never be dropped on their behalf
-    — cases.md §24 rule 4.
+    `INFERRED` was this module's own guess at a vague phrase ("tầm 3 tỷ" -> ±15%), so
+    widening it later corrects the guess. `EXPLICIT` is what they typed and must never be
+    dropped on their behalf.
     """
 
     EXPLICIT = "explicit"
@@ -131,12 +115,10 @@ class Constraint:
 class SearchCriteria:
     """Everything asked for so far in one consultation.
 
-    Split into what can be filtered and what cannot. `constraints` runs against real
-    InventoryUnit fields. `required_features`/`preferred_features`/`excluded_features` and
-    `purpose`/`household_size` have NO corresponding field on InventoryUnit — they are
-    carried into the prompt so the model can weigh them against retrieved documents, and
-    they never filter anything here. Adding them to `apply_criteria` would silently match
-    nothing; if a feature ever becomes a real inventory field, move it into `constraints`.
+    `constraints` runs against real InventoryUnit fields. The feature/purpose/household
+    fields have no corresponding field on InventoryUnit — they ride into the prompt for the
+    model to weigh, and never filter here. Adding them to `apply_criteria` would silently
+    match nothing.
     """
 
     constraints: tuple[Constraint, ...] = ()
@@ -515,11 +497,9 @@ def parse_criteria(query: str, known_subdivisions: list[str] | None = None) -> C
 def _parse_price_adjustment(query: str) -> tuple[float, float] | None:
     """ "tăng giá lên 5 tỷ" / "giảm xuống 3 tỷ" -> a new ceiling of 5 tỷ / 3 tỷ.
 
-    Both directions produce a ceiling, not a floor. "Tăng giá lên 5 tỷ" does not mean the
-    person now wants units costing at least 5 tỷ — it means their limit moved up to 5 tỷ,
-    and everything below it is still in play. Reading it as a floor would hide the cheaper
-    units they were already looking at, which is the opposite of what raising a budget is
-    for. The lower bound is preserved from context by merge_criteria, not invented here.
+    Both directions produce a ceiling, never a floor: raising the limit still keeps
+    everything cheaper in play. The lower bound is preserved by `merge_criteria`, not
+    invented here.
     """
     match = _RAISE_PATTERN.search(query) or _LOWER_PATTERN.search(query)
     if match is None:
@@ -710,11 +690,9 @@ def _merge_features(existing: tuple[str, ...], incoming: tuple[str, ...]) -> tup
 def detect_conflict(criteria: SearchCriteria) -> str | None:
     """A Vietnamese sentence naming the contradiction, or None when there is none.
 
-    Only impossible combinations count, never merely narrow ones: a false alarm costs the
-    person a whole turn answering a question about a search that would have worked. That
-    is why this checks arithmetic contradictions and one physical impossibility, and stops
-    there — "trung tâm + yên tĩnh + giá thấp" is a trade-off the answer should discuss,
-    not a contradiction to block on.
+    Only impossible combinations count, never merely narrow ones — a false alarm costs a
+    whole turn on a search that would have worked. "trung tâm + yên tĩnh + giá thấp" is a
+    trade-off the answer should discuss, not a contradiction to block on.
     """
     price = criteria.get(FIELD_PRICE)
     if price is not None:
@@ -986,13 +964,9 @@ def resolve(
 ) -> tuple[SearchCriteria, CriteriaDelta]:
     """Load, merge this turn, persist, and hand back the result.
 
-    `session_id is None` means criteria are switched off entirely (no session, or a caller
-    that predates this feature) — the stateless behaviour that existed before. That is the
-    fail-open path at the signature level, not an error.
-
-    The caller decides what to do about a conflict; nothing contradictory is persisted, so
-    the stored state stays at the last coherent version and the person's next answer
-    ("ưu tiên giá") still merges onto something sensible.
+    `session_id is None` is the fail-open path, not an error: criteria are simply switched
+    off. Nothing contradictory is persisted, so the stored state stays at the last
+    coherent version.
     """
     delta = parse_criteria(query, known_subdivisions)
 
@@ -1043,10 +1017,9 @@ def _to_dict(criteria: SearchCriteria) -> dict:
 def _encode_value(value: Any) -> Any:
     """Ranges become 2-element lists, with `inf` as null.
 
-    `json.dumps` writes bare `Infinity` for a float infinity — accepted by Python's own
-    loader but invalid JSON that anything else (redis-cli, a dashboard, another service)
-    chokes on. An open-ended bound from "trên 3 tỷ" is common enough that this is a real
-    round-trip, not a theoretical one.
+    `json.dumps` writes bare `Infinity` for a float infinity — valid to Python's loader but
+    not to redis-cli or a dashboard. An open-ended bound from "trên 3 tỷ" makes this a real
+    round-trip.
     """
     if isinstance(value, tuple):
         return [None if v == float("inf") else v for v in value]
