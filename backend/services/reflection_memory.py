@@ -1,30 +1,19 @@
 """Reflection memory — lessons the agent learned from its own mistakes.
 
 The Reflexion loop in `agent_pipeline` corrects a rejected draft *within* one question,
-then forgets everything. The next question repeats the same mistake, gets the same
-rejection, and pays for the same extra Gemini call to fix it. This module is the missing
-half: when the Verifier rejects a draft, the defect is distilled into one lesson and
-stored, and later questions that look like the one that failed get that lesson in their
-prompt *before* generating.
+then forgets everything — the next question repeats the mistake and pays for the same
+extra Gemini call. This module is the missing half: a Verifier rejection distills the
+defect into one lesson, stored so later similar questions get it in their prompt *before*
+generating.
 
-Deliberately not chat history. A lesson is three short fields:
+Deliberately not chat history — a lesson is three short fields (trigger, lesson, fix), the
+compressed form; storing the failed conversation instead would grow unbounded and make
+every later prompt noisier for no gain.
 
-    trigger — when it applies ("câu hỏi về chính sách thanh toán")
-    lesson  — what to do ("nêu rõ điều kiện áp dụng kèm mỗi con số")
-    fix     — how ("đọc kỹ phần điều kiện trong ngữ cảnh trước khi trả lời")
-
-Storing the failed conversation instead would defeat the purpose: it grows without bound,
-carries the wrong answer along with the right one, and makes every later prompt noisier
-and more expensive for no gain. A lesson is the compressed form — the same reason the
-slide's "compressed memory" collapses three specific rules into one general one.
-
-The storage API accepts an optional scope. Sale consultation chat always supplies a
-session scope because one session represents one end customer, so neither preferences
-nor learned corrections can cross from customer A into customer B. Callers that omit a
-scope retain the legacy global lesson store.
-
-Fails open exactly like `memory_service`: no Redis, or a corrupt value, means no lesson,
-never a failed answer.
+Accepts an optional scope. Sale consultation chat always supplies a session scope, since
+one session is one end customer and corrections must not cross to another. Callers that
+omit it use the legacy global store. Fails open like `memory_service`: no Redis or a
+corrupt value means no lesson, never a failed answer.
 """
 
 import json
@@ -63,7 +52,7 @@ _STOPWORDS = frozenset(
     la cua co khong duoc va hay thi mot cac nhung o tai voi cho ve tu den nhu
     bao nhieu the nao gi sao a anh chi em minh toi ban day do nay kia
     du an can nha vinhomes
-    """.split()
+    """.split()  # noqa: SIM905 - multiline source is easier to review than a long literal list
 )
 
 
@@ -252,15 +241,10 @@ def _keywords(text: str) -> set[str]:
 def _tokenise(text: str) -> list[str]:
     """Lowercased words, accents folded, so "chính sách" and "chinh sach" match.
 
-    The same fold `sparse_embedding` applies for BM25, and for the same reason: a Sale
-    typing in front of a customer drops accents constantly.
-
-    Punctuation is stripped from each word rather than used to reject it. Filtering on
-    `word.isalnum()` dropped any token with punctuation stuck to it, and since a question
-    ends in "?", that silently deleted the LAST word of every single query — "Giá căn 2PN
-    The Palma?" tokenised without "palma", so the one word identifying the project never
-    reached the trigger. Two lessons about different projects then looked identical to
-    `_merge`, and neither could be told apart at recall time.
+    Punctuation is stripped from each word rather than used to reject it — filtering on
+    `word.isalnum()` silently dropped the LAST word of every query ending in "?", so "Giá
+    căn 2PN The Palma?" lost "palma" and two different projects' lessons looked identical
+    to `_merge`.
     """
     from backend.utils.text import strip_diacritics
 
@@ -271,16 +255,10 @@ def _tokenise(text: str) -> list[str]:
 def _merge(existing: list[Lesson], new: Lesson) -> list[Lesson]:
     """Fold a new lesson in, reinforcing an equivalent one rather than duplicating it.
 
-    Two rejections of the same shape must not become two prompt lines saying the same
-    thing — that is exactly how a memory grows long enough to hurt.
-
-    Sameness is judged on the trigger alone, NOT on `failure_mode`. The Verifier labels
-    one and the same defect inconsistently between runs — real stored memory held
-    `gia 2pn con` twice, once as `incomplete-answer` and once as `missing-evidence`, both
-    carrying the identical lesson "Chua tra loi ton kho". With MAX_LESSONS_PER_PROMPT = 2
-    those two entries could take BOTH prompt slots to say one thing, which is precisely
-    the duplication this function exists to prevent. The surviving entry keeps the earlier
-    failure_mode, and with it the `fix` line already reinforced.
+    Sameness is judged on the trigger alone, NOT `failure_mode` — the Verifier labels the
+    same defect inconsistently between runs (`gia 2pn con` was seen stored once as
+    `incomplete-answer`, once as `missing-evidence`, carrying an identical lesson), which
+    could otherwise take both `MAX_LESSONS_PER_PROMPT` slots to say one thing.
     """
     merged = []
     reinforced = False

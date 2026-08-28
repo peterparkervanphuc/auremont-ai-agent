@@ -308,7 +308,8 @@ async def get_customer_summary(
     """
 
     session = _owned_live_session(db, session_id, user)
-    assert session.customer_id is not None  # guaranteed by _owned_live_session
+    if session.customer_id is None:  # defensive invariant; _owned_live_session rejects this
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phiên live không gắn với khách hàng.")
     summary = customer_summary_service.get_summary_response(db, session.customer_id)
     if summary is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Khách hàng chưa có bản tóm tắt.")
@@ -324,7 +325,8 @@ async def refresh_customer_summary(
     """Update the brief from messages after its checkpoint, or return the fresh cache."""
 
     session = _owned_live_session(db, session_id, user)
-    assert session.customer_id is not None  # guaranteed by _owned_live_session
+    if session.customer_id is None:  # defensive invariant; _owned_live_session rejects this
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phiên live không gắn với khách hàng.")
     try:
         summary = customer_summary_service.refresh_summary(db, session.customer_id)
     except customer_summary_service.CustomerSummaryGenerationError as exc:

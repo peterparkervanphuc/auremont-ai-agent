@@ -99,16 +99,11 @@ class InventoryApiError(Exception):
 
 
 class InventoryProjectUnresolvedError(InventoryApiError):
-    """Not an API failure — the API was never called. The session names no project and
-    INVENTORY_PROJECT_MAP has no '*' catch-all, so there is genuinely no way to know
-    *which* project's stock to check.
+    """The API was never called: no project on the session and no '*' catch-all, so which
+    project's stock to check is genuinely unknown.
 
-    Kept as its own subclass (still an InventoryApiError, so any old `except
-    InventoryApiError` still catches it) specifically so agent_pipeline._tool_call can
-    tell "the inventory API is down" apart from "ask which project first" — those two
-    situations read as completely different messages to a customer: one is a system
-    hiccup to apologise for and retry later, the other is a perfectly normal follow-up
-    question a real Sale would also ask.
+    Its own subclass so `agent_pipeline._tool_call` can tell "the inventory is down" (a
+    hiccup to apologise for) from "ask which project first" (a normal follow-up question).
     """
 
 
@@ -134,24 +129,16 @@ def lookup_inventory(
 ) -> list[InventoryUnit]:
     """Look up a project's inventory, filtered by the unit type mentioned in the question.
 
-    `project_id` is the catalogue slug held on the chat session, or None when the session
-    carries no project — `resolve_api_project_id` translates it into the code the
-    inventory API actually keys units by. None is a normal case, not an error: the session
-    flow no longer asks the Sale to pick a project, so the configured catch-all decides
-    which project's stock to read.
+    `project_id` is the catalogue slug on the session, or None — a normal case, since the
+    session flow no longer asks the Sale to pick a project and the catch-all decides.
 
-    ``context_queries`` contains recent human questions, newest first. Each explicit
-    filter in the current query wins; a missing filter may inherit from those questions.
-    This keeps a follow-up like "diện tích 45-70m2" scoped to the previously requested
-    "2 ngủ ở The Sapphire" instead of silently widening back to the whole project.
+    `context_queries` holds recent questions, newest first: an explicit filter in the
+    current query wins, a missing one is inherited, so "diện tích 45-70m2" stays scoped to
+    the "2 ngủ ở The Sapphire" asked before it.
 
-    Returns an empty list when the project has no matching units left — that is a valid
-    answer ("there are no 2PN units available"), entirely different from failing to reach
-    the inventory. Conflating the two would show the Sale "Tạm thời không tra được tồn kho"
-    while the API is perfectly healthy and the correct answer is simply "sold out".
-
-    Raises `InventoryProjectUnresolvedError` (a project no one can resolve — see that
-    class) or `InventoryApiError` when data genuinely cannot be fetched from the API.
+    An empty list means "sold out", never "lookup failed" — conflating the two would show
+    "Tạm thời không tra được tồn kho" while the API is perfectly healthy. Raises
+    `InventoryProjectUnresolvedError` or `InventoryApiError` when data cannot be fetched.
     """
     return _apply_query_filters(fetch_units(project_id), query, context_queries=context_queries)
 
@@ -159,12 +146,9 @@ def lookup_inventory(
 def fetch_units(project_id: str | None) -> list[InventoryUnit]:
     """Every unit of a project, unfiltered — the raw set before any question narrows it.
 
-    Split out of `lookup_inventory` because zero-result diagnosis has to re-filter the same
-    set several times over (dropping one criterion at a time to find which one emptied it),
-    and doing that through `lookup_inventory` would re-call the API for every attempt.
-    Fetching once and filtering in memory is also what this module already did internally.
-
-    Raises the same two errors as `lookup_inventory`, for the same reasons.
+    Split out of `lookup_inventory` because zero-result diagnosis re-filters the same set
+    repeatedly, dropping one criterion at a time; going through `lookup_inventory` would
+    re-call the API each attempt. Raises the same two errors.
     """
     api_project_id = resolve_api_project_id(project_id)
     if api_project_id is None:
@@ -183,23 +167,19 @@ def fetch_units(project_id: str | None) -> list[InventoryUnit]:
 def _scope_to_slug_subdivision(units: list[InventoryUnit], project_id: str | None) -> list[InventoryUnit]:
     """Narrow an API project's rows to the subdivision the catalogue slug names.
 
-    Several catalogue slugs share one API project code (the current MockAPI groups every
-    Ocean Park sub-zone under `ocp1` and separates them only by `subdivision`). Returning
-    the code's whole row set would answer "what's left at The Pavilion" with Ngọc Trai and
-    San Hô units relabelled as Pavilion stock — the same cross-project leak
-    `has_exact_project_mapping` guards against at the pipeline level.
+    Many slugs share one API code (every Ocean Park sub-zone is `ocp1`, separated only by
+    `subdivision`), so returning the whole row set would answer "what's left at The
+    Pavilion" with Ngọc Trai units relabelled as Pavilion stock.
 
-    Only an explicitly mapped slug is scoped. A slug resolved through the `*` catch-all (or
-    no slug at all) is a deliberately unscoped, whole-project search and stays unfiltered.
-
-    A mapped slug that matches no subdivision returns an empty list, which is a truthful
-    "no units" rather than another project's stock. That is the correct answer for a slug
-    the inventory genuinely does not carry.
+    Only an explicitly mapped slug is scoped; one resolved through `*` is a deliberately
+    whole-project search. A mapped slug matching no subdivision returns [] — a truthful
+    "no units" rather than another project's stock.
     """
     if not has_exact_project_mapping(project_id):
         return units
 
-    assert project_id is not None
+    if project_id is None:
+        raise ValueError("An exact inventory mapping requires a project id.")
     slug_text = project_id.replace("-", " ")
     wanted = {
         _normalize_text(unit.subdivision)
@@ -214,13 +194,11 @@ def _scope_to_slug_subdivision(units: list[InventoryUnit], project_id: str | Non
 def resolve_api_project_id(project_id: str | None) -> str | None:
     """Translate a catalogue slug into the inventory API's own project code.
 
-    The two namespaces are genuinely different: `projects.id` is a catalogue slug per
-    sub-zone (`the-sapphire`, `hai-au`), while the current MockAPI groups every one of
-    those under a single project code (`ocp1`) and exposes the sub-zone as
-    `subdivision`. Sending the slug through unmapped is a guaranteed 404.
+    Two different namespaces: `projects.id` is a per-sub-zone slug, while the API groups
+    them under one code and exposes the sub-zone as `subdivision`. An unmapped slug 404s.
 
-    Returns None only when nothing can be resolved — no project on the session and no
-    catch-all configured — which `lookup_inventory` turns into `InventoryProjectUnresolvedError`.
+    None means nothing resolved, which `fetch_units` turns into
+    `InventoryProjectUnresolvedError`.
     """
     mapping = _project_map()
 
@@ -233,10 +211,8 @@ def resolve_api_project_id(project_id: str | None) -> str | None:
 def has_exact_project_mapping(project_id: str | None) -> bool:
     """True only when live inventory explicitly maps this catalogue project.
 
-    A ``*`` mapping is useful for an unscoped, broad inventory search, but it is not
-    evidence that rows from that API project belong to a named catalogue subdivision.
-    Treating it as such is how a question about The Pavilion previously displayed CT1/
-    CT2 units from another dataset.
+    A `*` mapping is fine for a broad search but is no evidence that those rows belong to a
+    named subdivision — treating it as such once showed CT1/CT2 units under The Pavilion.
     """
     return bool(project_id and project_id in _project_map())
 
@@ -302,11 +278,10 @@ _FIELD_NAMES = {field.name for field in fields(InventoryUnit)}
 
 
 def _parse_unit(item: object) -> InventoryUnit | None:
-    """Turn a raw record into an `InventoryUnit`; return None if the record is unusable.
+    """Turn a raw record into an `InventoryUnit`, or None when it is unusable.
 
-    Skips bad records rather than raising: both the mock and the internal API carry extra
-    fields (`id`, `createdAt`) or occasionally omit one, and a single dirty row is not
-    worth failing a Sale's entire lookup over.
+    Skips bad rows rather than raising: the API carries extra fields or omits one, and a
+    single dirty row must not fail the whole lookup.
     """
     if not isinstance(item, dict):
         logger.warning(
@@ -378,10 +353,8 @@ def _to_float(value: object) -> float | None:
 def _extract_unit_types(query: str) -> list[str]:
     """Extract every explicitly named type, preserving broad category aliases.
 
-    A broad request such as ``biệt thự`` is intentionally represented as ``BIETTHU``;
-    :func:`unit_type_matches` expands it to every compatible API code.  This keeps the
-    user's wording intact while still matching the mock/API codes ``BT_DL``, ``BT_SL``
-    and ``LK``.
+    A broad "biệt thự" stays `BIETTHU`, which `unit_type_matches` expands to BT_DL/BT_SL/LK
+    — the wording is kept intact while still matching the API codes.
     """
     return list(
         dict.fromkeys(
@@ -413,12 +386,6 @@ def _extract_unit_type_mentions(query: str) -> list[tuple[str, bool]]:
                 normalized = f"MAX{normalized}"
         mentions.append((normalized, excluded))
     return list(dict.fromkeys(mentions))
-
-
-def _extract_unit_type(query: str) -> str | None:
-    """Backward-compatible single-type helper used by older callers/tests."""
-    matches = _extract_unit_types(query)
-    return matches[0] if matches else None
 
 
 def _normalize_unit_type(unit_type: str | None) -> str | None:
@@ -503,13 +470,9 @@ def unit_type_matches(actual: str | None, wanted: str | None) -> bool:
 def apply_criteria(units: list[InventoryUnit], criteria) -> list[InventoryUnit]:
     """Filter units by accumulated criteria rather than by one question's text.
 
-    Takes a `search_criteria.SearchCriteria`, but is typed loosely and reads only
-    `criteria.filtering()` on purpose: `search_criteria` imports THIS module for its
-    regex patterns, so importing it back here would be a cycle. The contract is small
-    enough to hold by duck-typing — each constraint exposes `.field` and `.value`.
-
-    Only HARD and EXCLUDED constraints reach here (that is what `filtering()` returns).
-    SOFT ones must never exclude a unit; they exist to rank, which is a separate step.
+    Takes a `search_criteria.SearchCriteria` but is typed loosely on purpose: that module
+    imports this one, so importing it back would be a cycle. Only HARD and EXCLUDED
+    constraints reach here — SOFT ones rank, never exclude.
     """
     for constraint in criteria.filtering():
         if str(constraint.strength) == "excluded":
@@ -599,12 +562,9 @@ def _sort_units(units: list[InventoryUnit], sort_by: str | None) -> list[Invento
 
 
 def _apply_one(units: list[InventoryUnit], field_name: str, value) -> list[InventoryUnit]:
-    """Apply a single constraint. Unknown fields filter nothing.
-
-    Silently ignoring an unknown field is deliberate: criteria may carry advisory entries
-    with no InventoryUnit counterpart (features, purpose), and those must pass through
-    rather than match zero units and empty the whole result.
-    """
+    """Apply a single constraint. Unknown fields filter nothing — criteria carry advisory
+    entries with no InventoryUnit counterpart, which must pass through rather than empty
+    the result."""
     if field_name == "unit_types":
         return [unit for unit in units if any(unit_type_matches(unit.unit_type, item) for item in value)]
 
@@ -655,10 +615,8 @@ def _apply_query_filters(
 ) -> list[InventoryUnit]:
     """Apply current and inherited natural-language filters with AND semantics.
 
-    Kept as the stateless path: one question in, filtered units out, no memory of earlier
-    turns. `lookup_inventory` still routes through here, so every existing caller and test
-    behaves exactly as before. Recent context only supplies fields omitted by the current
-    turn; the stateful path goes through `apply_criteria` instead.
+    The stateless path: recent context only fills in fields the current turn omitted. The
+    stateful path goes through `apply_criteria` instead.
     """
     filter_queries = [query, *(context_queries or [])]
 
@@ -753,26 +711,12 @@ def _extract_unit_codes(query: str, units: list[InventoryUnit]) -> set[str]:
     }
 
 
-def _unit_type_matches(unit_type: str | None, wanted_type: str) -> bool:
-    """Match a bedroom family while preserving an explicit ``+1`` request.
-
-    A generic "2 ngủ" includes both 2PN and 2PN+1 because both have two bedrooms.
-    "2PN+1" remains exact so the Sale can still request that layout specifically.
-    """
-
-    normalized_unit_type = _normalize_unit_type(unit_type)
-    if normalized_unit_type == wanted_type:
-        return True
-    return wanted_type.endswith("PN") and normalized_unit_type == f"{wanted_type}+1"
-
-
 def _subdivision_aliases(subdivision: str) -> set[str]:
-    """Return safe human aliases for one inventory subdivision.
+    """Safe human aliases for one subdivision.
 
-    MockAPI stores ``The Sapphire 1`` and ``The Sapphire 2`` separately, while Sales
-    commonly ask for their parent name ``The Sapphire``. Dropping only a leading "The"
-    and a trailing numeric child suffix keeps the alias deterministic and prevents fuzzy
-    matches across unrelated projects.
+    The API stores "The Sapphire 1" and "2" separately while people ask for the parent
+    name. Dropping only a leading "The" and a trailing number keeps this deterministic
+    instead of fuzzy-matching unrelated projects.
     """
 
     normalized = _normalize_text(subdivision)

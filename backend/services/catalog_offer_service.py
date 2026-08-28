@@ -167,7 +167,8 @@ def _range_fit_score(
         return 0.0
     lower = item_min if item_min is not None else item_max
     upper = item_max if item_max is not None else item_min
-    assert lower is not None and upper is not None
+    if lower is None or upper is None:
+        raise ValueError("At least one catalogue range bound is required.")
     if lower == upper:
         return 1.0 if wanted_min <= lower <= wanted_max else 0.0
     if wanted_max == float("inf"):
@@ -274,11 +275,11 @@ def _matches(offer: CatalogOffer, criteria: search_criteria.SearchCriteria) -> b
         return False
 
     area = criteria.get(search_criteria.FIELD_AREA)
-    if area is not None and area.strength != search_criteria.Strength.SOFT:
-        if not _ranges_intersect(offer.area_min_m2, offer.area_max_m2, *area.value):
-            return False
-
-    return True
+    return not (
+        area is not None
+        and area.strength != search_criteria.Strength.SOFT
+        and not _ranges_intersect(offer.area_min_m2, offer.area_max_m2, *area.value)
+    )
 
 
 def _project_is_in_scope(project: Project, scope_ids: set[str], *, include_children: bool = True) -> bool:
@@ -308,7 +309,8 @@ def _ranges_intersect(
         return True
     lower = item_min if item_min is not None else item_max
     upper = item_max if item_max is not None else item_min
-    assert lower is not None and upper is not None
+    if lower is None or upper is None:
+        raise ValueError("At least one catalogue range bound is required.")
     return lower <= wanted_max and upper >= wanted_min
 
 

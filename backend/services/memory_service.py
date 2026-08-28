@@ -1,31 +1,18 @@
-"""Long-term memory — what we remember about a person across conversations.
+"""Long-term memory — what we remember about a person across conversations, above the
+short-term `history` turns threaded into each prompt.
 
-Short-term working memory (the `history` turns threaded into each prompt) covers the current thread and
-lives in MySQL. This module covers the layer above it: preferences that outlive any one
-conversation, so preferences still survive after older turns fall outside the prompt's
-short-term history window.
+Namespaces never mix: `memory:customer:{id}` is one person's own preferences;
+`memory:sale-session:{id}` is the end customer behind one Sale consultation, never shared
+across sessions; `memory:sale:{id}` is a legacy namespace no longer read or written.
 
-Namespaces are never mixed:
+Three rules, each guarding a specific wrong answer:
 
-- `memory:customer:{id}` — one person's own preferences (budget, unit types, projects
-  they keep asking about). Personal to that customer.
-- `memory:sale-session:{id}` — preferences of the one end customer represented by a
-  Sale consultation session. Two sessions owned by the same Sale never share it.
-- `memory:sale:{id}` — legacy Sale-level namespace retained for compatibility with old
-  callers; the Sale chat router no longer reads or writes this shared profile.
-
-Three rules hold this together, and each exists because breaking it causes a specific
-kind of wrong answer:
-
-1. **Fail open.** Every entry point swallows its exceptions and degrades to "no profile".
-   Memory is a personalisation layer, not a source of truth — a Redis outage must cost
-   some convenience, never the ability to answer.
-2. **Remember questions, never answers.** Facts are extracted from what the *human*
-   typed. Storing what the model said would let one hallucinated figure harden into a
-   remembered "preference" and resurface in every later session.
-3. **Preferences are hints about a person, not facts about a project.** Nothing in here
-   is grounding, and the prompt says so explicitly — the model must still read every
-   number out of retrieved documents.
+1. **Fail open.** Every entry point degrades to "no profile" on exception — a Redis outage
+   costs convenience, never the ability to answer.
+2. **Remember questions, never answers.** Facts come from what the human typed; storing
+   the model's own words would harden a hallucination into a remembered preference.
+3. **Preferences are hints about a person, not facts about a project.** Never grounding —
+   the model still reads every number from retrieved documents.
 """
 
 import json
@@ -134,13 +121,9 @@ def load_profile(key: str) -> UserProfile:
 def remember(key: str, question: str, project_id: str | None = None, db: Session | None = None) -> None:
     """Fold one question into the stored profile. Never raises.
 
-    Only the human's own words are read (see rule 2 in the module docstring). Writing is
-    read-modify-write rather than atomic: two concurrent questions from the same person
-    could drop one update, which costs a remembered preference and nothing more — not
-    worth the complexity of a Lua script or a lock.
-
-    `db` lets the project be recovered from the question itself when the session carries
-    no `project_id`, which is now the normal case — see `_resolve_project`.
+    Read-modify-write, not atomic — two concurrent questions could drop one update, which
+    costs a remembered preference and nothing more. `db` recovers the project from the
+    question when the session carries none, the normal case (see `_resolve_project`).
     """
     remember_many(key, [question], project_id, db)
 
@@ -216,13 +199,9 @@ def forget(key: str) -> None:
 def _resolve_project(question: str, project_id: str | None, db: Session | None) -> str | None:
     """Which project this question is about: the session's, else the one it names.
 
-    The session's own `project_id` wins when set, being an explicit choice. It is almost
-    never set any more — the picker was dropped from session creation — so without the
-    fallback below `projects` stayed permanently empty and a remembered profile could
-    never say *which* project a Sale keeps asking about.
-
-    Imported inside the function to keep the module importable without a database, which
-    the pure-unit tests of `extract_facts` rely on.
+    The session's `project_id` wins when set, but it's almost never set — the picker was
+    dropped from session creation — so without this fallback `projects` stayed permanently
+    empty. Imported inside the function to keep the module importable without a database.
     """
     if project_id:
         return project_id

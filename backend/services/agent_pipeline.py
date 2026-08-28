@@ -298,12 +298,10 @@ def _scope_resolve(state: PipelineState) -> dict[str, Any]:
 def _cache_check(state: PipelineState) -> dict[str, Any]:
     """Check the Semantic Cache before spending any tokens.
 
-    Skipped entirely once there is conversation history. `cache_service` keys purely on
-    the bare query text — a context-dependent follow-up ("giá bao nhiêu?") answered under
-    one customer's history must never be replayed verbatim to a different customer whose
-    "giá bao nhiêu?" means something else. Only a conversation's opening question, which
-    carries no such ambiguity, is eligible for the cache — see the matching guard around
-    `_store_cache`'s call site in `run_pipeline`.
+    Skipped once there is history: `cache_service` keys on bare query text, so a
+    context-dependent follow-up ("giá bao nhiêu?") must never replay to a different
+    customer whose same question means something else. Only an opening question is
+    eligible.
     """
     if state.get("history"):
         tracing.step("cache_check", hit=False, skipped="has_history")
@@ -351,39 +349,22 @@ def _needs_history_fold(query: str) -> bool:
 
 
 def _retrieval_query(query: str, history: list[dict] | None) -> str:
-    """Fold recent turns into the string that gets embedded for retrieval — a bare
-    follow-up ("giá bao nhiêu?", "có", "thế ... thì sao?") carries almost no signal on its
-    own. Two distinct patterns need covering, and neither alone is enough:
+    """Fold recent turns into the string embedded for retrieval — a bare follow-up ("giá
+    bao nhiêu?", "có") carries almost no signal alone. Two patterns, neither enough alone:
 
-    1. The topic a HUMAN set with their own last substantive messages — any non-AGENT
-       sender counts (customer, or sale replying mid-handoff or drafting via the /suggest
-       co-pilot), not just "whoever has this call's clearance", which stops matching who's
-       actually asking once /suggest runs a CUSTOMER's message at INTERNAL clearance for
-       Sale's benefit. Up to the last TWO such turns, not just one: a single turn back can
-       itself be another referential follow-up ("Khu này có bãi đỗ xe không?") that doesn't
-       repeat the actual standing topic (project name, budget) set further back — a live
-       bug where "Thế tôi muốn mua để đầu tư thì sao?", three turns after "...ngân sách 3
-       tỷ, muốn mua The Pavilion", lost both the project name and the budget because only
-       the immediately preceding (unrelated, parking-related) turn got folded in.
-    2. A topic the AI ITSELF just introduced by asking about it ("...các khoản chiết khấu
-       này không ạ?" -> "có"). Folding in only pattern 1 drops this entirely — a short
-       affirmative/negative reply to the AI's own question then retrieves against
-       whatever topic was live several turns earlier, which reads as the AI forgetting the
-       question it just asked. Only counts when that AI turn actually ends in "?" (a
-       closing statement or plain greeting carries no topic worth folding in — a short
-       reply isn't answering a question that wasn't asked), and only its tail is kept (not
-       the whole paragraph before it), since the trailing question is what a short reply is
-       responding to and a long AI reply would otherwise dilute the embedding with prose.
+    1. The topic a HUMAN set with their last (up to two) substantive messages. Two turns,
+       not one: a single turn back can itself be an unrelated referential follow-up ("Khu
+       này có bãi đỗ xe không?") — a real bug once dropped both project name and budget
+       from "Thế tôi muốn mua để đầu tư thì sao?" because only that unrelated turn folded
+       in.
+    2. A topic the AI itself just asked about ("...chiết khấu này không ạ?" -> "có"). Only
+       the AI turn's tail counts, and only when it ends in "?" — a closing statement or
+       greeting carries no topic worth folding in.
 
-    Only applied when `query` itself needs it (see _needs_history_fold) — a query that
-    already names its own topic is self-sufficient and must not be diluted by whatever was
-    being discussed a turn earlier.
-
-    Deliberately shallow — up to two turns back, not a scan of the whole history — so an
-    old, since-resolved topic much earlier in the conversation doesn't keep dragging
-    retrieval toward it. Does not affect keyword classification
-    (needs_inventory/needs_document_retrieval) or what the LLM sees as "the question" — see
-    _retrieve and build_prompt, both of which keep using the bare `query`.
+    Only applied when `_needs_history_fold` says the query needs it, and only up to two
+    turns back — an old, resolved topic must not keep dragging retrieval toward it. Never
+    changes keyword classification or what the LLM sees as "the question"; `_retrieve` and
+    `build_prompt` both keep using the bare `query`.
     """
     if not history or not _needs_history_fold(query):
         return query
@@ -426,7 +407,8 @@ def _retrieve(state: PipelineState) -> dict[str, Any]:
         catalog_offer_service.build_catalog_overview(state.get("db")) if is_catalog_overview_query(query) else ""
     )
     catalog = catalog_context_service.resolve_tower_context(state.get("db"), state.get("project_id"), query)
-    catalog_context = catalog.text
+    project_profile = catalog_context_service.project_profile_context(state.get("db"), state.get("project_id"), query)
+    catalog_context = "\n\n".join(part for part in (project_profile, catalog.text) if part)
     hits: list[dict] = []
 
     retrieval_query = _retrieval_query(query, state.get("history"))
@@ -587,12 +569,10 @@ def _catalog_search_result(state: PipelineState, criteria: search_criteria.Searc
 def _tool_call(state: PipelineState) -> dict[str, Any]:
     """Function Calling into the internal inventory API for constantly changing data.
 
-    Sessions carry no project by default (the picker was dropped from session creation),
-    so a missing `project_id` is the common case, not a rare one — see
-    InventoryProjectUnresolvedError, caught separately below. A genuine `InventoryApiError`
-    (network/API actually down) still degrades to answering from whatever documents were
-    also retrieved, falling back to the generic "temporarily unavailable" notice only when
-    there is nothing else to answer from.
+    A missing `project_id` is the common case, not rare — sessions carry no project by
+    default. A genuine `InventoryApiError` degrades to answering from whatever documents
+    were retrieved, falling back to the "temporarily unavailable" notice only when there
+    is nothing else to answer from.
     """
     project_id = state.get("project_id")
     clearance = state.get("clearance", DocumentVisibility.INTERNAL)
@@ -625,7 +605,8 @@ def _tool_call(state: PipelineState) -> dict[str, Any]:
                     "notice_emotion": MessageEmotion.RESPECTFUL,
                 }
             if enriched != criteria:
-                assert session_id is not None
+                if session_id is None:
+                    raise RuntimeError("Persisted search criteria require a session id.")
                 _, history = search_criteria.load(session_id)
                 search_criteria.save(session_id, enriched, history)
                 criteria = enriched
@@ -840,15 +821,10 @@ _HAS_DIGIT = re.compile(r"\d")
 def _drop_figureless_listings(listings: list["prompts.PropertyListing"]) -> list["prompts.PropertyListing"]:
     """Discard cards the model filled with words where the figures should be.
 
-    The LISTINGS block says to leave `listings` empty when the context has no price for a
-    unit type, rather than "tự chế hay mượn tạm một con số khác cho đủ 3 trường". The model
-    does it anyway, and reliably: `eval/deepeval_suite.py` caught a placeholder card on 5
-    of 6 runs of a plain policy question, each time with a differently worded placeholder.
-
-    A card exists to carry an area and a price. One that carries neither renders as an
-    empty box beside a correct answer, so dropping it loses nothing a reader wanted — and
-    doing it here rather than in the prompt makes it a property of the system instead of
-    something that drifts with the next prompt edit or model upgrade.
+    The prompt already says to leave `listings` empty rather than invent a placeholder, but
+    the model does it anyway — `eval/deepeval_suite.py` caught one on 5 of 6 runs of a plain
+    policy question. Enforced here rather than in the prompt so it survives prompt edits and
+    model upgrades. A card with neither figure loses nothing a reader wanted.
     """
     kept = []
     for listing in listings:
@@ -868,14 +844,9 @@ def _drop_figureless_listings(listings: list["prompts.PropertyListing"]) -> list
 def _resolve_listing_images(db: Session | None, listings: list["prompts.PropertyListing"]) -> list[dict]:
     """Attach real subdivision photos and amenities to each model-proposed listing.
 
-    The model only ever supplies text fields (project_name, unit_type, area_range,
-    price_range) — never an image URL or an amenity name, so it cannot hallucinate either.
-    This resolves the project the same way `answer_images_service.resolve_project_id`
-    already does for memory/images, then picks a few photos matching the unit type (falling
-    back to the subdivision's own overview shots) via `select_listing_images`, and a few
-    named amenities straight from the catalogue record via `select_listing_amenities`. A
-    listing whose project can't be resolved is still kept, just with both empty — the
-    frontend renders a placeholder rather than losing the listing entirely over that.
+    The model only ever supplies text fields, never an image URL or amenity name, so it
+    cannot hallucinate either. A listing whose project can't be resolved is kept with both
+    empty — the frontend renders a placeholder rather than losing the listing.
     """
     resolved: list[dict] = []
     for listing in listings:
@@ -892,7 +863,11 @@ def _resolve_listing_images(db: Session | None, listings: list["prompts.Property
                     image_urls = [
                         answer_images_service.public_gallery_url(url)
                         for url in answer_images_service.select_listing_images(
-                            gallery, listing.unit_type, project_name=listing.project_name
+                            gallery,
+                            listing.unit_type,
+                            project_name=listing.project_name,
+                            tower=listing.tower,
+                            unit_code=listing.unit_code,
                         )
                     ]
                     amenities = answer_images_service.select_listing_amenities(project)
@@ -912,6 +887,7 @@ def _resolve_listing_images(db: Session | None, listings: list["prompts.Property
                 "project_id": project_id,
                 "unit_code": listing.unit_code,
                 "status": listing.status,
+                "tower": listing.tower,
             }
         )
     return resolved
@@ -923,13 +899,10 @@ _CITATION_TOKEN_PATTERN = re.compile(r"\d+(?:[.,]\d+)*|[^\W\d_]+(?:\+\d+)?", re.
 def _citations_for(docs: list[dict], *, answer: str = "") -> list[dict]:
     """Citations are only worth showing when they point at one coherent source.
 
-    An unscoped search (no `project_id` on the session/query) can return top hits from
-    several unrelated projects — the exact shape of query that also makes the model ask
-    "which project/tower do you mean?" instead of actually answering from any of them.
-    Chips naming 2-3 different projects' files under a reply that never engaged with any
-    of them read as noise at best and as false grounding at worst, so this drops citations
-    entirely rather than picking one project's files to keep — there's no principled way
-    to know which project (if any) the answer actually used.
+    An unscoped search can return hits from several unrelated projects. Chips naming 2-3
+    projects under a reply that never engaged with any of them read as false grounding, and
+    there's no principled way to know which project the answer actually used — so this
+    drops citations entirely rather than pick one to keep.
     """
     project_ids = {doc.get("project_id") for doc in docs if doc.get("project_id")}
     if len(project_ids) > 1:
@@ -940,12 +913,10 @@ def _citations_for(docs: list[dict], *, answer: str = "") -> list[dict]:
 def _rank_citation_evidence(docs: list[dict], answer: str) -> list[dict]:
     """Put the passage that best supports the generated claims first per document.
 
-    ``build_citations`` intentionally emits one chip per source file. Retrieval order is
-    not sufficient for choosing that chip's page: a broad overview can rank first while
-    the answer's exact price or area came from a later table chunk. Shared numeric tokens
-    are weighted more heavily than prose because they are the facts for which a precise
-    page anchor matters most. Sorting is stable, so answers without useful overlap retain
-    retrieval order.
+    Retrieval order alone is not enough: a broad overview can rank first while the exact
+    price came from a later chunk. Numeric overlap outweighs prose overlap, since a number
+    is the fact a page anchor matters most for. Stable, so unrelated answers keep retrieval
+    order.
     """
     answer_tokens = _citation_tokens(answer)
     if not answer_tokens:
@@ -1058,22 +1029,14 @@ def _risk_check(state: PipelineState) -> dict[str, Any]:
 def _image_tool(state: PipelineState) -> dict[str, Any]:
     """Fetch the project photos that belong under this answer.
 
-    Covers both routes in answer_images_service: photos a question explicitly asked to
-    see, and photos attached automatically to illustrate an answer that only asked to
-    know something. That service decides which applies and how strictly to filter.
+    Runs *before* Generate, like the inventory tool, so the model knows the photos are
+    coming — run afterwards it once told the Sale to ask Admin for pictures, printed
+    directly above a strip of those pictures. The project is resolved from the question
+    plus retrieved documents, since a Sale often asks "cho xem mặt bằng" without naming
+    one.
 
-    Runs *before* Generate, like the inventory tool: the model has to know the photos are
-    coming. When this ran afterwards it read "the context contains no images" off its own
-    prompt and told the Sale to go ask Admin for pictures — printed directly above a strip
-    of those pictures.
-
-    The project is resolved from the question plus the retrieved documents, since a Sale
-    often asks "cho xem mặt bằng" without naming one, and retrieval has already grounded
-    on the right project by this point.
-
-    Needs a DB session to read the catalogue. `run_pipeline` leaves `db` unset in contexts
-    that have none (unit tests calling the pipeline directly), and the tool is then simply
-    skipped — an answer without photos, never an error.
+    Needs a DB session; `run_pipeline` leaves it unset in contexts that have none (unit
+    tests calling the pipeline directly), and the tool is simply skipped.
     """
     db = state.get("db")
     if db is None:
@@ -1153,11 +1116,9 @@ def _route_after_generate(state: PipelineState) -> str:
 def _route_after_verify(state: PipelineState) -> str:
     """Low score gets one regeneration; still low means declining beats answering wrongly.
 
-    The Verifier's `next_action` is a proposal, and the routing rules here override it in
-    both directions. A "decline" short-circuits the retry — when the judgement is that the
-    context simply has no answer, regenerating burns a Gemini call to produce the same gap
-    — but a passing score still wins, since a judge that scores well and then asks to
-    decline is contradicting itself and the score is the number the threshold is tuned on.
+    The Verifier's `next_action` is a proposal this overrides both ways: "decline"
+    short-circuits a retry that would just burn a call to reproduce the same gap, but a
+    passing score wins regardless — the threshold is tuned on the score, not the verdict.
     """
     score = state.get("verifier_score", 0.0)
     if score >= _threshold():
@@ -1256,24 +1217,18 @@ def run_pipeline(
 ) -> PipelineResult:
     """Entry point for the Sale and customer chat flows.
 
-    `clearance` is the asker's RBAC tier for retrieval and the semantic cache — INTERNAL
-    (default, used by `sale_chat.py`) can read internal+public documents; the customer
-    chat flow (`customer_chat.py`) always passes PUBLIC, anonymous or logged-in alike.
+    `clearance` is the asker's RBAC tier: INTERNAL (default) reads internal+public
+    documents; the customer chat flow always passes PUBLIC.
 
-    `db` is only used by the image tool, to read the project catalogue. It is optional so
-    callers with no session (unit tests driving the pipeline directly) keep working; those
-    simply get an answer with no photos attached.
+    `db` is only used by the image tool; optional so callers with no session still work,
+    just with no photos attached.
 
-    `history` is the session's prior turns, oldest first — [{"sender": ..., "content":
-    ...}, ...] — from BEFORE this `query` (the caller persists the new turn separately;
-    passing it here too would just show the model its own current question twice). `None`/
-    empty means either a brand-new session or a caller that hasn't been updated to fetch
-    it yet — both read identically to the pipeline: no context, cache eligible, exactly
-    the old behaviour. Capped to the most recent `MAX_HISTORY_MESSAGES` here so a caller
-    can pass a whole session's history without thinking about the limit itself.
+    `history` is prior turns, oldest first, from BEFORE this `query` — the caller persists
+    the new turn separately, so passing it here too would show the model its own question
+    twice. Capped to `MAX_HISTORY_MESSAGES` here so callers needn't think about the limit.
 
-    Never raises under any circumstance — the router calls this directly to build the
-    response message, so every failure must collapse into a readable `PipelineResult`.
+    Never raises: the router builds the response message directly from this, so every
+    failure must collapse into a readable `PipelineResult`.
     """
     if not query or not query.strip():
         return PipelineResult(_empty_state_message(clearance), [], 0.0, False, emotion=MessageEmotion.REGRETFUL)
@@ -1411,22 +1366,12 @@ def _run_traced(
 def _store_cache(query: str, result: PipelineResult, project_id: str | None, clearance: DocumentVisibility) -> None:
     """Cache only answers that pass the Verifier and carry nothing question-specific.
 
-    Price-touching answers ARE cached. They used to be refused outright, on the grounds
-    that RiskCheck had to re-run for the HITL card to appear — but a cache hit routes
-    straight to END, so the fix is to re-run RiskCheck there (see `_cache_check`), not to
-    refuse the entry. Refusing it emptied the cache of nearly every real answer this
-    corpus produces: in practice the cache collection was never created at all.
+    Price-touching answers ARE cached: RiskCheck just re-runs on a cache hit instead (see
+    `_cache_check`) — refusing them once emptied the cache of nearly every real answer.
 
-    Answers carrying photos are never cached either. The cache matches on meaning, and
-    "cho xem hình ảnh The Palma" and "cho xem mặt bằng The Palma" are close enough to
-    collide — which served the whole gallery to someone who asked only for floor plans.
-    The photo set is chosen per question, so it cannot be shared between two questions.
-
-    Keyed off `result.images` rather than off `wants_images(query)`: photos now also ride
-    along automatically on questions that never asked for any (see
-    answer_images_service's automatic route), and those are just as topic-specific — the
-    amenity shots attached to "tiện ích có gì" must not be replayed under a cache-matched
-    "mặt bằng thế nào".
+    Answers carrying photos are never cached: the cache matches on meaning, and "cho xem
+    hình ảnh" vs "cho xem mặt bằng" are close enough to collide, serving the wrong photo
+    set to a question that asked for something narrower.
     """
     if result.verifier_score < _threshold():
         return

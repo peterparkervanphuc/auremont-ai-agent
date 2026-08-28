@@ -28,9 +28,12 @@ class PropertyListing(BaseModel):
     `amenities`/`project_id`. All three default empty: a listing whose project/gallery
     could not be resolved is still shown, just without photos or amenity tags.
 
-    `unit_code`/`status` are non-empty only for a listing built from one confirmed
+    `unit_code`/`status`/`tower` are non-empty only for a listing built from one confirmed
     TỒN KHO REAL-TIME record (see prompts.PropertyListing) — a catalogue-only
-    project/subdivision summary card leaves both "".
+    project/subdivision summary card leaves all three "".
+
+    `tower` is both what selected `image_urls` (see answer_images_service.select_listing_images)
+    and what the card shows, so a viewer can check the photo against the tower it claims.
     """
 
     project_name: str
@@ -42,6 +45,7 @@ class PropertyListing(BaseModel):
     project_id: str | None = None
     unit_code: str = ""
     status: str = ""
+    tower: str = ""
 
 
 class MessageCreate(BaseModel):

@@ -116,6 +116,52 @@ def test_missing_tower_detail_never_promotes_the_subdivision_floor_range():
     assert "các thuộc tính cấp tòa còn thiếu" in result.text
 
 
+def test_project_profile_exposes_grounded_location_price_policy_and_amenities():
+    root = Path(__file__).resolve().parents[2]
+    details = json.loads((root / "seed-data" / "apartments" / "the_beverly.json").read_text(encoding="utf-8"))
+    project = SimpleNamespace(id="the-beverly", name="The Beverly", details=details)
+    db = _CatalogueDb({project.id: project})
+
+    context = catalog_context_service.project_profile_context(
+        db,
+        project.id,
+        "Dự án ở đâu, chủ đầu tư là ai, giá căn Studio, chính sách vay và tiện ích có gì?",
+    )
+
+    assert "Mitsubishi Corporation và Vingroup" in context
+    assert "Vinhomes Ocean Park, Quận Gia Lâm, Hà Nội" in context
+    assert "Studio: diện tích 28–36 m²; giá tham khảo 1.8–2.1 tỷ đồng" in context
+    assert "Hỗ trợ vay 70%" in context
+    assert "Bể bơi Santa Monica" in context
+    assert "không xác nhận căn đang còn" in context
+    assert "cần xác nhận bản chính sách hiện hành" in context
+
+
+def test_project_profile_does_not_bloat_an_unrelated_conversation_turn():
+    root = Path(__file__).resolve().parents[2]
+    details = json.loads((root / "seed-data" / "apartments" / "the_beverly.json").read_text(encoding="utf-8"))
+    project = SimpleNamespace(id="the-beverly", name="The Beverly", details=details)
+
+    context = catalog_context_service.project_profile_context(
+        _CatalogueDb({project.id: project}), project.id, "Xin chào"
+    )
+
+    assert context == ""
+
+
+def test_travel_question_gets_known_location_but_not_an_invented_travel_time():
+    root = Path(__file__).resolve().parents[2]
+    details = json.loads((root / "seed-data" / "apartments" / "the_beverly.json").read_text(encoding="utf-8"))
+    project = SimpleNamespace(id="the-beverly", name="The Beverly", details=details)
+
+    context = catalog_context_service.project_profile_context(
+        _CatalogueDb({project.id: project}), project.id, "Di chuyển đến trung tâm mất bao lâu?"
+    )
+
+    assert "Vinhomes Ocean Park, Quận Gia Lâm, Hà Nội" in context
+    assert "Không suy ra thời gian di chuyển" in context
+
+
 class _CatalogueDb:
     def __init__(self, projects):
         self.projects = projects

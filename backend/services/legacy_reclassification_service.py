@@ -319,7 +319,8 @@ def apply_document_reclassification(
         document.is_current = False
 
         if requires_reindex:
-            assert chunks is not None
+            if chunks is None:
+                raise LegacyReclassificationError("Reindexing requires parsed document chunks.")
             delete_document_vectors(document.id)
             _embed_and_index(document, chunks, is_current=False)
 

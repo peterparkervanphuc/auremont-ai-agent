@@ -37,9 +37,10 @@ from backend.services import memory_service, search_criteria
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "rules-1"
+ANALYSIS_VERSION = "rules-2"
 
 _RULE_WEIGHTS: dict[str, int] = {
+    "transaction_ready": 65,
     "stated_budget": 30,
     "budget_over_1bn": 5,
     "closing_intent": 25,
@@ -56,7 +57,14 @@ _RULE_WEIGHTS: dict[str, int] = {
 MAX_SCORE = 100
 SOFT_MAX = 30
 
-LATCHING_SIGNALS = ("stated_budget", "budget_over_1bn", "closing_intent", "wants_human", "named_unit_code")
+LATCHING_SIGNALS = (
+    "transaction_ready",
+    "stated_budget",
+    "budget_over_1bn",
+    "closing_intent",
+    "wants_human",
+    "named_unit_code",
+)
 
 _ONE_BILLION = 1_000_000_000
 _ENGAGED_TURNS = 6
@@ -170,6 +178,7 @@ def collect_signals(
     ceiling = price.value[1] if price is not None and isinstance(price.value, tuple) else None
     flags["budget_over_1bn"] = bool(budgets) and ceiling is not None and ceiling >= _ONE_BILLION
 
+    flags["transaction_ready"] = intent.is_transaction_ready_lead(query)
     flags["closing_intent"] = intent.needs_registration_gate(query)
     flags["wants_human"] = intent.wants_human_agent(query)
     flags["named_unit_code"] = criteria.get(search_criteria.FIELD_UNIT_CODES) is not None

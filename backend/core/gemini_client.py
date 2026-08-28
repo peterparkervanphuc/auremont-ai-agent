@@ -257,7 +257,8 @@ def _embed(
             )
             raise GeminiEmbeddingError("Gemini embedding request failed.") from exc
 
-    assert response is not None
+    if response is None:
+        raise GeminiEmbeddingError("Gemini embedding retries finished without a response.")
 
     if not response.embeddings:
         raise GeminiEmbeddingError("Gemini returned no embeddings.")
