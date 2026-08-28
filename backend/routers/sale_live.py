@@ -280,6 +280,60 @@ async def get_live_messages(
     return list_messages_for_session(db, session_id)
 
 
+@router.get("/{session_id}/customer-summary", response_model=CustomerConversationSummaryResponse)
+async def get_customer_summary(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN)),
+) -> CustomerConversationSummaryResponse:
+    """Return the last saved handoff brief without spending an LLM call.
+
+    The authorization check resolves only the LIVE row currently owned by this Sale. The
+    service may aggregate the matching AI row internally, but raw AI messages never cross
+    this endpoint.
+    """
+
+    session = _owned_live_session(db, session_id, user)
+    assert session.customer_id is not None  # guaranteed by _owned_live_session
+    summary = customer_summary_service.get_summary_response(db, session.customer_id)
+    if summary is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Khách hàng chưa có bản tóm tắt.")
+    return summary
+
+
+@router.post("/{session_id}/customer-summary/refresh", response_model=CustomerConversationSummaryResponse)
+async def refresh_customer_summary(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN)),
+) -> CustomerConversationSummaryResponse:
+    """Update the brief from messages after its checkpoint, or return the fresh cache."""
+
+    session = _owned_live_session(db, session_id, user)
+    assert session.customer_id is not None  # guaranteed by _owned_live_session
+    try:
+        summary = customer_summary_service.refresh_summary(db, session.customer_id)
+    except customer_summary_service.CustomerSummaryGenerationError as exc:
+        detail = (
+            "Dịch vụ AI tạm thời đã đạt giới hạn sử dụng. Bản tóm tắt cũ vẫn được giữ nguyên."
+            if is_gemini_quota_error(exc)
+            else "Không thể cập nhật tóm tắt lúc này. Bản tóm tắt cũ vẫn được giữ nguyên."
+        )
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
+
+    log_event(
+        "chat.customer_summary.refreshed",
+        user_id=user.id,
+        username=user.username,
+        session_id=session.id,
+        customer_id=session.customer_id,
+        newly_processed_message_count=summary.newly_processed_message_count,
+        source_message_count=summary.source_message_count,
+        from_cache=summary.from_cache,
+    )
+    return summary
+
+
 @router.get("/{session_id}/ai-history", response_model=list[MessageResponse])
 async def get_ai_history(
     session_id: int, db: Session = Depends(get_db), user: User = Depends(require_role(UserRole.SALE, UserRole.ADMIN))

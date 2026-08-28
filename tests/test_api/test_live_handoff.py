@@ -314,7 +314,9 @@ def test_only_assigned_sale_can_refresh_the_cross_channel_customer_summary(
         "generate_json",
         lambda *_args, **_kwargs: CustomerSummarySnapshot(
             summary_text="Khách tìm căn 2PN với ngân sách 3 tỷ.",
-            metadata=CustomerSummaryMetadata(needs=CustomerNeeds(unit_types=["2PN"], budget_max=3_000_000_000)),
+            metadata=CustomerSummaryMetadata(
+                needs=CustomerNeeds(unit_types=["2PN"], budget_max=3_000_000_000)
+            ),
         ),
     )
 
@@ -326,7 +328,9 @@ def test_only_assigned_sale_can_refresh_the_cross_channel_customer_summary(
     # The app-level dependency override is shared; logging in as the other Sale switches
     # the authenticated actor for this request and must make the live id indistinguishable
     # from a non-existent one.
-    forbidden = as_sale(other_sale).post(f"/api/v1/sale/live-inbox/{live_session.id}/customer-summary/refresh")
+    forbidden = as_sale(other_sale).post(
+        f"/api/v1/sale/live-inbox/{live_session.id}/customer-summary/refresh"
+    )
     assert forbidden.status_code == 404
 
 

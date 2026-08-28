@@ -15,6 +15,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   DocumentIcon,
+  GlobeIcon,
   HomeIcon,
   LogInIcon,
   LogOutIcon,
@@ -126,6 +127,11 @@ export function TopNavbar() {
         <NavLink to={homeHref} end className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
           <HomeIcon size={16} />
           Trang chủ
+        </NavLink>
+
+        <NavLink to="/news" className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
+          <GlobeIcon size={16} />
+          Tin tức
         </NavLink>
 
         {showCatalogNav && (
@@ -388,6 +394,15 @@ export function TopNavbar() {
           >
             <HomeIcon size={16} />
             Trang chủ
+          </NavLink>
+
+          <NavLink
+            to="/news"
+            onClick={() => setMobileOpen(false)}
+            className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}
+          >
+            <GlobeIcon size={16} />
+            Tin tức
           </NavLink>
 
           {showCatalogNav && (

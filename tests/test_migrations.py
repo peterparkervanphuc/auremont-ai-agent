@@ -26,6 +26,7 @@ from backend.models import (  # noqa: F401  (đăng ký bảng vào Base.metadat
     hitl_log,
     lead,
     message,
+    news_article,
     observability,
     project,
     user,
@@ -47,6 +48,7 @@ EXPECTED_TABLES = {
     "pipeline_trace_runs",
     "llm_usage_events",
     "customer_conversation_summaries",
+    "news_articles",
 }
 
 
@@ -131,5 +133,40 @@ def test_repair_migration_restores_missing_document_relations(tmp_path):
         indexes = {item["name"] for item in inspect(engine).get_indexes("document_relations")}
         assert "ix_document_relations_target_document_id" in indexes
         assert "ix_document_relations_review_status" in indexes
+    finally:
+        engine.dispose()
+
+
+def test_reconciliation_migration_accepts_the_develop_b1_history(tmp_path):
+    """Upgrade a DB where b1 meant leads, not customer summaries.
+
+    ``develop`` and the feature branch once published the same revision id with different
+    contents.  Reproducing the develop-side schema here prevents a future cleanup from
+    reintroducing an upgrade failure for databases that already ran that revision.
+    """
+
+    db_path = tmp_path / "develop-history.db"
+    url = f"sqlite:///{db_path}"
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.config_file_name = None
+    config.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
+    config.set_main_option("sqlalchemy.url", url)
+
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "a1b2c3d4e5f7")
+        lead.Lead.__table__.create(engine)
+        with engine.begin() as connection:
+            connection.exec_driver_sql("ALTER TABLE users ADD COLUMN full_name VARCHAR(255)")
+            connection.exec_driver_sql("ALTER TABLE users ADD COLUMN phone VARCHAR(20)")
+            connection.exec_driver_sql("CREATE INDEX ix_users_phone ON users (phone)")
+
+        command.stamp(config, "b1c2d3e4f5a6")
+        command.upgrade(config, "head")
+
+        tables = set(inspect(engine).get_table_names())
+        assert {"leads", "customer_conversation_summaries", "news_articles"} <= tables
+        user_columns = {column["name"] for column in inspect(engine).get_columns("users")}
+        assert {"full_name", "phone"} <= user_columns
     finally:
         engine.dispose()

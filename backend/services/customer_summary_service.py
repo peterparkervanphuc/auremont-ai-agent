@@ -70,7 +70,11 @@ class _TranscriptMessage:
 
 
 def get_saved_summary(db: Session, customer_id: int) -> CustomerConversationSummary | None:
-    return db.query(CustomerConversationSummary).filter(CustomerConversationSummary.customer_id == customer_id).first()
+    return (
+        db.query(CustomerConversationSummary)
+        .filter(CustomerConversationSummary.customer_id == customer_id)
+        .first()
+    )
 
 
 def get_summary_response(db: Session, customer_id: int) -> CustomerConversationSummaryResponse | None:

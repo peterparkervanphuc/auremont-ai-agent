@@ -284,6 +284,10 @@ export function LiveChatPage() {
         </div>
 
         <div className="chat-topbar-actions">
+          <button className="btn btn-outline" type="button" onClick={summarizeCustomer} disabled={summaryLoading}>
+            {summaryLoading ? <LoaderIcon size={15} className="icon-spin" /> : <ClipboardListIcon size={15} />}
+            Tóm tắt khách
+          </button>
           <button className="btn btn-outline" type="button" onClick={() => setShowAiHistory(true)}>
             <ClockIcon size={15} />
             Xem lại hội thoại AI
@@ -298,6 +302,184 @@ export function LiveChatPage() {
           </button>
         </div>
       </header>
+
+      {summaryOpen && (
+        <>
+          <button
+            type="button"
+            className="customer-summary-scrim"
+            aria-label="Đóng tóm tắt khách hàng"
+            onClick={() => setSummaryOpen(false)}
+          />
+          <aside className="customer-summary-drawer" aria-label="Tóm tắt khách hàng">
+            <div className="customer-summary-head">
+              <div>
+                <span className="customer-summary-eyebrow">Auremont AI · hồ sơ bàn giao</span>
+                <h2>{summary?.customer_label ?? "Tóm tắt khách hàng"}</h2>
+              </div>
+              <button
+                type="button"
+                className="customer-summary-close"
+                onClick={() => setSummaryOpen(false)}
+                aria-label="Đóng"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+
+            {summaryError && summary && (
+              <div className="customer-summary-error" role="alert">
+                <AlertTriangleIcon size={16} />
+                <span>{summaryError}</span>
+              </div>
+            )}
+
+            {summaryLoading && !summary ? (
+              <div className="customer-summary-loading">
+                <LoaderIcon size={24} className="icon-spin" />
+                <strong>Đang tổng hợp hội thoại…</strong>
+                <span>AI chỉ đọc các tin nhắn mới kể từ lần tóm tắt gần nhất.</span>
+              </div>
+            ) : summary ? (
+              <div className="customer-summary-body">
+                <div className="customer-summary-meta">
+                  <span>{summary.source_message_count} tin nhắn</span>
+                  <span>
+                    {summary.newly_processed_message_count > 0
+                      ? `+${summary.newly_processed_message_count} mới`
+                      : "Đã cập nhật"}
+                  </span>
+                  <span>{parseServerDate(summary.generated_at).toLocaleString("vi-VN")}</span>
+                </div>
+
+                <section className="customer-summary-hero">
+                  <div className="customer-summary-signal-row">
+                    {summary.metadata.urgency && (
+                      <span className="customer-summary-signal">Mức độ: {summary.metadata.urgency}</span>
+                    )}
+                    {summary.metadata.sentiment && (
+                      <span className="customer-summary-signal">{summary.metadata.sentiment}</span>
+                    )}
+                  </div>
+                  <p>{summary.summary_text}</p>
+                </section>
+
+                <section className="customer-summary-section">
+                  <h3>Nhu cầu hiện tại</h3>
+                  <div className="customer-summary-facts">
+                    {summary.metadata.needs.purchase_purpose && (
+                      <div><span>Mục đích</span><strong>{summary.metadata.needs.purchase_purpose}</strong></div>
+                    )}
+                    {(summary.metadata.needs.budget_min !== null || summary.metadata.needs.budget_max !== null) && (
+                      <div>
+                        <span>Ngân sách</span>
+                        <strong>
+                          {formatBudget(summary.metadata.needs.budget_min) ?? "—"} – {formatBudget(summary.metadata.needs.budget_max) ?? "—"}
+                        </strong>
+                      </div>
+                    )}
+                    {(summary.metadata.needs.area_min_m2 !== null || summary.metadata.needs.area_max_m2 !== null) && (
+                      <div>
+                        <span>Diện tích</span>
+                        <strong>{summary.metadata.needs.area_min_m2 ?? "—"}–{summary.metadata.needs.area_max_m2 ?? "—"} m²</strong>
+                      </div>
+                    )}
+                    {summary.metadata.needs.purchase_timeline && (
+                      <div><span>Thời điểm mua</span><strong>{summary.metadata.needs.purchase_timeline}</strong></div>
+                    )}
+                  </div>
+                  {[
+                    ...summary.metadata.needs.projects,
+                    ...summary.metadata.needs.unit_types,
+                    ...summary.metadata.needs.property_types,
+                  ].length > 0 && (
+                    <div className="customer-summary-tags">
+                      {[
+                        ...summary.metadata.needs.projects,
+                        ...summary.metadata.needs.unit_types,
+                        ...summary.metadata.needs.property_types,
+                      ].map((item) => <span key={item}>{item}</span>)}
+                    </div>
+                  )}
+                </section>
+
+                {summary.metadata.considered_units.length > 0 && (
+                  <section className="customer-summary-section">
+                    <h3>Căn đã quan tâm</h3>
+                    <div className="customer-summary-list">
+                      {summary.metadata.considered_units.map((unit) => (
+                        <div key={`${unit.project_id ?? "project"}-${unit.unit_code}`} className="customer-summary-unit">
+                          <div><strong>{unit.unit_code}</strong><span>{unit.project_id ?? "Chưa rõ dự án"}</span></div>
+                          {unit.customer_reaction && <p>{unit.customer_reaction}</p>}
+                          <small><AlertTriangleIcon size={12} /> Cần kiểm tra lại tồn kho</small>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {summary.metadata.pending_questions.length > 0 && (
+                  <section className="customer-summary-section">
+                    <h3>Chờ xử lý</h3>
+                    <ul className="customer-summary-checklist">
+                      {summary.metadata.pending_questions.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </section>
+                )}
+
+                {summary.metadata.objections.length > 0 && (
+                  <section className="customer-summary-section">
+                    <h3>Băn khoăn của khách</h3>
+                    <ul className="customer-summary-checklist customer-summary-checklist--warning">
+                      {summary.metadata.objections.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </section>
+                )}
+
+                {summary.metadata.commitments.length > 0 && (
+                  <section className="customer-summary-section">
+                    <h3>Cam kết của Sale</h3>
+                    <ul className="customer-summary-checklist">
+                      {summary.metadata.commitments.map((item) => <li key={item.content}>{item.content}</li>)}
+                    </ul>
+                  </section>
+                )}
+
+                {summary.metadata.next_best_actions.length > 0 && (
+                  <section className="customer-summary-section customer-summary-section--actions">
+                    <h3>Việc nên làm tiếp theo</h3>
+                    <ol>
+                      {summary.metadata.next_best_actions.map((item) => <li key={item}>{item}</li>)}
+                    </ol>
+                  </section>
+                )}
+              </div>
+            ) : (
+              <div className="customer-summary-loading">
+                <AlertTriangleIcon size={24} />
+                <strong>Chưa tạo được bản tóm tắt</strong>
+                <span>{summaryError ?? "Bạn có thể thử làm mới mà không làm mất dữ liệu cũ."}</span>
+              </div>
+            )}
+
+            <div className="customer-summary-footer">
+              <span className="customer-summary-private">
+                <ShieldCheckIcon size={14} />
+                Chỉ Sale nhìn thấy · khách hàng không nhận được lệnh hoặc bản tóm tắt này.
+              </span>
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={summarizeCustomer}
+                disabled={summaryLoading}
+              >
+                {summaryLoading ? <LoaderIcon size={13} className="icon-spin" /> : <RefreshIcon size={13} />}
+                Làm mới
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
 
       {sessionId && (
         <AiHistoryModal sessionId={Number(sessionId)} open={showAiHistory} onClose={() => setShowAiHistory(false)} />
