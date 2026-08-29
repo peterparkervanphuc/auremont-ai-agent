@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
 from io import BytesIO
 from pathlib import PurePath
 
@@ -500,23 +501,14 @@ def reclassify_document(
 ) -> Document:
     """Safely correct classification and conflict-scope metadata.
 
-    `update_document_classification` refuses category/project/scope changes outright, because the
-    category is not just a label: `chunk_sections` splits legal documents by Article/Clause
-    and price lists by table rows, `scan_conflicts_for` compares price lists differently
-    from everything else, and retrieval filters on the category in the Qdrant payload. A
-    plain UPDATE would leave chunks built for the old category answering under the new one.
+    A plain UPDATE can't do this: category drives how `chunk_sections` splits the document,
+    how `scan_conflicts_for` compares it, and what retrieval filters on — a bare label
+    change would leave old chunks answering under the new category. Project changes also
+    need a re-index since `project_id` lives in every Qdrant payload.
 
-    Without this, a misclassified upload (anything the classifier could not identify lands
-    in `other`, which no retrieval category matches) could only be fixed by deleting the
-    document, renaming the file and uploading it again. Project changes also require a
-    re-index because ``project_id`` is stored in every Qdrant payload. Subdivision,
-    building and unit corrections do not change vector contents, but still require the
-    same quarantine and conflict re-scan before publication.
-
-    Ordered fail-closed throughout: the document stops being retrievable before anything
-    changes, and only becomes retrievable again once the new chunks and a fresh conflict
-    scan both succeed. Every failure leaves it quarantined rather than answering from a
-    half-applied state.
+    Fail-closed throughout: the document stops being retrievable before anything changes,
+    and only becomes retrievable again once new chunks and a fresh conflict scan both
+    succeed.
     """
     document = get_document(db, document_id, for_update=True)
     if document is None:
@@ -1211,7 +1203,8 @@ def _conflict_scope_lock(
     by the ingestion session, until the compare-and-activate section has finished.
     """
     bind = db.get_bind()
-    assert isinstance(bind, Engine), "the advisory lock needs its own connection from the engine"
+    if not isinstance(bind, Engine):
+        raise DocumentIngestionError("The conflict lock requires a SQLAlchemy engine binding.")
     if bind.dialect.name != "mysql":
         yield
         return
@@ -1364,9 +1357,7 @@ def _same_business_scope(left: Document, right: Document) -> bool:
 
     left_unit_types = _scope_values(left, "unit_types")
     right_unit_types = _scope_values(right, "unit_types")
-    if left_unit_types and right_unit_types and not left_unit_types & right_unit_types:
-        return False
-    return True
+    return not (left_unit_types and right_unit_types and not left_unit_types & right_unit_types)
 
 
 _SEMANTIC_CATEGORY_GROUPS = (
@@ -1563,12 +1554,7 @@ def _business_facts(text: str) -> dict[str, set[str]]:
         line = " ".join(strip_diacritics(raw_line).split())
         values: list[str] = []
 
-        def replace_value(match: re.Match[str]) -> str:
-            slot = len(values)
-            values.append(_normalise_fact_value(match))
-            return f" <value{slot}> "
-
-        anchor = _FACT_VALUE_RE.sub(replace_value, line)
+        anchor = _FACT_VALUE_RE.sub(partial(_capture_fact_value, values=values), line)
         if not values:
             continue
 
@@ -1579,6 +1565,13 @@ def _business_facts(text: str) -> dict[str, set[str]]:
         for slot, value in enumerate(values):
             facts.setdefault(f"{anchor} [slot {slot}]", set()).add(value)
     return facts
+
+
+def _capture_fact_value(match: re.Match[str], *, values: list[str]) -> str:
+    """Capture a normalized fact value without closing over a loop-local list."""
+    slot = len(values)
+    values.append(_normalise_fact_value(match))
+    return f" <value{slot}> "
 
 
 def _normalise_fact_value(match: re.Match[str]) -> str:

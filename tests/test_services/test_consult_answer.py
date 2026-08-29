@@ -89,6 +89,7 @@ def test_public_clearance_carries_listings_through(monkeypatch):
             "project_id": None,
             "unit_code": "",
             "status": "",
+            "tower": "",
         }
     ]
 

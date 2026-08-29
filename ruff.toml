@@ -7,8 +7,15 @@ line-length = 120
 extend-exclude = ["migrations/versions"]
 
 [lint]
-select = ["E", "F", "I", "N", "W", "UP"]
+select = ["E", "F", "I", "N", "W", "UP", "B", "S", "SIM", "RET"]
 ignore = ["E501"]
+
+[lint.per-file-ignores]
+# FastAPI intentionally declares dependency factories and request extractors as defaults.
+"backend/routers/*.py" = ["B008"]
+"backend/core/deps.py" = ["B008"]
+# Pytest uses assert, test credentials, and local FastAPI routes by design.
+"tests/**/*.py" = ["S101", "S105", "S106", "B008"]
 
 [format]
 quote-style = "double"

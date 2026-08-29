@@ -70,6 +70,46 @@ def test_browsing_questions_stay_cold():
         assert tier is LeadTier.COLD, f"{query!r} scored {score}"
 
 
+@pytest.mark.parametrize(
+    "query",
+    (
+        "Hôm nay tôi đặt cọc thì cần chuyển bao nhiêu?",
+        "Gửi tôi bảng hàng còn trống mới nhất.",
+        "Tôi muốn xem căn thực tế hoặc căn mẫu.",
+        "Căn này hiện còn không?",
+        "Có thể giữ căn cho tôi đến ngày mai không?",
+        "Gửi tôi chính sách và tiến độ thanh toán cụ thể.",
+        "Tính giúp tôi số tiền phải thanh toán từng đợt.",
+        "Tính giúp tôi khoản vay và số tiền trả hằng tháng.",
+        "Tôi cần chuẩn bị giấy tờ gì để ký hợp đồng?",
+        "Khi nào có thể ký thỏa thuận đặt cọc?",
+        "Tôi muốn gặp trực tiếp nhân viên tư vấn.",
+        "Có thể sắp xếp lịch tham quan dự án cuối tuần này không?",
+    ),
+)
+def test_explicit_transaction_ready_questions_are_hot(query):
+    score, tier, signals = _score(query)
+
+    assert signals.fired("transaction_ready") is True
+    assert score >= HOT
+    assert tier is LeadTier.HOT
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "Giá bán hiện tại khoảng bao nhiêu?",
+        "Chính sách thanh toán như thế nào?",
+        "Dự án có căn mẫu không?",
+        "Ngân hàng nào hỗ trợ cho vay?",
+    ),
+)
+def test_general_research_questions_are_not_transaction_ready(query):
+    _, _, signals = _score(query)
+
+    assert signals.fired("transaction_ready") is False
+
+
 def test_contact_details_lift_the_same_message_from_warm_to_hot():
     """Asking for a price list anonymously is warm; the same person reachable by phone is hot."""
     query = "cho mình xin bảng giá căn 2PN, ngân sách tầm 3.5 tỷ"

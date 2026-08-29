@@ -84,7 +84,11 @@ def _persist(row: object, *, failed_event: str) -> None:
             try:
                 session.close()
             except Exception:
-                pass
+                logger.warning(
+                    "Could not close observability persistence session",
+                    exc_info=True,
+                    extra={"event": "observability.session.close.failed"},
+                )
 
 
 def _parse_datetime(value: object) -> datetime | None:

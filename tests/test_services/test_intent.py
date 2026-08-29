@@ -4,6 +4,7 @@ from backend.ai.intent import (
     is_conversation_meta_query,
     is_customer_memory_query,
     is_search_refinement,
+    mentions_inventory_followup_field,
     needs_document_retrieval,
     needs_human_handoff,
     needs_inventory,
@@ -149,3 +150,21 @@ def test_customer_memory_query_does_not_steal_recommendations_or_new_facts():
     assert not is_customer_memory_query("Phân khu nào phù hợp với khách của tôi?")
     assert not is_customer_memory_query("Tư vấn dự án cho khách này")
     assert not is_customer_memory_query("Khách này đang quan tâm The Pavilion")
+
+
+def test_inventory_followup_covers_every_field_a_card_displays():
+    """A card shows tower/floor/direction/view, so a follow-up naming one has to reach the
+    inventory rather than document RAG — asking "căn này ở tầng bao nhiêu?" about a unit
+    just displayed was answered with a vague tower-wide range from a PDF."""
+    assert mentions_inventory_followup_field("Căn này nằm ở tầng bao nhiêu?")
+    assert mentions_inventory_followup_field("căn này hướng nào ạ")
+    assert mentions_inventory_followup_field("tòa nào vậy em")
+    assert mentions_inventory_followup_field("view gì thế")
+
+
+def test_inventory_followup_does_not_fire_on_payment_questions():
+    """Diacritic-stripped "tòa" hides inside "thanh toán", so substring matching routed
+    every payment-policy question into an inventory lookup."""
+    assert not mentions_inventory_followup_field("chính sách thanh toán thế nào?")
+    assert not mentions_inventory_followup_field("thủ tục thanh toán ra sao")
+    assert not mentions_inventory_followup_field("toàn bộ dự án có gì")

@@ -177,9 +177,8 @@ def _append(record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     line = json.dumps(record, ensure_ascii=False, default=str)
-    with _write_lock:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
+    with _write_lock, path.open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
 
 
 def read_runs(path: str | Path | None = None) -> list[dict[str, Any]]:

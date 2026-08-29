@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 REQUEST_ID_HEADER = "x-request-id"
 
-_QUIET_PATHS = frozenset({"/health"})
+_QUIET_PATHS = frozenset({"/health", "/health/live", "/health/ready", "/metrics"})
 
 
 def _access_log_level(path: str, status_code: int) -> int:

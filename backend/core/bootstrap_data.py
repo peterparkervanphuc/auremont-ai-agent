@@ -210,12 +210,50 @@ def _sync_project_images() -> None:
             "buoc tai anh, catalogue se hien thi khong co anh."
         )
 
+
+def _sync_catalogue_galleries() -> int:
+    """Refresh gallery metadata without overwriting the rest of a seeded catalogue."""
+    from scripts._gallery import gallery_by_slug
+
+    galleries = gallery_by_slug()
+    db = SessionLocal()
+    updated = 0
+    try:
+        for project in db.query(Project).all():
+            gallery = galleries.get(project.id)
+            if gallery is None:
+                continue
+
+            details = dict(project.details or {})
+            images = dict(details.get("images") or {})
+            if images.get("gallery") == gallery:
+                continue
+
+            images["gallery"] = gallery
+            details["images"] = images
+            project.details = details
+            updated += 1
+
+        if updated:
+            db.commit()
+        return updated
+    finally:
+        db.close()
+
+
 def load_demo_data() -> None:
     settings = get_settings()
     if not settings.auto_load_demo_data:
         return
 
     _sync_project_images()
+
+    try:
+        refreshed = _sync_catalogue_galleries()
+        if refreshed:
+            logger.info("Cap nhat gallery tu manifest cho %d du an.", refreshed)
+    except Exception:
+        logger.warning("Khong dong bo duoc gallery catalogue tu manifest.", exc_info=True)
 
     try:
         if _catalogue_is_loaded():

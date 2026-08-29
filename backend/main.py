@@ -5,14 +5,17 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.core.bootstrap_data import load_demo_data
 from backend.core.config import get_settings
+from backend.core.health import check_readiness
 from backend.core.logging_config import setup_logging
 from backend.core.seed import seed_projects, seed_users
 from backend.middleware.logging import RequestContextMiddleware
+from backend.middleware.metrics import PrometheusMiddleware
 from backend.models import (  # noqa: F401
     chat_session,
     conflict_flag,
@@ -78,6 +81,7 @@ app = FastAPI(
 
 settings = get_settings()
 app.add_middleware(RequestContextMiddleware)
+app.add_middleware(PrometheusMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins.split(","),
@@ -110,9 +114,35 @@ if settings.app_env == "development":
     app.include_router(dev_seed.router)
 
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "env": settings.app_env}
+@app.get("/health/live", include_in_schema=False)
+async def liveness() -> dict[str, str]:
+    """Prove that the API process can serve requests; never contact dependencies."""
+    return {"status": "ok"}
+
+
+async def _readiness_response() -> JSONResponse:
+    result = await check_readiness()
+    result["env"] = settings.app_env
+    status_code = 200 if result["status"] == "ok" else 503
+    return JSONResponse(status_code=status_code, content=result)
+
+
+@app.get("/health/ready", include_in_schema=False)
+async def readiness() -> JSONResponse:
+    """Return 503 when MySQL, Qdrant, or Redis cannot serve traffic."""
+    return await _readiness_response()
+
+
+@app.get("/health", include_in_schema=False)
+async def health() -> JSONResponse:
+    """Backward-compatible alias for readiness used by existing deployments."""
+    return await _readiness_response()
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    """Expose Prometheus metrics without application authentication."""
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 def _request_id_of(request: Request) -> str:

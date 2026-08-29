@@ -1,12 +1,9 @@
-from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.core.enums import LeadTier
 from backend.models.lead import Lead
-from backend.models.user import User
 from backend.services.lead_scoring_service import LeadVerdict
 from backend.utils.time import utcnow
 
@@ -150,23 +147,3 @@ def list_leads_for_customers(db: Session, customer_ids: list[int]) -> dict[int, 
         return {}
     rows = db.query(Lead).filter(Lead.customer_id.in_(customer_ids)).all()
     return {lead.customer_id: lead for lead in rows if lead.customer_id is not None}
-
-
-def count_by_tier(db: Session, *, since: datetime | None = None) -> dict[str, int]:
-    query = db.query(Lead.tier, func.count(Lead.id))
-    if since is not None:
-        query = query.filter(Lead.scored_at >= since)
-    counts = {tier.value: 0 for tier in LeadTier}
-    for tier, total in query.group_by(Lead.tier).all():
-        counts[str(tier)] = total
-    return counts
-
-
-def count_contactable(db: Session, *, since: datetime | None = None) -> tuple[int, int]:
-    """(leads with a phone on file, total leads) — the lead-capture KPI."""
-    query = db.query(Lead).filter(Lead.scored_at.isnot(None))
-    if since is not None:
-        query = query.filter(Lead.scored_at >= since)
-    total = query.count()
-    with_phone = query.join(User, User.id == Lead.customer_id).filter(User.phone.isnot(None)).count() if total else 0
-    return with_phone, total
