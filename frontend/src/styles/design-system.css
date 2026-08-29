@@ -29,7 +29,7 @@
   --cyan: var(--teal);
   --sage: #34946f;
   --emerald: #10b981;
-  --amber: #f59e0b;
+  --amber: #3b82f6;
   --rose: #be123c;
 
   --grad-primary: linear-gradient(135deg, #0050ef, #0a2e7a);
@@ -241,6 +241,14 @@ body {
   overflow-x: hidden;
 }
 
+/* Explicit selection colors — without this, some browsers' default selection
+   background is a pale near-white, which makes light-on-dark text (e.g. the
+   code snippets in admin Settings) unreadable once selected/highlighted. */
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -325,13 +333,13 @@ code {
 }
 
 .btn-gold {
-  background: #f5c518;
-  color: #1a1a1a;
+  background: #3b82f6;
+  color: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
 .btn-gold:hover {
-  background: #e0b30f;
+  background: #2563eb;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
 }
 
@@ -1800,7 +1808,7 @@ code {
   background: rgba(0, 80, 239,0.15);
   color: var(--accent);
 }
-.docs-tab-badge--spin { background: rgba(245,158,11,0.12); color: var(--amber); }
+.docs-tab-badge--spin { background: rgba(59,130,246,0.12); color: var(--amber); }
 
 .docs-tab-content { min-height: 300px; }
 
@@ -2304,7 +2312,7 @@ code {
   border-radius: 100px;
   flex-shrink: 0;
 }
-.doc-status--pending    { background: rgba(245,158,11,0.1); color: var(--amber);   border: 1px solid rgba(245,158,11,0.2); }
+.doc-status--pending    { background: rgba(59,130,246,0.1); color: var(--amber);   border: 1px solid rgba(59,130,246,0.2); }
 .doc-status--processing { background: rgba(0,80,239,0.1); color: var(--accent);  border: 1px solid rgba(0,80,239,0.2); }
 .doc-status--completed  { background: rgba(16,185,129,0.1); color: var(--emerald); border: 1px solid rgba(16,185,129,0.2); }
 .doc-status--failed     { background: rgba(190,18,60,0.1);  color: var(--rose);    border: 1px solid rgba(190,18,60,0.2);  }
@@ -2628,9 +2636,9 @@ code {
 }
 
 .badge-loading {
-  background: rgba(245, 158, 11, 0.1);
+  background: rgba(59, 130, 246, 0.1);
   color: var(--amber);
-  border: 1px solid rgba(245, 158, 11, 0.2);
+  border: 1px solid rgba(59, 130, 246, 0.2);
 }
 
 .badge-ok {
@@ -5432,7 +5440,7 @@ code {
   gap: 10px;
   margin-bottom: 10px;
   padding: 10px 14px;
-  border: 1px solid rgba(245, 158, 11, 0.4);
+  border: 1px solid rgba(59, 130, 246, 0.4);
   border-radius: var(--radius);
   background: var(--bg-2);
 }
@@ -5781,7 +5789,7 @@ code {
   text-align: center;
   gap: 10px;
   padding: 16px 12px;
-  border: 1px solid rgba(245, 158, 11, 0.4);
+  border: 1px solid rgba(59, 130, 246, 0.4);
   border-radius: var(--radius);
   background: var(--bg-2);
   color: var(--text-2);
@@ -5979,8 +5987,8 @@ code {
 }
 
 .topnav-subitem--active > .topnav-dropdown-item {
-  background: var(--accent-warn, #f5a623);
-  color: #1a1a1a;
+  background: var(--accent-warn, #3b82f6);
+  color: #fff;
 }
 
 .topnav-submenu {
