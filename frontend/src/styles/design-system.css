@@ -2892,11 +2892,110 @@ code {
 
 /* Layout */
 .chat-page {
+  position: relative;
+  z-index: 0;
   display: flex;
   flex-direction: column;
   height: calc(100vh - 64px);
   overflow: hidden;
   background: var(--chat-bg);
+}
+
+/* Soft pale-sky-blue wash fading to (mostly) white behind the conversation — blue at the
+   top, blending down into --chat-bg itself so it reads as a gentle light-blue tint in
+   light theme and a muted deep-blue glow in dark theme rather than a fixed pastel that
+   would look wrong on a dark background. .chat-topbar/.chat-messages/.chat-input-area are
+   all transparent, so this shows through the whole page.
+   z-index: -1 needs .chat-page's z-index: 0 above (not just position: relative) to stay
+   scoped under this element's own children — see the git history for why. */
+.chat-page::before {
+  content: "";
+  position: absolute;
+  inset: -15% -10% -35% -10%;
+  z-index: -1;
+  pointer-events: none;
+  /* The spotlight tracks the cursor via --mx/--my, two custom properties CustomerChatPage.tsx
+     writes onto .chat-page itself on mousemove (as %, relative to the page) — they inherit
+     down into this pseudo-element like any other custom property. Falls back to a fixed spot
+     near the top before the first mousemove, or permanently on touch devices with no cursor. */
+  background:
+    radial-gradient(circle at var(--mx, 50%) var(--my, 15%), rgba(255, 255, 255, 0.7), transparent 32%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, #7dd3fc 55%, var(--chat-bg)) 0%,
+      color-mix(in srgb, #7dd3fc 22%, var(--chat-bg)) 30%,
+      var(--chat-bg) 60%
+    );
+  animation: chat-ambient-drift 20s ease-in-out infinite alternate;
+}
+
+@keyframes chat-ambient-drift {
+  0%   { transform: translateY(0); }
+  100% { transform: translateY(2%); }
+}
+
+/* Falling sparkle dots on top of the blue wash — two tiled radial-gradient layers (a
+   coarse layer of bigger/brighter dots plus a finer, dimmer layer for depth) whose
+   background-position animates downward by exactly one tile each loop, so the pattern
+   wraps seamlessly instead of visibly resetting. */
+.chat-page::after {
+  content: "";
+  position: absolute;
+  inset: -15% -10% -35% -10%;
+  z-index: -1;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 480 480'%3E%3Ccircle cx='40' cy='60' r='1.7' fill='%23ffffff'/%3E%3Ccircle cx='340' cy='140' r='1.6' fill='%230ea5e9'/%3E%3Ccircle cx='150' cy='330' r='1.7' fill='%2338bdf8'/%3E%3Ccircle cx='420' cy='400' r='1.5' fill='%23ffffff'/%3E%3Cpath transform='translate(260,50) scale(0.9)' d='M0,-9 Q2,-2 9,0 Q2,2 0,9 Q-2,2 -9,0 Q-2,-2 0,-9 Z' fill='%23ffffff'/%3E%3Cpath transform='translate(70,230) scale(0.7)' d='M0,-9 Q2,-2 9,0 Q2,2 0,9 Q-2,2 -9,0 Q-2,-2 0,-9 Z' fill='%2338bdf8'/%3E%3C/svg%3E");
+  background-size: 480px 480px;
+  animation: chat-sparkle-fall 26s linear infinite;
+}
+
+@keyframes chat-sparkle-fall {
+  from { background-position: 0 0; }
+  to   { background-position: 0 480px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-page::before,
+  .chat-page::after {
+    animation: none;
+  }
+}
+
+/* Cursor particle trail — CustomerChatPage.tsx spawns one .cursor-particle span per
+   throttled mousemove tick inside this layer, positioned at the cursor via inline left/top.
+   z-index: 0 (chat-page's own stacking context) puts it above the -1 background layers
+   above and below the flex-positioned chat content, matching where the mouse actually is. */
+.cursor-particle-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.cursor-particle {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0%, #7dd3fc 55%, transparent 75%);
+  box-shadow: 0 0 10px 2px rgba(56, 189, 248, 0.85), 0 0 4px 1px #fff;
+  animation: cursor-particle-pop 0.7s ease-out forwards;
+}
+
+@keyframes cursor-particle-pop {
+  0% {
+    transform: translate(0, 0) scale(calc(var(--scale, 1) * 0.5));
+    opacity: 1;
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--drift-x, 0), -22px) scale(calc(var(--scale, 1) * 0.3));
+    opacity: 0;
+  }
 }
 
 /* Sale's read-only look at a customer's prior AI-era conversation (AiHistoryModal.tsx) —
@@ -2949,10 +3048,11 @@ code {
   align-items: center;
   gap: 6px;
   font-size: 0.8125rem;
-  color: var(--text-3);
+  color: var(--text-2);
+  background: var(--bg-2);
   padding: 6px 12px;
   border-radius: var(--radius-xs);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-h);
   transition: all var(--t-fast);
 }
 .chat-clear-btn:hover { color: var(--rose); border-color: rgba(190,18,60,0.3); background: rgba(190,18,60,0.06); }
