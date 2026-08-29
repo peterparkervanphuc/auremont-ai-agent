@@ -181,10 +181,43 @@ def test_index_document_chunks_upserts_expected_payload(qdrant):
         "content_type": "prose",
         "y_position": None,
         "category": "other",
+        "primary_category": "other",
+        "document_categories": ["other"],
+        "section_index": None,
         "review_status": "pending",
         "legal_status": "unknown",
         "is_current": True,
     }
+
+
+def test_index_document_chunks_preserves_section_category_and_document_labels(qdrant):
+    chunks = [
+        DocumentChunk(
+            index=0,
+            text="Gia can A-01 la 3.5 ty.",
+            page=2,
+            category="price_list",
+            section_index=4,
+        )
+    ]
+
+    vector_store_service.index_document_chunks(
+        document_id=21,
+        title="tai-lieu-hon-hop.pdf",
+        project_id="project-a",
+        visibility="internal",
+        chunks=chunks,
+        vectors=[[0.1, 0.2, 0.3]],
+        sparse_vectors=[_sparse()],
+        category="sales_policy",
+        categories=["sales_policy", "price_list"],
+    )
+
+    payload = qdrant.upsert_calls[0]["points"][0].payload
+    assert payload["category"] == "price_list"
+    assert payload["primary_category"] == "sales_policy"
+    assert payload["document_categories"] == ["sales_policy", "price_list"]
+    assert payload["section_index"] == 4
 
 
 def test_index_document_chunks_carries_table_content_type(qdrant):
@@ -336,7 +369,7 @@ def test_update_document_vector_metadata_updates_only_one_document(qdrant):
     assert call["payload"] == {
         "review_status": "approved",
         "legal_status": "effective",
-        "category": "legal_document",
+        "primary_category": "legal_document",
         "visibility": "internal",
         "is_current": False,
     }

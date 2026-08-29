@@ -33,6 +33,7 @@ from backend.services.document_coverage_service import (
     document_matches_project_scope,
     project_scope_aliases,
 )
+from backend.services.document_category_service import document_has_category
 
 router = APIRouter(prefix="/admin/stats", tags=["Admin Stats"], dependencies=[Depends(require_role(UserRole.ADMIN))])
 
@@ -306,7 +307,7 @@ async def get_business_dashboard(
         project_documents = [row for row in documents if document_matches_project_scope(row, project, project_aliases)]
         categories = {}
         for category in COVERAGE_CATEGORIES:
-            matching = [row for row in project_documents if row.category == category]
+            matching = [row for row in project_documents if document_has_category(row, category)]
             categories[category] = document_coverage_state(
                 matching,
                 retrieval_project_id=project.id,

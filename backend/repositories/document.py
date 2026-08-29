@@ -20,6 +20,7 @@ from backend.services.document_classification_service import (
     DOCUMENT_CLASSIFICATION_VERSION,
     DocumentClassification,
 )
+from backend.services.document_category_service import document_categories
 from backend.utils.time import utcnow
 
 
@@ -34,6 +35,8 @@ def create_document(
         project_id=doc_schema.project_id,
         visibility=doc_schema.visibility,
         category=doc_schema.category,
+        categories=[str(doc_schema.category)],
+        section_classifications=[],
         subcategory=doc_schema.subcategory,
         subdivision_names=doc_schema.subdivision_names,
         building_codes=doc_schema.building_codes,
@@ -200,6 +203,11 @@ def update_document_classification(
     if payload.category != document.category:
         raise ValueError("Changing document category requires quarantine, conflict rescan and controlled re-indexing.")
 
+    if "categories" in updates and [str(value) for value in payload.categories] != document_categories(document):
+        raise ValueError("Changing document categories requires quarantine and controlled re-indexing.")
+    if "section_classifications" in updates and updates["section_classifications"] != (document.section_classifications or []):
+        raise ValueError("Changing section categories requires quarantine and controlled re-indexing.")
+
     scope_fields = ("subdivision_names", "building_codes", "unit_types")
     changed_scope_fields = [
         field_name
@@ -243,7 +251,7 @@ def _normalised_string_set(values: list[str] | None) -> frozenset[str]:
 def is_document_eligible_after_classification_approval(db: Session, document: Document) -> bool:
     """Whether classification approval is the document's only remaining quarantine."""
 
-    if document.category == DocumentCategory.OTHER:
+    if not any(category != DocumentCategory.OTHER for category in document_categories(document)):
         return False
 
     if document.legal_status in {
@@ -302,6 +310,10 @@ def update_document_classification_suggestion(
         raise ValueError(f"Document with id={document_id} not found.")
 
     document.category = classification.category
+    document.categories = [str(category) for category in classification.categories]
+    document.section_classifications = [
+        section.model_dump(mode="json") for section in classification.section_classifications
+    ]
     document.subcategory = classification.subcategory
     document.project_id = classification.project_id
     document.subdivision_names = classification.subdivision_names

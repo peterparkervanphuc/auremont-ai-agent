@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.core.enums import (
     DocumentCategory,
@@ -43,6 +43,16 @@ class DocumentSecurityFinding(BaseModel):
     excerpt: str
 
 
+class DocumentSectionClassification(BaseModel):
+    section_index: int = Field(ge=0)
+    category: DocumentCategory
+    page: int | None = Field(default=None, ge=1)
+    content_type: str = "prose"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    reason: str = ""
+    excerpt: str = ""
+
+
 class DocumentResponse(BaseModel):
     id: int
     title: str
@@ -52,6 +62,8 @@ class DocumentResponse(BaseModel):
     visibility: str
 
     category: str
+    categories: list[str] = Field(default_factory=list)
+    section_classifications: list[DocumentSectionClassification] = Field(default_factory=list)
     subcategory: str | None = None
     subdivision_names: list[str] | None = None
     building_codes: list[str] | None = None
@@ -94,9 +106,21 @@ class DocumentResponse(BaseModel):
     def _normalise_security_findings(cls, value):
         return value or []
 
+    @field_validator("categories", "section_classifications", mode="before")
+    @classmethod
+    def _normalise_multi_content_metadata(cls, value):
+        return value or []
+
+    @model_validator(mode="after")
+    def _include_primary_category(self) -> "DocumentResponse":
+        self.categories = list(dict.fromkeys([self.category, *self.categories]))
+        return self
+
 
 class DocumentClassificationUpdate(BaseModel):
     category: DocumentCategory
+    categories: list[DocumentCategory] = Field(default_factory=list, max_length=12)
+    section_classifications: list[DocumentSectionClassification] = Field(default_factory=list)
     subcategory: str | None = None
 
     subdivision_names: list[str] | None = None
@@ -116,3 +140,25 @@ class DocumentClassificationUpdate(BaseModel):
     legal_issuer: str | None = None
     legal_domain: str | None = None
     legal_status: LegalStatus = LegalStatus.UNKNOWN
+
+    @model_validator(mode="after")
+    def _normalise_categories(self) -> "DocumentClassificationUpdate":
+        categories_were_supplied = "categories" in self.model_fields_set
+        ordered: list[DocumentCategory] = []
+        secondary_values = (
+            [item.category for item in self.section_classifications]
+            if self.section_classifications
+            else self.categories
+        )
+        for value in [self.category, *secondary_values]:
+            if value not in ordered:
+                ordered.append(value)
+        if categories_were_supplied or self.section_classifications:
+            self.categories = ordered
+
+        seen_indexes: set[int] = set()
+        for item in self.section_classifications:
+            if item.section_index in seen_indexes:
+                raise ValueError(f"Duplicate section_index: {item.section_index}")
+            seen_indexes.add(item.section_index)
+        return self

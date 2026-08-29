@@ -185,17 +185,24 @@ def get_document_project_catalog(db: Session = Depends(get_db)) -> list[ProjectC
 )
 def get_llm_reclassification_candidates(
     legacy_only: bool = Query(default=True),
+    pending_only: bool = Query(default=False),
     limit: int = Query(default=100, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> list[LegacyReclassificationCandidate]:
-    """List legacy stored originals that an Admin may explicitly preview.
+    """List stored originals that an Admin may explicitly preview.
 
     This endpoint is read-only and never calls the LLM. ``legacy_only=true`` selects
     rows whose persisted classifier version is null, rather than guessing from prose in
-    the old classification reason.
+    the old classification reason. ``pending_only=true`` selects only completed
+    documents whose metadata has not yet been approved by an Admin.
     """
 
-    return list_reclassification_candidates(db, legacy_only=legacy_only, limit=limit)
+    return list_reclassification_candidates(
+        db,
+        legacy_only=legacy_only,
+        pending_only=pending_only,
+        limit=limit,
+    )
 
 
 @router.post(

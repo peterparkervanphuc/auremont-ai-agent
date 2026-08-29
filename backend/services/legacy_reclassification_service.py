@@ -52,7 +52,8 @@ from backend.schemas.document_reclassification import (
     ReclassificationApplyResult,
     ReclassificationPreviewItem,
 )
-from backend.services.chunking_service import chunk_sections
+from backend.services.chunking_service import chunk_sections, chunk_sections_by_classification
+from backend.services.document_category_service import document_categories
 from backend.services.document_classification_service import (
     DOCUMENT_CLASSIFICATION_VERSION,
     DocumentClassification,
@@ -101,6 +102,8 @@ _RETIREMENT_RELATIONS = frozenset(
 )
 _CLASSIFICATION_FIELDS = (
     "category",
+    "categories",
+    "section_classifications",
     "subcategory",
     "subdivision_names",
     "building_codes",
@@ -142,9 +145,16 @@ def list_reclassification_candidates(
     db: Session,
     *,
     legacy_only: bool = True,
+    pending_only: bool = False,
     limit: int = 100,
 ) -> list[LegacyReclassificationCandidate]:
-    """List bounded, safely re-readable documents; never invokes the LLM."""
+    """List bounded, safely re-readable documents; never invokes the LLM.
+
+    ``pending_only`` is the interactive Admin flow: it deliberately selects only
+    successfully parsed documents that are still waiting for metadata approval.  A
+    blocked document needs its own remediation path and must not be repeatedly offered
+    as though reclassification alone could approve it.
+    """
 
     query = db.query(Document).filter(
         Document.status.in_([DocumentStatus.COMPLETED.value, DocumentStatus.BLOCKED.value]),
@@ -158,6 +168,11 @@ def list_reclassification_candidates(
                 Document.conflict_facts.is_(None),
                 Document.conflict_facts == SA_JSON.NULL,
             )
+        )
+    if pending_only:
+        query = query.filter(
+            Document.status == DocumentStatus.COMPLETED.value,
+            Document.review_status == DocumentReviewStatus.PENDING.value,
         )
 
     documents = query.order_by(Document.id).limit(limit).all()
@@ -203,7 +218,21 @@ def preview_document_reclassification(
         original = _parse_original(document)
         projects = db.query(Project).order_by(Project.id).all()
         project_catalog = classification_project_catalog(db)
-        classification = _classify_with_project_catalog(document.title, original.raw_text, project_catalog)
+        classification_units = chunk_sections(original.sections, document_category=None)
+        classification = _classify_with_project_catalog(
+            document.title,
+            original.raw_text,
+            project_catalog,
+            content_units=[
+                {
+                    "section_index": unit.index,
+                    "page": unit.page,
+                    "content_type": unit.content_type,
+                    "content": unit.text,
+                }
+                for unit in classification_units
+            ],
+        )
         resolution = resolve_project_candidates(
             document,
             classification,
@@ -282,12 +311,29 @@ def apply_document_reclassification(
     old_category = _enum_value(document.category)
     old_project_id = document.project_id
     target_category = _enum_value(classification.category)
-    requires_reindex = old_category != target_category or old_project_id != target_project_id
+    # A pending upload is intentionally not chunked or embedded by the ingestion flow.
+    # It therefore needs a full index even when the LLM keeps category/project unchanged.
+    # Without this condition MySQL could become approved/current while Qdrant still had
+    # zero points for the document.
+    requires_reindex = (
+        old_category != target_category
+        or document_categories(document) != [str(value) for value in classification.categories]
+        or (document.section_classifications or [])
+        != [item.model_dump(mode="json") for item in classification.section_classifications]
+        or old_project_id != target_project_id
+        or _enum_value(document.review_status) == DocumentReviewStatus.PENDING.value
+    )
     was_blocked = _enum_value(document.status) == DocumentStatus.BLOCKED.value
 
     chunks = None
     if requires_reindex:
-        chunks = chunk_sections(original.sections, document_category=classification.category)
+        chunks = chunk_sections_by_classification(
+            original.sections,
+            primary_category=str(classification.category),
+            section_classifications=[
+                item.model_dump(mode="json") for item in classification.section_classifications
+            ],
+        )
         if not chunks:
             raise LegacyReclassificationError("The proposed category produced no indexable chunks.")
 
@@ -434,6 +480,7 @@ def _finalize_vector_publish(
         review_status=_enum_value(document.review_status),
         legal_status=_enum_value(document.legal_status),
         category=_enum_value(document.category),
+        categories=document_categories(document),
         visibility=_enum_value(document.visibility),
         is_current=bool(document.is_current),
     )
@@ -542,6 +589,8 @@ def _classify_with_project_catalog(
     filename: str,
     raw_text: str,
     project_catalog: Sequence[Mapping[str, object]],
+    *,
+    content_units: Sequence[Mapping[str, object]] | None = None,
 ) -> DocumentClassification:
     """Use the catalogue-aware classifier when available, remaining test-compatible."""
 
@@ -549,10 +598,15 @@ def _classify_with_project_catalog(
     accepts_catalog = "project_catalog" in signature.parameters or any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
     )
-    if not accepts_catalog:
-        return classify_document(filename, raw_text)
-
-    return classify_document(filename, raw_text, project_catalog=project_catalog)
+    accepts_content_units = "content_units" in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
+    )
+    kwargs: dict[str, object] = {}
+    if accepts_catalog:
+        kwargs["project_catalog"] = project_catalog
+    if accepts_content_units:
+        kwargs["content_units"] = content_units
+    return classify_document(filename, raw_text, **kwargs)
 
 
 def _parse_original(document: Document) -> _ParsedOriginal:
@@ -610,6 +664,11 @@ def _apply_classification(
     ):
         setattr(document, field_name, getattr(classification, field_name))
 
+    document.categories = [str(value) for value in classification.categories]
+    document.section_classifications = [
+        item.model_dump(mode="json") for item in classification.section_classifications
+    ]
+
     document.project_id = target_project_id
     document.conflict_facts = [fact.model_dump(mode="json") for fact in classification.conflict_facts]
     document.classification_confidence = classification.confidence
@@ -641,6 +700,8 @@ def _metadata_changes(document: Document, classification: DocumentClassification
     suggested = classification.model_dump(mode="json")
     stored = {
         "category": _enum_value(document.category),
+        "categories": document_categories(document),
+        "section_classifications": document.section_classifications or [],
         "subcategory": document.subcategory,
         "subdivision_names": document.subdivision_names,
         "building_codes": document.building_codes,
@@ -683,6 +744,8 @@ def _document_snapshot_sha256(document: Document) -> str:
         "project_id": document.project_id,
         "visibility": _enum_value(document.visibility),
         "category": _enum_value(document.category),
+        "categories": document_categories(document),
+        "section_classifications": document.section_classifications or [],
         "subcategory": document.subcategory,
         "subdivision_names": document.subdivision_names,
         "building_codes": document.building_codes,

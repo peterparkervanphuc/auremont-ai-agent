@@ -143,6 +143,7 @@ _DOCUMENT_METADATA_FIELDS = (
     "title",
     "project_id",
     "category",
+    "categories",
     "subcategory",
     "subdivision_names",
     "building_codes",

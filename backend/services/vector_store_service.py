@@ -17,7 +17,7 @@ class VectorStoreError(RuntimeError):
     """Failure while initialising the collection or writing vectors to Qdrant."""
 
 
-_KEYWORD_INDEX_FIELDS = ("project_id", "visibility", "review_status", "category")
+_KEYWORD_INDEX_FIELDS = ("project_id", "visibility", "review_status", "category", "document_categories")
 
 
 def _ensure_payload_indexes(client, collection_name: str) -> None:
@@ -110,6 +110,7 @@ def index_document_chunks(
     review_status: str = "pending",
     legal_status: str = "unknown",
     category: str = "other",
+    categories: list[str] | None = None,
     is_current: bool = True,
 ) -> int:
     """Write chunks with both their dense and sparse vectors into Qdrant.
@@ -148,7 +149,10 @@ def index_document_chunks(
                 "chunk_index": chunk.index,
                 "content": chunk.text,
                 "content_type": chunk.content_type,
-                "category": category,
+                "category": chunk.category or category,
+                "primary_category": category,
+                "document_categories": categories or [category],
+                "section_index": chunk.section_index,
                 "review_status": review_status,
                 "legal_status": legal_status,
                 "is_current": is_current,
@@ -214,6 +218,7 @@ def update_document_vector_metadata(
     review_status: str,
     legal_status: str,
     category: str,
+    categories: list[str] | None = None,
     visibility: str,
     is_current: bool,
 ) -> None:
@@ -233,7 +238,8 @@ def update_document_vector_metadata(
                 "review_status": review_status,
                 "legal_status": legal_status,
                 "is_current": is_current,
-                "category": category,
+                "primary_category": category,
+                **({"document_categories": categories} if categories is not None else {}),
                 "visibility": visibility,
             },
             points=models.FilterSelector(

@@ -290,6 +290,16 @@ export interface DocumentSecurityFinding {
   excerpt: string;
 }
 
+export interface DocumentSectionClassification {
+  section_index: number;
+  category: DocumentCategory;
+  page: number | null;
+  content_type: string;
+  confidence: number;
+  reason: string;
+  excerpt: string;
+}
+
 export interface DocumentResponse {
   id: number;
   title: string;
@@ -298,6 +308,8 @@ export interface DocumentResponse {
   status: string;
   visibility: DocumentVisibility;
   category: DocumentCategory;
+  categories: DocumentCategory[];
+  section_classifications: DocumentSectionClassification[];
   subcategory: string | null;
   subdivision_names: string[] | null;
   building_codes: string[] | null;
@@ -332,6 +344,8 @@ export interface DocumentResponse {
 
 export interface DocumentClassificationUpdate {
   category: DocumentCategory;
+  categories: DocumentCategory[];
+  section_classifications: DocumentSectionClassification[];
   subcategory: string | null;
   subdivision_names: string[] | null;
   building_codes: string[] | null;

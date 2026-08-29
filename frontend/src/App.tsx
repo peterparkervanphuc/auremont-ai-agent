@@ -28,6 +28,8 @@ import { SalesManagementPage } from "./routes/admin/SalesManagementPage";
 import { ObservabilityPage } from "./routes/admin/ObservabilityPage";
 import { NotFound } from "./routes/NotFound";
 import { NewsPage } from "./routes/NewsPage";
+import { NewsDetailPage } from "./routes/NewsDetailPage";
+import { NewsWorkspacePage } from "./routes/NewsWorkspacePage";
 
 /** Admin gets its own dashboard; Sale and Customer see the chat-oriented home page. */
 function HomeRoute() {
@@ -105,6 +107,15 @@ function AppShell() {
           <Route path="/inventory/project/:projectId" element={<ProjectOverviewPage />} />
           {/* Public official-news feed: anonymous, Customer, Sale and Admin share it. */}
           <Route path="/news" element={<NewsPage />} />
+          <Route path="/news/:articleId" element={<NewsDetailPage />} />
+          <Route
+            path="/news-workspace"
+            element={
+              <ProtectedRoute allowedRole={["sale", "admin"]}>
+                <NewsWorkspacePage />
+              </ProtectedRoute>
+            }
+          />
 
           {/* AI -> Sale live handoff queue — Sale and Admin both work it, no per-region
               assignment (see the plan's scope decisions). */}

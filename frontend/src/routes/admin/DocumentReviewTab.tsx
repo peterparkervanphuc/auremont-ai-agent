@@ -8,6 +8,7 @@ import type {
   DocumentClassificationUpdate,
   DocumentReclassificationUpdate,
   DocumentResponse,
+  DocumentSectionClassification,
   LegalStatus,
   ProjectResponse,
 } from "../../types";
@@ -64,6 +65,8 @@ function hasStructuralChanges(
   draft: DocumentReclassificationUpdate,
 ): boolean {
   return document.category !== draft.category
+    || !sameList(document.categories, draft.categories)
+    || JSON.stringify(document.section_classifications) !== JSON.stringify(draft.section_classifications)
     || document.project_id !== draft.project_id
     || !sameList(document.subdivision_names, draft.subdivision_names)
     || !sameList(document.building_codes, draft.building_codes)
@@ -81,6 +84,8 @@ function payloadFrom(document: DocumentResponse): DocumentReclassificationUpdate
   return {
     project_id: document.project_id,
     category: document.category,
+    categories: document.categories.length ? document.categories : [document.category],
+    section_classifications: document.section_classifications,
     subcategory: document.subcategory,
     subdivision_names: document.subdivision_names,
     building_codes: document.building_codes,
@@ -106,6 +111,8 @@ function hasAnyChanges(
 ): boolean {
   const original = payloadFrom(document);
   const listFields: ScopeField[] = ["subdivision_names", "building_codes", "unit_types"];
+  if (!sameList(original.categories, draft.categories)) return true;
+  if (JSON.stringify(original.section_classifications) !== JSON.stringify(draft.section_classifications)) return true;
   if (listFields.some((field) => !sameList(original[field], draft[field]))) return true;
 
   return (Object.keys(original) as Array<keyof DocumentReclassificationUpdate>).some((field) => {
@@ -163,6 +170,27 @@ export function DocumentReviewTab() {
   const updateScope = (key: ScopeField, value: string) => {
     setScopeText((current) => ({ ...current, [key]: value }));
     update(key, asList(value));
+  };
+
+  const updatePrimaryCategory = (category: DocumentCategory) => {
+    if (!draft) return;
+    update("category", category);
+    update("categories", [
+      category,
+      ...draft.section_classifications.map((section) => section.category),
+    ].filter((value, index, values) => values.indexOf(value) === index));
+  };
+
+  const updateSectionCategory = (sectionIndex: number, category: DocumentCategory) => {
+    if (!draft) return;
+    const sections = draft.section_classifications.map((section) =>
+      section.section_index === sectionIndex ? { ...section, category } : section
+    );
+    const categories = [draft.category, ...sections.map((section) => section.category)].filter(
+      (value, index, values) => values.indexOf(value) === index,
+    );
+    update("section_classifications", sections);
+    update("categories", categories);
   };
 
   const save = async () => {
@@ -284,7 +312,7 @@ export function DocumentReviewTab() {
                 return <button className={`review-item ${selected?.id === document.id ? "review-item--active" : ""}`} type="button" key={document.id} onClick={() => select(document)} title={document.title}>
                   <span className="review-item-heading"><span className="data-row-title">{displayName.name}</span>{displayName.extension ? <span className="review-file-type">{displayName.extension}</span> : null}</span>
                   <span className="data-row-meta">
-                    {CATEGORIES.find(([key]) => key === document.category)?.[1] ?? "Khác"} · {document.classification_confidence !== null ? `${Math.round(document.classification_confidence * 100)}%` : "Chưa rõ"} · {document.review_status === "pending" ? "Cần duyệt" : "Đã duyệt"}
+                    {(document.categories.length ? document.categories : [document.category]).map((category) => CATEGORIES.find(([key]) => key === category)?.[1] ?? "Khác").join(" + ")} · {document.classification_confidence !== null ? `${Math.round(document.classification_confidence * 100)}%` : "Chưa rõ"} · {document.review_status === "pending" ? "Cần duyệt" : "Đã duyệt"}
                   </span>
                 </button>;
               })}
@@ -317,7 +345,7 @@ export function DocumentReviewTab() {
                   )}
                   {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
                 </select></label>
-                <label>Loại tài liệu<select value={draft.category} onChange={(event) => update("category", event.target.value as DocumentCategory)}>{CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                <label>Loại tài liệu chính<select value={draft.category} onChange={(event) => updatePrimaryCategory(event.target.value as DocumentCategory)}>{CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                 <label>Phân loại phụ<input value={draft.subcategory ?? ""} onChange={(event) => update("subcategory", event.target.value || null)} /></label>
                 <label>Phân khu<input value={scopeText.subdivision_names} placeholder="Phân cách bằng dấu phẩy" onChange={(event) => updateScope("subdivision_names", event.target.value)} /></label>
                 <label>Tòa / block<input value={scopeText.building_codes} placeholder="Phân cách bằng dấu phẩy" onChange={(event) => updateScope("building_codes", event.target.value)} /></label>
@@ -329,6 +357,24 @@ export function DocumentReviewTab() {
                 <label>Phiên bản<input value={draft.version_label ?? ""} onChange={(event) => update("version_label", event.target.value || null)} /></label>
                 <label>Kỳ áp dụng<input value={draft.applicable_period ?? ""} onChange={(event) => update("applicable_period", event.target.value || null)} /></label>
               </div>
+
+              <div className="review-multi-category">
+                <div className="review-multi-category-head"><strong>Nội dung có trong tài liệu</strong><span>Tự động tổng hợp từ nhãn của từng section; loại chính luôn được giữ.</span></div>
+                <div className="review-category-options">
+                  {draft.categories.map((value) => <span key={value} className="is-selected">{CATEGORIES.find(([key]) => key === value)?.[1] ?? value}{value === draft.category ? " · Chính" : ""}</span>)}
+                </div>
+              </div>
+
+              {draft.section_classifications.length > 0 && <div className="review-sections">
+                <div className="review-multi-category-head"><strong>Phân loại theo section</strong><span>Mỗi phần chỉ embedding một lần với category riêng.</span></div>
+                <div className="review-section-list">
+                  {draft.section_classifications.map((section: DocumentSectionClassification) => <article key={section.section_index} className="review-section-item">
+                    <div><strong>Section #{section.section_index + 1}{section.page ? ` · Trang ${section.page}` : ""}</strong><span>{section.content_type === "table" ? "Bảng" : "Văn bản"} · {Math.round(section.confidence * 100)}%</span></div>
+                    <select value={section.category} onChange={(event) => updateSectionCategory(section.section_index, event.target.value as DocumentCategory)}>{CATEGORIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+                    <p>{section.excerpt || section.reason || "Không có nội dung xem trước."}</p>
+                  </article>)}
+                </div>
+              </div>}
 
               {draft.category === "legal_document" && <div className="review-grid review-grid--legal">
                 <label>Loại văn bản<input value={draft.legal_document_type ?? ""} onChange={(event) => update("legal_document_type", event.target.value || null)} /></label>

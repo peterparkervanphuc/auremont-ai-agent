@@ -71,6 +71,8 @@ class Document(Base):
         nullable=False,
         index=True,
     )
+    categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=list)
+    section_classifications: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True, default=list)
     subcategory: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
 
     document_summary: Mapped[str | None] = mapped_column(Text, nullable=True)

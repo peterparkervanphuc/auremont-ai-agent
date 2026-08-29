@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../../api/client";
 import type {
   LegacyReclassificationCandidate,
@@ -70,7 +71,6 @@ function initialDecision(item: ReclassificationPreviewItem): string {
 export function LegacyReclassificationModal({ open, onClose, onApplied }: Props) {
   const [candidates, setCandidates] = useState<LegacyReclassificationCandidate[]>([]);
   const [projects, setProjects] = useState<ProjectCatalogItem[]>([]);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [preview, setPreview] = useState<ReclassificationPreviewResponse | null>(null);
   const [confirmedIds, setConfirmedIds] = useState<number[]>([]);
   const [decisions, setDecisions] = useState<Record<number, string>>({});
@@ -78,6 +78,7 @@ export function LegacyReclassificationModal({ open, onClose, onApplied }: Props)
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -86,23 +87,37 @@ export function LegacyReclassificationModal({ open, onClose, onApplied }: Props)
     setError(null);
     setPreview(null);
     setResult(null);
-    setSelectedIds([]);
+    setCandidates([]);
     setConfirmedIds([]);
     setDecisions({});
+    setWorking(true);
     Promise.all([
-      api.get<LegacyReclassificationCandidate[]>("/documents/llm-reclassification/candidates?legacy_only=true&limit=100"),
+      api.get<LegacyReclassificationCandidate[]>(`/documents/llm-reclassification/candidates?legacy_only=false&pending_only=true&limit=${MAX_DOCUMENTS}`),
       api.get<ProjectCatalogItem[]>("/documents/project-catalog"),
     ])
-      .then(([candidateRows, projectRows]) => {
-        if (!cancelled) {
-          setCandidates(candidateRows);
-          setProjects(projectRows);
-        }
+      .then(async ([candidateRows, projectRows]) => {
+        if (cancelled) return;
+        setCandidates(candidateRows);
+        setProjects(projectRows);
+        if (candidateRows.length === 0) return;
+
+        const response = await api.post<ReclassificationPreviewResponse>(
+          "/documents/llm-reclassification/preview",
+          { document_ids: candidateRows.map((item) => item.document_id) },
+        );
+        if (cancelled) return;
+        setPreview(response);
+        setDecisions(Object.fromEntries(response.items.map((item) => [item.document_id, initialDecision(item)])));
       })
       .catch((requestError) => !cancelled && setError(messageOf(requestError)))
-      .finally(() => !cancelled && setLoading(false));
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+          setWorking(false);
+        }
+      });
     return () => { cancelled = true; };
-  }, [open]);
+  }, [open, reloadKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -116,40 +131,7 @@ export function LegacyReclassificationModal({ open, onClose, onApplied }: Props)
     };
   }, [open, onClose, working]);
 
-  const selectedCount = useMemo(
-    () => candidates.filter((candidate) => selectedIds.includes(candidate.document_id)).length,
-    [candidates, selectedIds],
-  );
-
   if (!open) return null;
-
-  const toggleCandidate = (documentId: number, checked: boolean) => {
-    setError(null);
-    if (checked && selectedIds.length >= MAX_DOCUMENTS) {
-      setError(`Mỗi lượt chỉ được phân loại tối đa ${MAX_DOCUMENTS} tài liệu.`);
-      return;
-    }
-    setSelectedIds((current) => checked ? [...current, documentId] : current.filter((id) => id !== documentId));
-  };
-
-  const runPreview = async () => {
-    if (!selectedIds.length) return;
-    setWorking(true);
-    setError(null);
-    try {
-      const response = await api.post<ReclassificationPreviewResponse>(
-        "/documents/llm-reclassification/preview",
-        { document_ids: selectedIds },
-      );
-      setPreview(response);
-      setConfirmedIds([]);
-      setDecisions(Object.fromEntries(response.items.map((item) => [item.document_id, initialDecision(item)])));
-    } catch (requestError) {
-      setError(messageOf(requestError));
-    } finally {
-      setWorking(false);
-    }
-  };
 
   const applyConfirmed = async () => {
     if (!preview) return;
@@ -181,11 +163,11 @@ export function LegacyReclassificationModal({ open, onClose, onApplied }: Props)
     }
   };
 
-  return (
+  return createPortal(
     <div className="admin-modal-backdrop" role="presentation" onMouseDown={() => !working && onClose()}>
       <section className="legacy-reclass-modal" role="dialog" aria-modal="true" aria-labelledby="legacy-reclass-title" onMouseDown={(event) => event.stopPropagation()}>
         <header className="legacy-reclass-head">
-          <div><span className="admin-eyebrow">Knowledge base governance</span><h2 id="legacy-reclass-title">Phân loại lại tài liệu bằng AI</h2><p>LLM chỉ tạo bản xem trước. Metadata chỉ được ghi sau khi Admin xác nhận từng tài liệu.</p></div>
+          <div><span className="admin-eyebrow">Knowledge base governance</span><h2 id="legacy-reclass-title">Phân loại lại tài liệu chưa duyệt</h2><p>Hệ thống tự lấy tối đa {MAX_DOCUMENTS} tài liệu đang chờ Admin duyệt và tạo bản xem trước. Metadata chỉ được ghi sau khi Admin xác nhận.</p></div>
           <button className="admin-icon-button" type="button" onClick={onClose} disabled={working} aria-label="Đóng"><XIcon size={19} /></button>
         </header>
 
@@ -193,10 +175,10 @@ export function LegacyReclassificationModal({ open, onClose, onApplied }: Props)
           {error && <div className="legacy-reclass-alert" role="alert">{error}</div>}
 
           {!preview && !result && <>
-            <div className="legacy-reclass-toolbar"><div><strong>{selectedIds.length}/{MAX_DOCUMENTS}</strong> tài liệu được chọn</div><button className="btn btn-sm btn-outline" type="button" disabled={loading || candidates.length === 0} onClick={() => setSelectedIds(candidates.slice(0, MAX_DOCUMENTS).map((item) => item.document_id))}>Chọn {Math.min(MAX_DOCUMENTS, candidates.length)} tài liệu đầu</button></div>
-            {loading ? <div className="legacy-reclass-empty"><LoaderIcon size={24} />Đang tải danh sách tài liệu…</div>
-              : candidates.length === 0 ? <div className="legacy-reclass-empty"><CheckIcon size={25} />Không còn tài liệu legacy cần phân loại lại.</div>
-                : <div className="legacy-candidate-list">{candidates.map((candidate) => <label className="legacy-candidate-row" key={candidate.document_id}><input type="checkbox" checked={selectedIds.includes(candidate.document_id)} onChange={(event) => toggleCandidate(candidate.document_id, event.target.checked)} /><span className="legacy-candidate-main"><strong>{candidate.title}</strong><small>#{candidate.document_id} · {candidate.category} · {candidate.project_id ?? "chưa gán dự án"}</small></span><span className={`badge ${candidate.status === "blocked" ? "badge-danger" : "badge-muted"}`}>{candidate.status}</span></label>)}</div>}
+            {loading ? <div className="legacy-reclass-empty"><LoaderIcon size={24} />{candidates.length > 0 ? `AI đang phân loại ${candidates.length} tài liệu chưa duyệt…` : "Đang kiểm tra tài liệu chờ duyệt…"}</div>
+              : !error && candidates.length === 0 ? <div className="legacy-reclass-empty"><CheckIcon size={25} />Không có tài liệu nào đang chờ Admin duyệt.</div>
+                : error ? <div className="legacy-reclass-empty">Không thể tạo bản xem trước. Bạn có thể thử lại mà không làm thay đổi dữ liệu.</div>
+                  : null}
           </>}
 
           {preview && !result && <>
@@ -208,12 +190,13 @@ export function LegacyReclassificationModal({ open, onClose, onApplied }: Props)
         </div>
 
         <footer className="legacy-reclass-actions">
-          {!preview && !result && <><button className="btn btn-outline" type="button" onClick={onClose}>Hủy</button><button className="btn btn-primary" type="button" disabled={working || selectedCount === 0} onClick={() => void runPreview()}>{working ? <LoaderIcon size={16} /> : <SparklesIcon size={16} />}{working ? "LLM đang phân loại…" : `Phân loại thử ${selectedCount} tài liệu`}</button></>}
-          {preview && !result && <><button className="btn btn-outline" type="button" disabled={working} onClick={() => { setPreview(null); setConfirmedIds([]); setError(null); }}>Chọn lại</button><button className="btn btn-primary" type="button" disabled={working || confirmedIds.length === 0} onClick={() => void applyConfirmed()}>{working ? <LoaderIcon size={16} /> : <CheckIcon size={16} />}{working ? "Đang áp dụng…" : `Áp dụng ${confirmedIds.length} tài liệu`}</button></>}
+          {!preview && !result && <><button className="btn btn-outline" type="button" disabled={working} onClick={onClose}>Đóng</button>{error && <button className="btn btn-primary" type="button" disabled={working} onClick={() => setReloadKey((value) => value + 1)}><SparklesIcon size={16} />Thử lại</button>}</>}
+          {preview && !result && <><button className="btn btn-outline" type="button" disabled={working} onClick={() => setReloadKey((value) => value + 1)}>Chạy lại AI</button><button className="btn btn-primary" type="button" disabled={working || confirmedIds.length === 0} onClick={() => void applyConfirmed()}>{working ? <LoaderIcon size={16} /> : <CheckIcon size={16} />}{working ? "Đang áp dụng…" : `Áp dụng ${confirmedIds.length} tài liệu`}</button></>}
           {result && <button className="btn btn-primary" type="button" onClick={onClose}>Hoàn tất</button>}
         </footer>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
