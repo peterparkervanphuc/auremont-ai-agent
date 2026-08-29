@@ -153,26 +153,25 @@ def _group_pricing_by_category(details: dict) -> dict[str, list[dict]]:
     return groups
 
 
-_CATEGORY_IMAGE_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "Chung cư": ("chung-cu", "chung_cu"),
-    "Biệt thự": ("biet-thu", "biet_thu", "villa"),
-    "Shophouse": ("shop-thuong-mai", "shophouse", "shop"),
-}
+_SHOPHOUSE_IMAGE_KEYWORDS = ("shop-thuong-mai", "shophouse", "shop")
 
 
-def _cover_image_for(category: str, gallery: list[str]) -> str | None:
-    """Picks a gallery photo whose filename actually depicts this category. The previous
-    `gallery[index % len(gallery)]` picked whatever photo happened to sit at the category's
-    position, with no relation to its content — e.g. Shophouse showing an apartment-zone
-    map because that's what was at index 2. Falls back to None (the frontend then shows
-    its placeholder icon) rather than surface a wrong photo when no photo of this category
-    exists in the project's own gallery."""
-    keywords = _CATEGORY_IMAGE_KEYWORDS.get(category, ())
-    for url in gallery:
-        lower = url.lower()
-        if any(keyword in lower for keyword in keywords):
-            return url
-    return None
+def _cover_image_for(category: str, groups: dict[str, list[dict]], gallery: list[str]) -> str | None:
+    if category == "Shophouse":
+        # The index-based pick below can land on any photo regardless of what it actually
+        # shows — for Shophouse specifically that surfaced a wrong photo (an apartment-zone
+        # map), because this project's own gallery has no real shop photo at all. Match by
+        # filename keyword instead, falling back to no photo (the frontend then shows its
+        # placeholder icon) rather than a wrong one. Every other category keeps the original
+        # index-based behavior below untouched.
+        for url in gallery:
+            if any(keyword in url.lower() for keyword in _SHOPHOUSE_IMAGE_KEYWORDS):
+                return url
+        return None
+    if not gallery:
+        return None
+    index = list(groups.keys()).index(category)
+    return gallery[index % len(gallery)]
 
 
 @router.get("/{project_id}/categories", response_model=list[CategorySummary])
@@ -197,7 +196,7 @@ def get_categories(project_id: str, db: Session = Depends(get_db)) -> list[Categ
                 size_from=min(sizes_min) if sizes_min else None,
                 size_to=max(sizes_max) if sizes_max else None,
                 types_count=len(tiers),
-                cover_image=_cover_image_for(category, gallery),
+                cover_image=_cover_image_for(category, groups, gallery),
                 type_names=[t["apartment_type"] for t in tiers],
             )
         )
@@ -210,6 +209,7 @@ def get_category_detail(project_id: str, category_slug: str, db: Session = Depen
     details: dict = row.details or {}
     project_info = details.get("project", {})
     gallery = details.get("images", {}).get("gallery", [])
+    groups = _group_pricing_by_category(details)
 
     tiers = [t for t in details.get("pricing", []) if _slugify(t["category"]) == category_slug]
     if not tiers:
@@ -239,7 +239,7 @@ def get_category_detail(project_id: str, category_slug: str, db: Session = Depen
         slug=category_slug,
         name=category_name,
         description=_category_description(category_name, project_info),
-        cover_image=_cover_image_for(category_name, gallery),
+        cover_image=_cover_image_for(category_name, groups, gallery),
         types=types,
         amenities=details.get("amenities", []),
         highlights=project_info.get("highlights", []),

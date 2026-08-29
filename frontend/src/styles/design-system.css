@@ -5944,6 +5944,37 @@ code {
   opacity: 0.6;
 }
 
+/* "Tin tức" nav item before the feature ships — stays readable (unlike
+   .topnav-link--disabled's dimmed look) so only the "(sắp ra mắt)" badge signals it's not
+   ready yet; the whole item is a <span>, not a link, so it isn't clickable at all. */
+.topnav-link--soon {
+  cursor: not-allowed;
+}
+
+.topnav-link--soon:hover {
+  color: inherit;
+  background: none;
+}
+
+.topnav-soon-badge {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #e5e7eb;
+  animation: topnav-soon-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes topnav-soon-pulse {
+  0%, 100% { opacity: 0.6; text-shadow: 0 0 0 rgba(255, 255, 255, 0); }
+  50%      { opacity: 1;   text-shadow: 0 0 9px rgba(255, 255, 255, 0.9); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topnav-soon-badge {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 .topnav-dropdown {
   display: none;
   position: absolute;

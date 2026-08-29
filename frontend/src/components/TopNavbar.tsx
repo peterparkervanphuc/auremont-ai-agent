@@ -129,10 +129,10 @@ export function TopNavbar() {
           Trang chủ
         </NavLink>
 
-        <NavLink to="/news" className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
+        <span className="topnav-link topnav-link--soon" aria-disabled="true">
           <GlobeIcon size={16} />
-          Tin tức
-        </NavLink>
+          Tin tức <span className="topnav-soon-badge">(sắp ra mắt)</span>
+        </span>
 
         {showCatalogNav && (
           <>
@@ -396,14 +396,10 @@ export function TopNavbar() {
             Trang chủ
           </NavLink>
 
-          <NavLink
-            to="/news"
-            onClick={() => setMobileOpen(false)}
-            className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}
-          >
+          <span className="topnav-link topnav-link--soon" aria-disabled="true">
             <GlobeIcon size={16} />
-            Tin tức
-          </NavLink>
+            Tin tức <span className="topnav-soon-badge">(sắp ra mắt)</span>
+          </span>
 
           {showCatalogNav && (
             <>
