@@ -9,6 +9,7 @@ import { AiHistoryModal } from "./AiHistoryModal";
 import { PropertyListingCarousel } from "../PropertyListingCarousel";
 import { parseServerDate } from "../../utils/datetime";
 import { AuremontAvatar } from "../../components/AuremontAvatar";
+import { useCursorTrail } from "../../hooks/useCursorTrail";
 import { MessageContent } from "../../components/MessageContent";
 import { CitationList } from "../../components/CitationList";
 import {
@@ -77,6 +78,7 @@ export function LiveChatPage() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { layerRef: particleLayerRef, handleMouseMove: handleChatMouseMove } = useCursorTrail();
 
   const reload = useCallback(() => {
     if (!sessionId) return;
@@ -265,7 +267,8 @@ export function LiveChatPage() {
 
   return (
     <div className="live-chat-layout">
-    <div className="chat-page chat-page--standalone">
+    <div className="chat-page chat-page--standalone" onMouseMove={handleChatMouseMove}>
+      <div className="cursor-particle-layer" ref={particleLayerRef} aria-hidden="true" />
       <header className="chat-topbar">
         <div className="chat-topbar-info">
           <button className="btn btn-ghost btn-sm" type="button" onClick={() => navigate("/live-inbox")}>

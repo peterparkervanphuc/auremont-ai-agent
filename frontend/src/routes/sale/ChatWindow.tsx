@@ -12,6 +12,7 @@ import { AnswerImageStrip } from "./AnswerImageStrip";
 import { PropertyListingCarousel } from "../PropertyListingCarousel";
 import { ChatSuggestions } from "./ChatSuggestions";
 import { parseServerDate } from "../../utils/datetime";
+import { useCursorTrail } from "../../hooks/useCursorTrail";
 
 function formatTime(iso: string): string {
   const d = parseServerDate(iso);
@@ -34,6 +35,7 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { layerRef: particleLayerRef, handleMouseMove: handleChatMouseMove } = useCursorTrail();
 
   useEffect(() => {
     if (!sessionId) return;
@@ -137,7 +139,8 @@ export function ChatWindow({ onSessionsChange }: Props = {}) {
   };
 
   return (
-    <div className="chat-page">
+    <div className="chat-page" onMouseMove={handleChatMouseMove}>
+      <div className="cursor-particle-layer" ref={particleLayerRef} aria-hidden="true" />
       <header className="chat-topbar">
         <div className="chat-topbar-info">
           <div className="chat-topbar-icon">
