@@ -22,7 +22,7 @@ from backend.core.gemini_client import generate_json, is_gemini_quota_error
 
 logger = logging.getLogger(__name__)
 
-DOCUMENT_CLASSIFICATION_VERSION = "llm-v3-grounded-facts"
+DOCUMENT_CLASSIFICATION_VERSION = "llm-v4-multisection"
 
 
 _UNIT_TYPE_ALIASES = {
@@ -158,12 +158,34 @@ class DocumentClassificationQuotaError(DocumentClassificationError):
     """The classifier is temporarily unavailable because its AI quota is exhausted."""
 
 
+class SectionClassification(BaseModel):
+    """One bounded content unit and its business category."""
+
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+
+    section_index: int = Field(ge=0)
+    category: DocumentCategory
+    page: int | None = Field(default=None, ge=1)
+    content_type: str = Field(default="prose", max_length=30)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    reason: str = Field(default="", max_length=400)
+    excerpt: str = Field(default="", max_length=300)
+
+
 class DocumentClassification(BaseModel):
     """Structured metadata returned by the document-classification LLM."""
 
     model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
 
-    category: DocumentCategory = Field(description="The document's single primary business category.")
+    category: DocumentCategory = Field(description="The document's primary business category.")
+    categories: list[DocumentCategory] = Field(
+        default_factory=list,
+        description="All material business categories present in the document, primary category first.",
+    )
+    section_classifications: list[SectionClassification] = Field(
+        default_factory=list,
+        description="One category assignment for every supplied numbered content section.",
+    )
     subcategory: str | None = Field(default=None, description="A concise, evidence-backed secondary category.")
 
     project_id: str | None = Field(
@@ -324,6 +346,29 @@ class DocumentClassification(BaseModel):
             raise ValueError("expiry_date cannot be earlier than effective_date")
         return self
 
+    @model_validator(mode="after")
+    def _normalise_multi_content_categories(self) -> DocumentClassification:
+        ordered: list[DocumentCategory] = []
+        secondary_values = (
+            [item.category for item in self.section_classifications]
+            if self.section_classifications
+            else self.categories
+        )
+        for value in [self.category, *secondary_values]:
+            if value not in ordered:
+                ordered.append(value)
+        object.__setattr__(self, "categories", ordered)
+
+        seen_indexes: set[int] = set()
+        deduplicated: list[SectionClassification] = []
+        for item in self.section_classifications:
+            if item.section_index in seen_indexes:
+                continue
+            seen_indexes.add(item.section_index)
+            deduplicated.append(item)
+        object.__setattr__(self, "section_classifications", deduplicated)
+        return self
+
     @field_validator("conflict_facts", mode="after")
     @classmethod
     def _deduplicate_conflict_facts(cls, facts: list[ConflictFact]) -> list[ConflictFact]:
@@ -371,8 +416,11 @@ Quy tắc category:
 - internal_guide: quy trình hoặc hướng dẫn vận hành nội bộ.
 - other: không category nào mô tả đúng mục đích chính.
 
-Một tài liệu có thể nhắc nhiều chủ đề. Hãy chọn đúng một primary category theo tiêu đề,
-cấu trúc và mục đích tổng thể; không chọn category chỉ vì một mục con có từ khóa tương ứng.
+Một tài liệu có thể chứa nhiều nhóm nội dung quan trọng. Hãy chọn đúng một primary category
+theo mục đích tổng thể, đồng thời trả categories gồm TẤT CẢ nhóm nội dung có giá trị nghiệp vụ.
+Với mỗi section_index được cung cấp, phải trả đúng một section_classifications item. Phân loại
+theo ý nghĩa của section, không dựa vào một từ khóa đơn lẻ. Bảng giá, chính sách, lịch thanh toán
+và pháp lý trong cùng một file phải nhận category riêng ở cấp section.
 
 Quy tắc metadata:
 - project_id chỉ được chọn đúng một id có trong PROJECT_CATALOG_JSON. Chọn project/phân khu cụ thể
@@ -410,6 +458,7 @@ def classify_document(
     raw_text: str,
     *,
     project_catalog: Sequence[Mapping[str, object]] | None = None,
+    content_units: Sequence[Mapping[str, object]] | None = None,
 ) -> DocumentClassification:
     """Classify a document exclusively through the configured LLM API."""
 
@@ -418,8 +467,14 @@ def classify_document(
     if not raw_text.strip():
         raise DocumentClassificationError("Document has no text to classify.")
 
+    safe_content_units = _normalise_content_units(content_units or [])
+    document_payload: dict[str, object] = {"filename": filename}
+    if safe_content_units:
+        document_payload["sections"] = safe_content_units
+    else:
+        document_payload["content"] = raw_text
     document_input = json.dumps(
-        {"filename": filename, "content": raw_text},
+        document_payload,
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -489,7 +544,77 @@ def classify_document(
             }
         )
 
+    if safe_content_units:
+        returned = {item.section_index: item for item in classification.section_classifications}
+        expected_indexes = {int(unit["section_index"]) for unit in safe_content_units}
+        returned_indexes = set(returned)
+        incomplete_section_result = returned_indexes != expected_indexes
+        normalised_sections: list[SectionClassification] = []
+        for unit in safe_content_units:
+            section_index = int(unit["section_index"])
+            suggested = returned.get(section_index)
+            category = suggested.category if suggested is not None else classification.category
+            normalised_sections.append(
+                SectionClassification(
+                    section_index=section_index,
+                    category=category,
+                    page=unit.get("page"),
+                    content_type=str(unit.get("content_type") or "prose"),
+                    confidence=suggested.confidence if suggested is not None else classification.confidence,
+                    reason=suggested.reason if suggested is not None else "Fallback to primary document category.",
+                    excerpt=" ".join(str(unit.get("content") or "").split())[:300],
+                )
+            )
+
+        ordered_categories: list[DocumentCategory] = []
+        for value in [
+            classification.category,
+            *classification.categories,
+            *(item.category for item in normalised_sections),
+        ]:
+            if value not in ordered_categories:
+                ordered_categories.append(value)
+        classification = classification.model_copy(
+            update={
+                "categories": ordered_categories,
+                "section_classifications": normalised_sections,
+                "requires_admin_review": classification.requires_admin_review or incomplete_section_result,
+                "reason": (
+                    f"{classification.reason} Some content sections were missing or invalid in the LLM response; "
+                    "fallback labels require Admin review."
+                    if incomplete_section_result
+                    else classification.reason
+                ),
+            }
+        )
+
     return classification
+
+
+def _normalise_content_units(content_units: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Bound deterministic parser/chunker output before putting it in the LLM prompt."""
+
+    normalised: list[dict[str, object]] = []
+    seen: set[int] = set()
+    for position, unit in enumerate(content_units):
+        try:
+            section_index = int(unit.get("section_index", position))
+        except (TypeError, ValueError):
+            continue
+        content = str(unit.get("content") or "").strip()
+        if section_index < 0 or section_index in seen or not content:
+            continue
+        seen.add(section_index)
+        page = unit.get("page")
+        normalised.append(
+            {
+                "section_index": section_index,
+                "page": page if isinstance(page, int) and page > 0 else None,
+                "content_type": str(unit.get("content_type") or "prose")[:30],
+                "content": content,
+            }
+        )
+    return normalised
 
 
 def _evidence_occurs_in_source(evidence: str, source: str) -> bool:

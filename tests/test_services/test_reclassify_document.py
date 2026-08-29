@@ -66,8 +66,10 @@ def recorder(monkeypatch):
     monkeypatch.setattr(ingestion_service, "parse_document", lambda _title, _bytes: ["section"])
     monkeypatch.setattr(
         ingestion_service,
-        "chunk_sections",
-        lambda sections, document_category=None: events.append(("chunk", document_category)) or ["chunk"],
+        "chunk_sections_by_classification",
+        lambda sections, primary_category, section_classifications=None: events.append(
+            ("chunk", primary_category)
+        ) or ["chunk"],
     )
     monkeypatch.setattr(
         ingestion_service,
@@ -241,7 +243,11 @@ class TestFailuresStayQuarantined:
         assert retried.is_current is True
 
     def test_producing_no_chunks_is_a_failure_not_an_empty_document(self, db_session, document, recorder, monkeypatch):
-        monkeypatch.setattr(ingestion_service, "chunk_sections", lambda sections, document_category=None: [])
+        monkeypatch.setattr(
+            ingestion_service,
+            "chunk_sections_by_classification",
+            lambda sections, primary_category, section_classifications=None: [],
+        )
 
         with pytest.raises(DocumentIngestionError):
             reclassify_document(

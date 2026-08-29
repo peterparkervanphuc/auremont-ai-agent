@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from backend.services.parser_service import ParsedSection
 from backend.utils.text import strip_diacritics
@@ -20,6 +21,8 @@ class DocumentChunk:
     page: int | None
     content_type: str = "prose"
     y_position: float | None = None
+    category: str | None = None
+    section_index: int | None = None
 
 
 def chunk_sections(
@@ -63,6 +66,89 @@ def chunk_sections(
             )
 
     return chunks
+
+
+def chunk_sections_by_classification(
+    sections: list[ParsedSection],
+    *,
+    primary_category: str,
+    section_classifications: list[dict[str, Any]] | None = None,
+    chunk_chars: int = 3200,
+    overlap_chars: int = 400,
+) -> list[DocumentChunk]:
+    """Chunk a mixed document once while preserving a category per content unit.
+
+    The classifier sees deterministic generic chunks identified by ``section_index``.
+    Once Admin approves those assignments, each generic unit is optionally passed
+    through the category-aware splitter (legal clauses, tabular price/payment rows),
+    and every resulting child keeps the unit's business category. No source text is
+    embedded twice.
+    """
+
+    assignments: dict[int, str] = {}
+    for item in section_classifications or []:
+        try:
+            section_index = int(item.get("section_index"))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        category = str(item.get("category") or "").strip()
+        if section_index >= 0 and category:
+            assignments[section_index] = category
+
+    if not assignments:
+        chunks = chunk_sections(
+            sections,
+            chunk_chars=chunk_chars,
+            overlap_chars=overlap_chars,
+            document_category=primary_category,
+        )
+        return [
+            DocumentChunk(
+                index=chunk.index,
+                text=chunk.text,
+                page=chunk.page,
+                content_type=chunk.content_type,
+                y_position=chunk.y_position,
+                category=primary_category,
+                section_index=chunk.index,
+            )
+            for chunk in chunks
+        ]
+
+    base_units = chunk_sections(
+        sections,
+        chunk_chars=chunk_chars,
+        overlap_chars=overlap_chars,
+        document_category=None,
+    )
+    result: list[DocumentChunk] = []
+    for unit in base_units:
+        category = assignments.get(unit.index, primary_category)
+        children = chunk_sections(
+            [
+                ParsedSection(
+                    text=unit.text,
+                    page=unit.page,
+                    content_type=unit.content_type,
+                )
+            ],
+            chunk_chars=chunk_chars,
+            overlap_chars=overlap_chars,
+            document_category=category,
+        )
+        for child in children:
+            result.append(
+                DocumentChunk(
+                    index=len(result),
+                    text=child.text,
+                    page=child.page,
+                    content_type=child.content_type,
+                    y_position=child.y_position if child.y_position is not None else unit.y_position,
+                    category=category,
+                    section_index=unit.index,
+                )
+            )
+    return result
 
 
 def _split_table(markdown: str, *, chunk_chars: int) -> list[str]:

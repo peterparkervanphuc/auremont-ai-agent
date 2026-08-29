@@ -114,7 +114,7 @@ def _mock_source(monkeypatch, service, classification=None):
 
 def test_legacy_candidate_selector_uses_persisted_version(db_session, admin):
     legacy = _document(db_session, admin, classification_version=None)
-    _document(
+    current_v3 = _document(
         db_session,
         admin,
         title="new.pdf",
@@ -139,7 +139,36 @@ def test_legacy_candidate_selector_uses_persisted_version(db_session, admin):
 
     rows = list_reclassification_candidates(db_session, legacy_only=True)
 
-    assert [row.document_id for row in rows] == [legacy.id, incomplete.id, older_llm.id]
+    assert [row.document_id for row in rows] == [legacy.id, current_v3.id, incomplete.id, older_llm.id]
+
+
+def test_pending_candidate_selector_only_returns_completed_unreviewed_documents(db_session, admin):
+    pending = _document(
+        db_session,
+        admin,
+        title="pending-current.pdf",
+        review_status=DocumentReviewStatus.PENDING,
+        classification_version="llm-v3-grounded-facts",
+        conflict_facts=[],
+        is_current=False,
+    )
+    _document(db_session, admin, title="approved.pdf", review_status=DocumentReviewStatus.APPROVED)
+    _document(
+        db_session,
+        admin,
+        title="blocked-pending.pdf",
+        status=DocumentStatus.BLOCKED,
+        review_status=DocumentReviewStatus.PENDING,
+        is_current=False,
+    )
+
+    rows = list_reclassification_candidates(
+        db_session,
+        legacy_only=False,
+        pending_only=True,
+    )
+
+    assert [row.document_id for row in rows] == [pending.id]
 
 
 def test_preview_is_read_only_and_recommends_exact_subdivision_project(db_session, admin, monkeypatch):
@@ -259,7 +288,7 @@ def test_apply_updates_metadata_and_preserves_active_state(db_session, admin, mo
     assert [call["is_current"] for call in vector_updates] == [False, True]
     db_session.refresh(document)
     assert document.building_codes == ["BE1"]
-    assert document.classification_version == "llm-v3-grounded-facts"
+    assert document.classification_version == "llm-v4-multisection"
     assert document.classification_requires_admin_review is True
     assert document.review_status == DocumentReviewStatus.APPROVED
     assert document.reviewed_by == admin.id
@@ -284,6 +313,16 @@ def test_admin_apply_activates_document_that_only_awaited_review(db_session, adm
     )
     monkeypatch.setattr(service, "_conflict_scope_lock", lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(service, "scan_conflicts_for", lambda *_args, **_kwargs: ConflictScanOutcome())
+    deleted_vectors = []
+    indexed_documents = []
+    monkeypatch.setattr(service, "delete_document_vectors", lambda document_id: deleted_vectors.append(document_id))
+    monkeypatch.setattr(
+        service,
+        "_embed_and_index",
+        lambda indexed_document, _chunks, *, is_current: indexed_documents.append(
+            (indexed_document.id, is_current)
+        ),
+    )
 
     preview = preview_document_reclassification(db_session, document_id=document.id, admin_id=admin.id)
     result = apply_document_reclassification(
@@ -292,11 +331,14 @@ def test_admin_apply_activates_document_that_only_awaited_review(db_session, adm
         admin_id=admin.id,
     )
 
+    assert result.reindexed is True
     assert result.is_current is True
+    assert deleted_vectors == [document.id]
+    assert indexed_documents == [(document.id, False)]
     assert vector_updates[-1]["is_current"] is True
     db_session.refresh(document)
     assert document.review_status == DocumentReviewStatus.APPROVED
-    assert document.classification_version == "llm-v3-grounded-facts"
+    assert document.classification_version == "llm-v4-multisection"
 
 
 def test_retry_activates_approved_document_left_quarantined_by_partial_apply(db_session, admin, monkeypatch):
@@ -327,7 +369,7 @@ def test_retry_activates_approved_document_left_quarantined_by_partial_apply(db_
     assert result.is_current is True
     assert vector_updates[-1]["is_current"] is True
     db_session.refresh(document)
-    assert document.classification_version == "llm-v3-grounded-facts"
+    assert document.classification_version == "llm-v4-multisection"
 
 
 def test_blocked_document_never_becomes_current(db_session, admin, monkeypatch):
@@ -396,7 +438,7 @@ def test_reindex_failure_keeps_legacy_version_and_quarantine(db_session, admin, 
     )
     _mock_source(monkeypatch, service, _classifier_result())
     monkeypatch.setattr(service, "update_document_vector_metadata", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(service, "chunk_sections", lambda *_args, **_kwargs: [object()])
+    monkeypatch.setattr(service, "chunk_sections_by_classification", lambda *_args, **_kwargs: [object()])
     monkeypatch.setattr(service, "delete_document_vectors", lambda _id: (_ for _ in ()).throw(RuntimeError("qdrant")))
 
     preview = preview_document_reclassification(db_session, document_id=document.id, admin_id=admin.id)

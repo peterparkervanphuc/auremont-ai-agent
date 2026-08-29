@@ -11,6 +11,7 @@ from backend.services.document_classification_service import (
     DocumentClassification,
     DocumentClassificationError,
     DocumentClassificationQuotaError,
+    SectionClassification,
 )
 
 
@@ -185,6 +186,65 @@ def test_classifier_sends_the_full_parsed_content(monkeypatch):
     classification_service.classify_document("du-an.pdf", raw_text)
 
     assert marker in captured["prompt"]
+
+
+def test_classifier_returns_complete_grounded_section_labels_for_mixed_document(monkeypatch):
+    expected = _classification(
+        category=DocumentCategory.SALES_POLICY,
+        categories=[DocumentCategory.SALES_POLICY, DocumentCategory.PRICE_LIST],
+        section_classifications=[
+            SectionClassification(section_index=0, category=DocumentCategory.SALES_POLICY, confidence=0.96),
+            SectionClassification(section_index=1, category=DocumentCategory.PRICE_LIST, confidence=0.93),
+        ],
+    )
+    captured: dict = {}
+
+    def fake_generate_json(prompt, _schema, **_kwargs):
+        captured["prompt"] = prompt
+        return expected
+
+    monkeypatch.setattr(classification_service, "generate_json", fake_generate_json)
+
+    result = classification_service.classify_document(
+        "mixed.pdf",
+        "Chinh sach chiet khau.\nBang gia can A-01.",
+        content_units=[
+            {"section_index": 0, "page": 1, "content_type": "prose", "content": "Chinh sach chiet khau."},
+            {"section_index": 1, "page": 2, "content_type": "table", "content": "Bang gia can A-01."},
+        ],
+    )
+
+    assert result.categories == [DocumentCategory.SALES_POLICY, DocumentCategory.PRICE_LIST]
+    assert [item.category for item in result.section_classifications] == [
+        DocumentCategory.SALES_POLICY,
+        DocumentCategory.PRICE_LIST,
+    ]
+    assert result.section_classifications[1].page == 2
+    assert result.section_classifications[1].content_type == "table"
+    assert "\"sections\"" in captured["prompt"]
+
+
+def test_classifier_falls_back_and_requires_review_when_a_section_label_is_missing(monkeypatch):
+    expected = _classification(
+        category=DocumentCategory.SALES_POLICY,
+        section_classifications=[
+            SectionClassification(section_index=0, category=DocumentCategory.SALES_POLICY, confidence=0.9),
+        ],
+    )
+    monkeypatch.setattr(classification_service, "generate_json", lambda *_args, **_kwargs: expected)
+
+    result = classification_service.classify_document(
+        "mixed.pdf",
+        "Chinh sach.\nBang gia.",
+        content_units=[
+            {"section_index": 0, "content": "Chinh sach."},
+            {"section_index": 1, "content": "Bang gia."},
+        ],
+    )
+
+    assert len(result.section_classifications) == 2
+    assert result.section_classifications[1].category == DocumentCategory.SALES_POLICY
+    assert result.requires_admin_review is True
 
 
 def test_classification_model_normalizes_optional_strings_and_lists():

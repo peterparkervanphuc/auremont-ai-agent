@@ -21,6 +21,7 @@ import {
   LogOutIcon,
   MenuIcon,
   MoonIcon,
+  PlusIcon,
   SettingsIcon,
   ShieldCheckIcon,
   SunIcon,
@@ -44,6 +45,7 @@ interface AdminNavEntry {
 // ADMIN manages the document store and AI quality monitoring; no separate inventory menu.
 const ADMIN_NAV: AdminNavEntry[] = [
   { to: "/sales", label: "Quản lý Sale", icon: UsersIcon, roles: ["admin"] },
+  { to: "/news-workspace", label: "Duyệt tin", icon: GlobeIcon, roles: ["admin"] },
   { to: "/observability", label: "Giám sát hệ thống", icon: ActivityIcon, roles: ["admin"] },
   { to: "/documents", label: "Kho tài liệu", icon: DocumentIcon, roles: ["admin"] },
   { to: "/document-review", label: "Duyệt metadata", icon: CheckIcon, roles: ["admin"] },
@@ -133,6 +135,13 @@ export function TopNavbar() {
           <GlobeIcon size={16} />
           Tin tức <span className="topnav-soon-badge">(sắp ra mắt)</span>
         </span>
+
+        {role === "sale" && (
+          <NavLink to="/news-workspace" className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
+            <PlusIcon size={16} />
+            Đăng tin
+          </NavLink>
+        )}
 
         {showCatalogNav && (
           <>
@@ -400,6 +409,17 @@ export function TopNavbar() {
             <GlobeIcon size={16} />
             Tin tức <span className="topnav-soon-badge">(sắp ra mắt)</span>
           </span>
+
+          {role === "sale" && (
+            <NavLink
+              to="/news-workspace"
+              onClick={() => setMobileOpen(false)}
+              className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}
+            >
+              <PlusIcon size={16} />
+              Đăng tin
+            </NavLink>
+          )}
 
           {showCatalogNav && (
             <>

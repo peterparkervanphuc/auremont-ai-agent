@@ -27,6 +27,7 @@ from backend.schemas.admin_dashboard import (
     LeadTierCounts,
     LeadTrendPoint,
 )
+from backend.services.document_category_service import document_has_category
 from backend.services.document_coverage_service import (
     COVERAGE_CATEGORIES,
     document_coverage_state,
@@ -306,7 +307,7 @@ async def get_business_dashboard(
         project_documents = [row for row in documents if document_matches_project_scope(row, project, project_aliases)]
         categories = {}
         for category in COVERAGE_CATEGORIES:
-            matching = [row for row in project_documents if row.category == category]
+            matching = [row for row in project_documents if document_has_category(row, category)]
             categories[category] = document_coverage_state(
                 matching,
                 retrieval_project_id=project.id,

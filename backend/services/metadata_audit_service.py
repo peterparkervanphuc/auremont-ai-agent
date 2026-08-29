@@ -26,6 +26,7 @@ from typing import Any
 from qdrant_client import models
 
 from backend.core.enums import DocumentReviewStatus, DocumentStatus, LegalStatus
+from backend.services.document_category_service import document_categories
 from backend.services.document_classification_service import DocumentClassification, classify_document
 from backend.services.parser_service import parse_document
 
@@ -37,6 +38,8 @@ _VECTOR_METADATA_FIELDS = (
     "visibility",
     "title",
     "category",
+    "primary_category",
+    "document_categories",
     "review_status",
     "legal_status",
     "is_current",
@@ -426,28 +429,34 @@ def build_metadata_audit_report(
     for document_id in sorted(set(documents_by_id) & set(vector_scan.documents)):
         document = documents_by_id[document_id]
         snapshot = vector_scan.documents[document_id]
-        expected = {
-            **expected_vector_payload(document),
-            "category": _enum_value(document.category),
-        }
+        expected = expected_vector_payload(document)
         all_drift_counts = {
-            key: snapshot.point_count - snapshot.payload_values[key].get(_payload_token(expected, key), 0)
+            key: snapshot.point_count - _matching_payload_count(snapshot, expected, key)
             for key in _VECTOR_METADATA_FIELDS
+            if key != "category"
         }
         all_drift_counts = {key: count for key, count in all_drift_counts.items() if count}
-        category_drift_count = all_drift_counts.pop("category", 0)
+        allowed_category_tokens = {
+            _payload_token({"category": category}, "category") for category in document_categories(document)
+        }
+        category_drift_count = sum(
+            count
+            for token, count in snapshot.payload_values["category"].items()
+            if token not in allowed_category_tokens
+        )
         if category_drift_count:
             category_reindex_ids.append(document_id)
             findings.append(
                 AuditFinding(
                     code="QDRANT_CATEGORY_DRIFT_REQUIRES_REINDEX",
                     severity="warning",
-                    message="Qdrant category differs from MySQL; payload-only sync is unsafe because chunking may be stale.",
+                    message="A Qdrant chunk category is outside the document's approved categories; re-indexing is required.",
                     document_ids=(document_id,),
                     details={
                         "mismatched_point_count": category_drift_count,
                         "point_count": snapshot.point_count,
-                        "mysql_category": _enum_value(document.category),
+                        "mysql_primary_category": _enum_value(document.category),
+                        "mysql_categories": document_categories(document),
                         "repair": "Review the category, then re-chunk, re-embed and atomically replace the document points.",
                     },
                 )
@@ -496,6 +505,8 @@ def expected_vector_payload(document: Any) -> dict[str, Any]:
         "project_id": document.project_id,
         "visibility": _enum_value(document.visibility),
         "title": document.title,
+        "primary_category": _enum_value(document.category),
+        "document_categories": document_categories(document),
         "review_status": _enum_value(document.review_status),
         "legal_status": _enum_value(document.legal_status),
         "is_current": _is_safe_current_document(document),
@@ -811,6 +822,15 @@ def _payload_token(payload: dict[str, Any], key: str) -> tuple[bool, str]:
     if key not in payload:
         return False, ""
     return True, json.dumps(_json_value(payload[key]), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _matching_payload_count(snapshot: VectorDocumentSnapshot, expected: dict[str, Any], key: str) -> int:
+    """Treat an omitted nullable Qdrant key as equivalent to an explicit JSON null."""
+
+    count = snapshot.payload_values[key].get(_payload_token(expected, key), 0)
+    if expected.get(key) is None:
+        count += snapshot.payload_values[key].get((False, ""), 0)
+    return count
 
 
 def _normalise_content(value: str) -> str:

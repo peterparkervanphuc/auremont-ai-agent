@@ -161,7 +161,7 @@ def test_ingestion_saves_sales_policy_suggestion(
     assert result.conflict_facts[0]["fact_key"] == "promotion.discount.rate"
     assert result.classification_confidence == 0.9
     assert result.classification_requires_admin_review is False
-    assert result.classification_version == "llm-v3-grounded-facts"
+    assert result.classification_version == "llm-v4-multisection"
     assert result.classified_at is not None
 
     assert result.review_status == DocumentReviewStatus.APPROVED
@@ -338,7 +338,7 @@ def test_low_confidence_classification_waits_for_admin(
     assert result.classification_confidence == 0.75
     assert result.classification_reason
     assert result.classification_requires_admin_review is True
-    assert result.classification_version == "llm-v3-grounded-facts"
+    assert result.classification_version == "llm-v4-multisection"
     assert result.review_status == DocumentReviewStatus.PENDING
     assert result.reviewed_at is None
     assert result.is_current is False

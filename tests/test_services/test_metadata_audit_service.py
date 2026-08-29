@@ -31,6 +31,7 @@ def _document(document_id: int, **overrides):
         "project_id": "project-a",
         "visibility": DocumentVisibility.INTERNAL,
         "category": DocumentCategory.PRICE_LIST,
+        "categories": [DocumentCategory.PRICE_LIST.value],
         "subcategory": None,
         "subdivision_names": None,
         "building_codes": None,
@@ -132,6 +133,42 @@ def test_category_only_drift_is_never_a_payload_sync_candidate():
     assert report.payload_sync_document_ids == ()
     assert report.category_reindex_document_ids == (1,)
     assert "category" not in expected_vector_payload(document)
+
+
+def test_secondary_chunk_category_is_valid_for_a_mixed_document():
+    document = _document(
+        1,
+        category=DocumentCategory.SALES_POLICY,
+        categories=[DocumentCategory.SALES_POLICY.value, DocumentCategory.PRICE_LIST.value],
+    )
+    snapshot = _vector_snapshot(document, payload_overrides={"category": "price_list"})
+
+    report = build_metadata_audit_report(
+        [document],
+        VectorScan(collection_exists=True, point_count=1, documents={1: snapshot}),
+    )
+
+    assert report.category_reindex_document_ids == ()
+
+
+def test_missing_nullable_project_payload_matches_mysql_null():
+    document = _document(1, project_id=None)
+    payload = {
+        **expected_vector_payload(document),
+        "category": DocumentCategory.PRICE_LIST.value,
+        "chunk_index": 0,
+        "content": "Bang gia ap dung chung.",
+    }
+    payload.pop("project_id")
+    snapshot = VectorDocumentSnapshot(document_id=document.id)
+    snapshot.add_point(point_id="point-1", payload=payload)
+
+    report = build_metadata_audit_report(
+        [document],
+        VectorScan(collection_exists=True, point_count=1, documents={1: snapshot}),
+    )
+
+    assert report.payload_sync_document_ids == ()
 
 
 def test_nonterminal_or_retired_documents_are_never_repaired_to_current_true():

@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     minio_bucket_documents: str = "salesmate-documents"
     minio_bucket_project_images: str = "project-images"
+    minio_bucket_news_images: str = "news-images"
     minio_public_endpoint: str = ""
     project_images_base_url: str = ""
     project_images_archive_url: str = ""
@@ -100,12 +101,9 @@ class Settings(BaseSettings):
     inventory_api_key: str = ""
     inventory_project_map: str = ""
 
-    # Official news ingestion. n8n is the only writer; every human-facing role
-    # reads the same published feed. News remains separate from Documents/Qdrant.
-    DEFAULT_INSECURE_NEWS_INGESTION_KEY: ClassVar[str] = "dev-news-ingestion-key-change-in-production"
-    news_ingestion_key: str = DEFAULT_INSECURE_NEWS_INGESTION_KEY
+    # Sale-authored news is public only after Admin review. It remains separate
+    # from Documents/Qdrant so an unreviewed post can never enter RAG retrieval.
     news_default_ttl_days: int = Field(default=180, ge=7, le=1095)
-    news_archive_retention_days: int = Field(default=90, ge=1, le=1095)
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
     upload_max_bytes: int = 20 * 1024 * 1024
@@ -153,11 +151,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SECRET_KEY must be set to a unique value when APP_ENV is not a development "
                 'environment. Generate one with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
-            )
-        if self.is_production and self.news_ingestion_key == self.DEFAULT_INSECURE_NEWS_INGESTION_KEY:
-            raise ValueError(
-                "NEWS_INGESTION_KEY must be set to a unique value outside development. "
-                'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
             )
         return self
 

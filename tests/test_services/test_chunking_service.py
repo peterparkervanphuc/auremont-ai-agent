@@ -1,6 +1,6 @@
 import pytest
 
-from backend.services.chunking_service import chunk_sections
+from backend.services.chunking_service import chunk_sections, chunk_sections_by_classification
 from backend.services.parser_service import ParsedSection
 
 
@@ -17,6 +17,27 @@ def test_chunk_sections_preserves_page_and_global_index():
     assert [chunk.page for chunk in chunks] == [1, 2]
     assert chunks[0].text == "Noi dung trang mot."
     assert chunks[1].text == "Noi dung trang hai."
+
+
+def test_mixed_document_chunks_keep_one_approved_category_per_content_unit():
+    sections = [
+        ParsedSection(text="Chinh sach chiet khau 5% cho khach hang.", page=1),
+        ParsedSection(text="| Ma can | Gia |\n| A-01 | 3.5 ty |", page=2, content_type="table"),
+    ]
+
+    chunks = chunk_sections_by_classification(
+        sections,
+        primary_category="sales_policy",
+        section_classifications=[
+            {"section_index": 0, "category": "sales_policy"},
+            {"section_index": 1, "category": "price_list"},
+        ],
+    )
+
+    assert [chunk.index for chunk in chunks] == list(range(len(chunks)))
+    assert [chunk.category for chunk in chunks] == ["sales_policy", "price_list"]
+    assert [chunk.section_index for chunk in chunks] == [0, 1]
+    assert [chunk.page for chunk in chunks] == [1, 2]
 
 
 def test_chunk_sections_includes_roman_and_number_breadcrumb():

@@ -38,7 +38,12 @@ from backend.repositories.document import (
     update_document_status,
     update_document_storage_path,
 )
-from backend.services.chunking_service import chunk_sections
+from backend.services.chunking_service import chunk_sections, chunk_sections_by_classification
+from backend.services.document_category_service import (
+    document_categories,
+    document_has_category,
+    documents_share_category,
+)
 from backend.services.document_classification_service import (
     DocumentClassification,
     DocumentClassificationError,
@@ -170,8 +175,24 @@ def ingest_uploaded_document(
             raise PromptInjectionError(security_scan.findings)
         raw_text = security_scan.text
 
+        classification_units = chunk_sections(sections, document_category=None)
+        content_units = [
+            {
+                "section_index": unit.index,
+                "page": unit.page,
+                "content_type": unit.content_type,
+                "content": unit.text,
+            }
+            for unit in classification_units
+        ]
+
         project_catalog = classification_project_catalog(db)
-        classification = _classify_document_with_catalog(filename, raw_text, project_catalog)
+        classification = _classify_document_with_catalog(
+            filename,
+            raw_text,
+            project_catalog,
+            content_units=content_units,
+        )
         project_resolution = resolve_classified_project(
             selected_project_id=document.project_id,
             suggested_project_id=classification.project_id,
@@ -233,9 +254,10 @@ def ingest_uploaded_document(
             db.refresh(document)
             return document
 
-        chunks = chunk_sections(
+        chunks = chunk_sections_by_classification(
             sections,
-            document_category=document.category,
+            primary_category=document.category,
+            section_classifications=document.section_classifications,
         )
         if not chunks:
             raise DocumentIngestionError("No chunks were produced.")
@@ -362,6 +384,8 @@ def _classify_document_with_catalog(
     filename: str,
     raw_text: str,
     project_catalog: Sequence[Mapping[str, object]],
+    *,
+    content_units: Sequence[Mapping[str, object]] | None = None,
 ) -> DocumentClassification:
     """Pass live project choices in production while tolerating narrow test doubles."""
 
@@ -369,8 +393,16 @@ def _classify_document_with_catalog(
     accepts_catalog = "project_catalog" in signature.parameters or any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
     )
+    accepts_content_units = "content_units" in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
+    )
+    kwargs: dict[str, object] = {}
     if accepts_catalog:
-        return classify_document(filename, raw_text, project_catalog=project_catalog)
+        kwargs["project_catalog"] = project_catalog
+    if accepts_content_units:
+        kwargs["content_units"] = content_units
+    if kwargs:
+        return classify_document(filename, raw_text, **kwargs)
     return classify_document(filename, raw_text)
 
 
@@ -407,6 +439,7 @@ def _embed_and_index(document: Document, chunks: list, *, is_current: bool | Non
         vectors=vectors,
         sparse_vectors=sparse_vectors,
         category=document.category,
+        categories=document_categories(document),
         review_status=document.review_status,
         legal_status=document.legal_status,
         is_current=document.is_current if is_current is None else is_current,
@@ -435,7 +468,11 @@ def reindex_document(db: Session, *, document_id: int) -> Document:
         file_bytes = _read_original_file(document.file_path)
         sections = parse_document(document.title, file_bytes)
 
-        chunks = chunk_sections(sections, document_category=document.category)
+        chunks = chunk_sections_by_classification(
+            sections,
+            primary_category=document.category,
+            section_classifications=document.section_classifications,
+        )
         if not chunks:
             raise DocumentIngestionError("No chunks were produced.")
 
@@ -509,6 +546,8 @@ def reclassify_document(
         "legal_issuer",
         "legal_domain",
         "legal_status",
+        "categories",
+        "section_classifications",
     }
     unexpected_fields = set(updates) - allowed_fields
     if unexpected_fields:
@@ -522,7 +561,27 @@ def reclassify_document(
     if target_project_id and db.get(Project, target_project_id) is None:
         raise DocumentIngestionError(f"project_id '{target_project_id}' does not exist in the project catalogue.")
 
+    target_section_classifications = updates.get(
+        "section_classifications",
+        document.section_classifications or [],
+    )
+    section_categories = [
+        str(item.get("category"))
+        for item in target_section_classifications
+        if isinstance(item, dict) and item.get("category")
+    ]
     category_changed = category != document.category
+    if "categories" in updates:
+        target_categories = [str(value) for value in updates["categories"]]
+    elif category_changed:
+        target_categories = [str(category), *section_categories]
+    else:
+        target_categories = document_categories(document)
+    target_categories = list(dict.fromkeys([str(category), *target_categories, *section_categories]))
+    if "categories" in updates or category_changed or "section_classifications" in updates:
+        updates["categories"] = target_categories
+    categories_changed = target_categories != document_categories(document)
+    section_categories_changed = target_section_classifications != (document.section_classifications or [])
     project_changed = target_project_id != document.project_id
     changed_fields = {field_name for field_name, value in updates.items() if value != getattr(document, field_name)}
     if not category_changed and not changed_fields and not was_pending_review:
@@ -535,7 +594,13 @@ def reclassify_document(
             "Choose a supported business category or remove the document."
         )
 
-    requires_reindex = was_pending_review or category_changed or project_changed
+    requires_reindex = (
+        was_pending_review
+        or category_changed
+        or categories_changed
+        or section_categories_changed
+        or project_changed
+    )
     previous_update_values = {field_name: getattr(document, field_name) for field_name in updates}
 
     if not was_pending_review:
@@ -555,7 +620,11 @@ def reclassify_document(
         if requires_reindex:
             file_bytes = _read_original_file(document.file_path)
             sections = parse_document(document.title, file_bytes)
-            chunks = chunk_sections(sections, document_category=category)
+            chunks = chunk_sections_by_classification(
+                sections,
+                primary_category=category,
+                section_classifications=target_section_classifications,
+            )
             if not chunks:
                 raise DocumentIngestionError("No chunks were produced for the corrected classification.")
             section_texts = [
@@ -852,6 +921,8 @@ _COMPARISON_DOCUMENT_FIELDS = (
     "file_path",
     "project_id",
     "category",
+    "categories",
+    "section_classifications",
     "subcategory",
     "subdivision_names",
     "building_codes",
@@ -1008,7 +1079,11 @@ def scan_conflicts_for(
                 *_business_fact_differences(sibling_text, current_text),
                 *_textual_clause_differences(sibling_text, current_text),
             ]
-        if rule_scope and document.category == DocumentCategory.PRICE_LIST:
+        if (
+            rule_scope
+            and document_has_category(document, DocumentCategory.PRICE_LIST)
+            and document_has_category(sibling, DocumentCategory.PRICE_LIST)
+        ):
             old_price_facts = _price_facts(sibling_text)
             new_price_facts = _price_facts(current_text)
             price_differences = _price_differences_from_facts(old_price_facts, new_price_facts)
@@ -1269,7 +1344,7 @@ def _same_business_scope(left: Document, right: Document) -> bool:
     difference can itself represent a price list adding or removing a product type.
     Missing metadata remains "unknown", not proof of separation.
     """
-    if left.category != right.category:
+    if not documents_share_category(left, right):
         return False
 
     for field in ("subdivision_names", "building_codes"):
@@ -1332,16 +1407,18 @@ def _is_semantic_scope_candidate(left: Document, right: Document) -> bool:
     same_identity = _title_key(left.title) == _title_key(right.title) or _shares_legal_identity(left, right)
     if same_identity or _shares_explicit_scope(left, right) or _shared_conflict_fact_keys(left, right):
         return True
+    left_categories = set(document_categories(left))
+    right_categories = set(document_categories(right))
     global_and_project = bool(left.project_id) != bool(right.project_id)
-    if global_and_project and left.category == right.category:
+    if global_and_project and left_categories & right_categories:
         return True
     if not left.project_id and not right.project_id:
-        return left.category == right.category or any(
-            left.category in group and right.category in group for group in _SEMANTIC_CATEGORY_GROUPS
+        return bool(left_categories & right_categories) or any(
+            left_categories & group and right_categories & group for group in _SEMANTIC_CATEGORY_GROUPS
         )
-    if left.category == right.category:
+    if left_categories & right_categories:
         return True
-    return any(left.category in group and right.category in group for group in _SEMANTIC_CATEGORY_GROUPS)
+    return any(left_categories & group and right_categories & group for group in _SEMANTIC_CATEGORY_GROUPS)
 
 
 def _shared_conflict_fact_keys(left: Document, right: Document) -> bool:
@@ -1379,7 +1456,9 @@ def _has_deterministic_conflict(
     ]
     has_shared_price_scope = False
     price_differences: list[tuple[str, set[int], set[int]]] = []
-    if current.category == DocumentCategory.PRICE_LIST:
+    if document_has_category(current, DocumentCategory.PRICE_LIST) and document_has_category(
+        sibling, DocumentCategory.PRICE_LIST
+    ):
         old_price_facts = _price_facts(sibling_text)
         new_price_facts = _price_facts(current_text)
         price_differences = _price_differences_from_facts(old_price_facts, new_price_facts)
@@ -1407,7 +1486,9 @@ def _shares_explicit_scope(left: Document, right: Document) -> bool:
 
 def _shares_legal_identity(left: Document, right: Document) -> bool:
     """A legal document number is a stronger identity anchor than its upload title."""
-    if left.category != DocumentCategory.LEGAL_DOCUMENT or right.category != DocumentCategory.LEGAL_DOCUMENT:
+    if not document_has_category(left, DocumentCategory.LEGAL_DOCUMENT) or not document_has_category(
+        right, DocumentCategory.LEGAL_DOCUMENT
+    ):
         return False
     left_number = _metadata_key(left.legal_document_number)
     right_number = _metadata_key(right.legal_document_number)

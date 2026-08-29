@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { fetchNews, type NewsArticle, type NewsTopic } from "../api/news";
 import {
   BuildingHomeIcon,
   ClockIcon,
   ExternalLinkIcon,
   GlobeIcon,
+  PlusIcon,
   RefreshIcon,
   SearchIcon,
 } from "../components/Icons";
+import { useAuth } from "../hooks/useAuth";
 
 const PAGE_SIZE = 12;
 
@@ -35,7 +38,7 @@ function ArticleImage({ article, featured = false }: { article: NewsArticle; fea
     return (
       <div className={`news-image news-image--fallback ${featured ? "news-image--featured" : ""}`}>
         <BuildingHomeIcon size={featured ? 54 : 38} />
-        <span>Tin chính thống</span>
+        <span>Tin đã kiểm duyệt</span>
       </div>
     );
   }
@@ -49,7 +52,7 @@ function ArticleImage({ article, featured = false }: { article: NewsArticle; fea
 function NewsMeta({ article }: { article: NewsArticle }) {
   return (
     <div className="news-card-meta">
-      <span className="news-source"><GlobeIcon size={13} />{article.sourceName}</span>
+      <span className="news-source"><GlobeIcon size={13} />Sale Auremont đăng</span>
       <span><ClockIcon size={13} />{formatDate(article.publishedAt, article.fetchedAt)}</span>
     </div>
   );
@@ -57,7 +60,7 @@ function NewsMeta({ article }: { article: NewsArticle }) {
 
 function NewsCard({ article }: { article: NewsArticle }) {
   return (
-    <a className="news-card" href={article.canonicalUrl} target="_blank" rel="noreferrer noopener">
+    <Link className="news-card" to={`/news/${article.id}`}>
       <ArticleImage article={article} />
       <div className="news-card-body">
         <NewsMeta article={article} />
@@ -69,13 +72,14 @@ function NewsCard({ article }: { article: NewsArticle }) {
             {article.projectNames.slice(0, 3).map((project) => <span key={project}>{project}</span>)}
           </div>
         )}
-        <span className="news-read-more">Đọc tại nguồn <ExternalLinkIcon size={14} /></span>
+        <span className="news-read-more">Đọc bài viết <ExternalLinkIcon size={14} /></span>
       </div>
-    </a>
+    </Link>
   );
 }
 
 export function NewsPage() {
+  const { isAuthenticated, role } = useAuth();
   const [items, setItems] = useState<NewsArticle[]>([]);
   const [total, setTotal] = useState(0);
   const [topic, setTopic] = useState<NewsTopic | "">("");
@@ -86,7 +90,8 @@ export function NewsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = async (offset = 0) => {
-    offset === 0 ? setLoading(true) : setLoadingMore(true);
+    if (offset === 0) setLoading(true);
+    else setLoadingMore(true);
     setError(null);
     try {
       const result = await fetchNews({ offset, limit: PAGE_SIZE, topic: topic || undefined, query });
@@ -102,7 +107,6 @@ export function NewsPage() {
 
   useEffect(() => {
     void load(0);
-    // load is intentionally tied to the committed filter values, not every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic, query]);
 
@@ -119,27 +123,23 @@ export function NewsPage() {
       <section className="news-hero">
         <div>
           <span className="news-eyebrow"><GlobeIcon size={15} /> Trung tâm tin tức Auremont</span>
-          <h1>Tin tức bất động sản<br /><em>từ nguồn chính thống</em></h1>
-          <p>Cập nhật dự án Vinhomes, hạ tầng, chính sách và tiềm năng phát triển. Mỗi bản tin đều dẫn về bài viết gốc để bạn kiểm chứng.</p>
+          <h1>Tin tức bất động sản<br /><em>đã được kiểm duyệt</em></h1>
+          <p>Cập nhật dự án Vinhomes, hạ tầng, chính sách và tiềm năng phát triển. Nội dung do đội ngũ Sale biên soạn và được Admin kiểm tra trước khi xuất bản.</p>
+          {isAuthenticated && (role === "sale" || role === "admin") && (
+            <Link className="news-manage-cta" to="/news-workspace"><PlusIcon size={16} />{role === "admin" ? "Mở hàng đợi duyệt" : "Đăng tin mới"}</Link>
+          )}
         </div>
         <div className="news-trust-card">
-          <span>NGUỒN ĐÃ XÁC MINH</span>
-          <strong>Vinhomes · Vingroup</strong>
-          <p>Tự động đồng bộ bởi n8n, chống trùng và tự ẩn khi hết hạn.</p>
+          <span>QUY TRÌNH XÁC MINH</span>
+          <strong>Sale biên soạn · Admin phê duyệt</strong>
+          <p>Bản nháp và bài đang chờ duyệt không xuất hiện trên website.</p>
         </div>
       </section>
 
       <section className="news-toolbar" aria-label="Bộ lọc tin tức">
         <div className="news-topic-list">
           {TOPICS.map((item) => (
-            <button
-              type="button"
-              key={item.value || "all"}
-              className={topic === item.value ? "is-active" : ""}
-              onClick={() => setTopic(item.value)}
-            >
-              {item.label}
-            </button>
+            <button type="button" key={item.value || "all"} className={topic === item.value ? "is-active" : ""} onClick={() => setTopic(item.value)}>{item.label}</button>
           ))}
         </div>
         <form className="news-search" onSubmit={submitSearch}>
@@ -149,49 +149,25 @@ export function NewsPage() {
         </form>
       </section>
 
-      {error && (
-        <div className="news-state news-state--error">
-          <p>{error}</p>
-          <button type="button" onClick={() => void load(0)}><RefreshIcon size={15} /> Thử lại</button>
-        </div>
-      )}
-
-      {loading && (
-        <div className="news-grid" aria-label="Đang tải tin tức">
-          {Array.from({ length: 6 }).map((_, index) => <div className="news-skeleton" key={index} />)}
-        </div>
-      )}
-
-      {!loading && !error && !featured && (
-        <div className="news-state">
-          <GlobeIcon size={42} />
-          <h2>Chưa có tin phù hợp</h2>
-          <p>n8n chưa đồng bộ bản tin nào cho bộ lọc này.</p>
-        </div>
-      )}
+      {error && <div className="news-state news-state--error"><p>{error}</p><button type="button" onClick={() => void load(0)}><RefreshIcon size={15} /> Thử lại</button></div>}
+      {loading && <div className="news-grid" aria-label="Đang tải tin tức">{Array.from({ length: 6 }).map((_, index) => <div className="news-skeleton" key={index} />)}</div>}
+      {!loading && !error && !featured && <div className="news-state"><GlobeIcon size={42} /><h2>Chưa có tin phù hợp</h2><p>Chưa có bài viết đã duyệt cho bộ lọc này.</p></div>}
 
       {!loading && !error && featured && (
         <>
-          <a className="news-featured" href={featured.canonicalUrl} target="_blank" rel="noreferrer noopener">
+          <Link className="news-featured" to={`/news/${featured.id}`}>
             <ArticleImage article={featured} featured />
             <div className="news-featured-body">
               <span className="news-featured-label">TIN MỚI NHẤT</span>
               <NewsMeta article={featured} />
               <h2>{featured.title}</h2>
               {featured.summary && <p>{featured.summary}</p>}
-              <span className="news-read-more">Xem bài viết gốc <ExternalLinkIcon size={15} /></span>
+              <span className="news-read-more">Đọc bài viết <ExternalLinkIcon size={15} /></span>
             </div>
-          </a>
-          <div className="news-section-heading">
-            <div><span>MỚI CẬP NHẬT</span><h2>Các tin tức khác</h2></div>
-            <strong>{total} bản tin</strong>
-          </div>
+          </Link>
+          <div className="news-section-heading"><div><span>MỚI CẬP NHẬT</span><h2>Các tin tức khác</h2></div><strong>{total} bản tin</strong></div>
           <div className="news-grid">{remaining.map((article) => <NewsCard key={article.id} article={article} />)}</div>
-          {items.length < total && (
-            <button className="news-load-more" type="button" disabled={loadingMore} onClick={() => void load(items.length)}>
-              {loadingMore ? "Đang tải…" : "Xem thêm tin tức"}
-            </button>
-          )}
+          {items.length < total && <button className="news-load-more" type="button" disabled={loadingMore} onClick={() => void load(items.length)}>{loadingMore ? "Đang tải…" : "Xem thêm tin tức"}</button>}
         </>
       )}
     </main>
