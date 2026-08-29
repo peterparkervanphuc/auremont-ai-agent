@@ -122,7 +122,6 @@ export const CATALOG: CatalogMegaProject[] = [
             name: "Shop thương mại BH9B",
             projects: [{ name: "Shop thương mại BH9B", projectId: "shop-thuong-mai-bh9b" }],
           },
-          { slug: "shop-malibu-walk", name: "Shop Malibu Walk", projects: [{ name: "Shop Malibu Walk" }] },
         ],
       },
     ],

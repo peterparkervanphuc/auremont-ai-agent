@@ -1031,8 +1031,8 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.8125rem;
-  font-weight: 600;
+  font-size: 0.9375rem;
+  font-weight: 800;
   color: var(--accent);
   white-space: nowrap;
 }
@@ -1107,7 +1107,11 @@ code {
 
 .home-feature-head .section-subtitle {
   margin: 10px 0 0;
+  max-width: none;
+  margin-inline: 0;
   text-align: left;
+  font-size: 0.9375rem;
+  white-space: nowrap;
 }
 
 .home-feature-grid {
@@ -1238,6 +1242,16 @@ code {
   text-transform: uppercase;
   color: var(--accent);
   margin-bottom: 12px;
+}
+
+/* "Loại hình sản phẩm", "Cách Auremont hỗ trợ bạn" and "Bắt đầu ngay" specifically want a
+   bolder, larger eyebrow to stand out more than the other Home sections reusing
+   .section-eyebrow. */
+.home-featured .section-eyebrow,
+.home-feature-head .section-eyebrow,
+.home-cta .section-eyebrow {
+  font-size: 0.875rem;
+  font-weight: 800;
 }
 
 /* Large heading dedicated to Home sections — named separately to avoid colliding
