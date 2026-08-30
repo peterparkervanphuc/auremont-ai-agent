@@ -205,7 +205,9 @@ def update_document_classification(
 
     if "categories" in updates and [str(value) for value in payload.categories] != document_categories(document):
         raise ValueError("Changing document categories requires quarantine and controlled re-indexing.")
-    if "section_classifications" in updates and updates["section_classifications"] != (document.section_classifications or []):
+    if "section_classifications" in updates and updates["section_classifications"] != (
+        document.section_classifications or []
+    ):
         raise ValueError("Changing section categories requires quarantine and controlled re-indexing.")
 
     scope_fields = ("subdivision_names", "building_codes", "unit_types")

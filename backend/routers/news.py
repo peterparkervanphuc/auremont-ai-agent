@@ -74,7 +74,14 @@ def get_news(
         source_id=source_id,
         query=q,
     )
-    return NewsListResponse(items=rows, total=total, offset=offset, limit=limit)
+    # Converted explicitly rather than leaning on Pydantic's implicit ORM coercion, so the
+    # declared `list[NewsArticleResponse]` is what actually reaches the constructor.
+    return NewsListResponse(
+        items=[NewsArticleResponse.model_validate(row) for row in rows],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.get("/news/{article_id}", response_model=NewsArticleResponse)
@@ -170,12 +177,16 @@ async def upload_news_image(
     settings: Settings = Depends(get_settings),
 ) -> NewsImageUploadResponse:
     if image.content_type not in ALLOWED_NEWS_IMAGE_TYPES:
-        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Chỉ hỗ trợ JPG, PNG, WEBP hoặc GIF.")
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Chỉ hỗ trợ JPG, PNG, WEBP hoặc GIF."
+        )
     data = await image.read(MAX_NEWS_IMAGE_BYTES + 1)
     if not data:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Tệp ảnh trống.")
     if len(data) > MAX_NEWS_IMAGE_BYTES:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Ảnh không được vượt quá 5 MB.")
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Ảnh không được vượt quá 5 MB."
+        )
 
     suffix = PurePath(image.filename or "image").suffix.lower()
     if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
@@ -193,7 +204,9 @@ async def upload_news_image(
             content_type=image.content_type,
         )
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Không thể lưu ảnh lúc này.") from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Không thể lưu ảnh lúc này."
+        ) from exc
     log_event("news.image.uploaded", user_id=sale.id, username=sale.username)
     return NewsImageUploadResponse(image_url=public_object_url(settings.minio_bucket_news_images, object_name))
 

@@ -598,7 +598,8 @@ def _summarise(report: dict[str, Any]) -> str:
         f"Pass rate:    {report['pass_rate']:.1%} ({report['passed']} passed, {report['failed']} failed)",
         f"  rules:      {report.get('deterministic_pass_rate', 0.0):.1%}  (gates the run)",
         f"  judged:     {report.get('judged_pass_rate', 0.0):.1%}  (trend only"
-        + ("" if report["independent_judge"] else ", self-graded — not evidence") + ")",
+        + ("" if report["independent_judge"] else ", self-graded — not evidence")
+        + ")",
         "",
         "Metrics:",
     ]

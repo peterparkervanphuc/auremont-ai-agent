@@ -25,8 +25,12 @@ def news_db() -> Iterator[sessionmaker[Session]]:
         db.add_all(
             [
                 User(id=1, username="sale_news", email="sale-news@example.com", hashed_password="unused", role="sale"),
-                User(id=2, username="admin_news", email="admin-news@example.com", hashed_password="unused", role="admin"),
-                User(id=3, username="other_sale", email="other-sale@example.com", hashed_password="unused", role="sale"),
+                User(
+                    id=2, username="admin_news", email="admin-news@example.com", hashed_password="unused", role="admin"
+                ),
+                User(
+                    id=3, username="other_sale", email="other-sale@example.com", hashed_password="unused", role="sale"
+                ),
             ]
         )
         db.commit()

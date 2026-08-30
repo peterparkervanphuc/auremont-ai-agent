@@ -88,7 +88,9 @@ def chunk_sections_by_classification(
     assignments: dict[int, str] = {}
     for item in section_classifications or []:
         try:
-            section_index = int(item.get("section_index"))
+            # `str()` first so the call is well-typed against an untyped mapping value;
+            # the except clause below still rejects anything that will not parse.
+            section_index = int(str(item.get("section_index")))
         except (AttributeError, TypeError, ValueError):
             continue
         category = str(item.get("category") or "").strip()

@@ -13,7 +13,7 @@ import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from datetime import date
-from typing import Literal
+from typing import Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -546,23 +546,23 @@ def classify_document(
 
     if safe_content_units:
         returned = {item.section_index: item for item in classification.section_classifications}
-        expected_indexes = {int(unit["section_index"]) for unit in safe_content_units}
+        expected_indexes = {unit["section_index"] for unit in safe_content_units}
         returned_indexes = set(returned)
         incomplete_section_result = returned_indexes != expected_indexes
         normalised_sections: list[SectionClassification] = []
         for unit in safe_content_units:
-            section_index = int(unit["section_index"])
+            section_index = unit["section_index"]
             suggested = returned.get(section_index)
             category = suggested.category if suggested is not None else classification.category
             normalised_sections.append(
                 SectionClassification(
                     section_index=section_index,
                     category=category,
-                    page=unit.get("page"),
-                    content_type=str(unit.get("content_type") or "prose"),
+                    page=unit["page"],
+                    content_type=unit["content_type"],
                     confidence=suggested.confidence if suggested is not None else classification.confidence,
                     reason=suggested.reason if suggested is not None else "Fallback to primary document category.",
-                    excerpt=" ".join(str(unit.get("content") or "").split())[:300],
+                    excerpt=" ".join(unit["content"].split())[:300],
                 )
             )
 
@@ -591,14 +591,31 @@ def classify_document(
     return classification
 
 
-def _normalise_content_units(content_units: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+class ContentUnit(TypedDict):
+    """One normalised section, with the types `_normalise_content_units` actually guarantees.
+
+    The input is `Mapping[str, object]` because it comes straight from the parser/chunker,
+    but everything downstream reads `section_index` as an `int` and `page` as `int | None`.
+    Returning a plain `dict[str, object]` threw that away and forced a cast at every use.
+    """
+
+    section_index: int
+    page: int | None
+    content_type: str
+    content: str
+
+
+def _normalise_content_units(content_units: Sequence[Mapping[str, object]]) -> list[ContentUnit]:
     """Bound deterministic parser/chunker output before putting it in the LLM prompt."""
 
-    normalised: list[dict[str, object]] = []
+    normalised: list[ContentUnit] = []
     seen: set[int] = set()
     for position, unit in enumerate(content_units):
+        raw_index = unit.get("section_index", position)
         try:
-            section_index = int(unit.get("section_index", position))
+            # `raw_index` is `object` off an untyped Mapping; `str()` first so the call is
+            # well-typed, with the same except clause still rejecting anything unparseable.
+            section_index = int(raw_index) if isinstance(raw_index, int) else int(str(raw_index))
         except (TypeError, ValueError):
             continue
         content = str(unit.get("content") or "").strip()
@@ -607,12 +624,12 @@ def _normalise_content_units(content_units: Sequence[Mapping[str, object]]) -> l
         seen.add(section_index)
         page = unit.get("page")
         normalised.append(
-            {
-                "section_index": section_index,
-                "page": page if isinstance(page, int) and page > 0 else None,
-                "content_type": str(unit.get("content_type") or "prose")[:30],
-                "content": content,
-            }
+            ContentUnit(
+                section_index=section_index,
+                page=page if isinstance(page, int) and page > 0 else None,
+                content_type=str(unit.get("content_type") or "prose")[:30],
+                content=content,
+            )
         )
     return normalised
 

@@ -1,6 +1,7 @@
 import hashlib
 import uuid
 from datetime import timedelta
+from typing import cast
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 from backend.core.config import Settings
 from backend.models.news_article import NewsArticle
 from backend.models.user import User
-from backend.schemas.news import NewsDraftCreate, NewsDraftUpdate, NewsWorkflowArticleResponse
+from backend.schemas.news import NewsDraftCreate, NewsDraftUpdate, NewsStatus, NewsWorkflowArticleResponse
 from backend.utils.time import utcnow
 
 EDITABLE_NEWS_STATUSES = frozenset({"draft", "changes_requested", "rejected"})
@@ -106,7 +107,9 @@ def update_news_draft(
 def submit_news_for_review(db: Session, article_id: int, author: User) -> NewsArticle:
     article = get_owned_news(db, article_id, author.id, for_update=True)
     if article.status not in EDITABLE_NEWS_STATUSES:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Bài viết không ở trạng thái có thể gửi duyệt.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Bài viết không ở trạng thái có thể gửi duyệt."
+        )
     if not article.content or len(article.content.strip()) < 50:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nội dung bài viết quá ngắn.")
 
@@ -123,7 +126,9 @@ def submit_news_for_review(db: Session, article_id: int, author: User) -> NewsAr
 def delete_news_draft(db: Session, article_id: int, author: User) -> None:
     article = get_owned_news(db, article_id, author.id, for_update=True)
     if article.status not in EDITABLE_NEWS_STATUSES:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Không thể xóa bài đang duyệt hoặc đã xuất bản.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Không thể xóa bài đang duyệt hoặc đã xuất bản."
+        )
     db.delete(article)
     db.commit()
 
@@ -244,12 +249,11 @@ def list_admin_news(
 
 def workflow_responses(db: Session, articles: list[NewsArticle]) -> list[NewsWorkflowArticleResponse]:
     user_ids = {
-        user_id
-        for article in articles
-        for user_id in (article.author_id, article.reviewer_id)
-        if user_id is not None
+        user_id for article in articles for user_id in (article.author_id, article.reviewer_id) if user_id is not None
     }
-    users = {user.id: user.username for user in db.scalars(select(User).where(User.id.in_(user_ids)))} if user_ids else {}
+    users = (
+        {user.id: user.username for user in db.scalars(select(User).where(User.id.in_(user_ids)))} if user_ids else {}
+    )
     return [
         NewsWorkflowArticleResponse(
             id=article.id,
@@ -264,9 +268,11 @@ def workflow_responses(db: Session, articles: list[NewsArticle]) -> list[NewsWor
             project_names=article.project_names or [],
             published_at=article.published_at,
             fetched_at=article.fetched_at,
-            status=article.status,
+            # The column is a plain String(30); every write goes through this module's own
+            # status constants, so the value is one of NewsStatus by construction.
+            status=cast(NewsStatus, article.status),
             author_id=article.author_id,
-            author_name=users.get(article.author_id, "Hệ thống"),
+            author_name=users.get(article.author_id, "Hệ thống") if article.author_id is not None else "Hệ thống",
             reviewer_id=article.reviewer_id,
             reviewer_name=users.get(article.reviewer_id) if article.reviewer_id is not None else None,
             review_note=article.review_note,

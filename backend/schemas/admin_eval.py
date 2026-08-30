@@ -3,6 +3,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# Named so the router's readers can be typed with the same set the responses accept,
+# rather than widening to `str` and losing the check at the boundary.
+ArtifactStatus = Literal["ready", "missing", "invalid"]
+PipelineArtifactSource = Literal["artifact", "live_traces"]
+
 
 class DeepEvalMetricResponse(BaseModel):
     total: int = 0
@@ -65,7 +70,7 @@ class PipelineEvalReportResponse(BaseModel):
 
 
 class DeepEvalArtifactResponse(BaseModel):
-    status: Literal["ready", "missing", "invalid"]
+    status: ArtifactStatus
     source: Literal["artifact"] | None = None
     generated_at: datetime | None = None
     report: DeepEvalReportResponse | None = None
@@ -73,8 +78,8 @@ class DeepEvalArtifactResponse(BaseModel):
 
 
 class PipelineEvalArtifactResponse(BaseModel):
-    status: Literal["ready", "missing", "invalid"]
-    source: Literal["artifact", "live_traces"] | None = None
+    status: ArtifactStatus
+    source: PipelineArtifactSource | None = None
     generated_at: datetime | None = None
     report: PipelineEvalReportResponse | None = None
     message: str | None = None

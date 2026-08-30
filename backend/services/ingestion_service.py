@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from functools import partial
 from io import BytesIO
 from pathlib import PurePath
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -396,7 +397,9 @@ def _classify_document_with_catalog(
     accepts_content_units = "content_units" in signature.parameters or any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
     )
-    kwargs: dict[str, object] = {}
+    # Typed `Any` rather than `object`: which keywords exist is decided at runtime by the
+    # introspection above, so no static signature covers every call this can make.
+    kwargs: dict[str, Any] = {}
     if accepts_catalog:
         kwargs["project_catalog"] = project_catalog
     if accepts_content_units:
@@ -561,18 +564,21 @@ def reclassify_document(
     if target_project_id and db.get(Project, target_project_id) is None:
         raise DocumentIngestionError(f"project_id '{target_project_id}' does not exist in the project catalogue.")
 
-    target_section_classifications = updates.get(
+    # `updates` is an untyped Mapping, so narrow once here rather than at each use below.
+    raw_section_classifications = updates.get(
         "section_classifications",
         document.section_classifications or [],
     )
-    section_categories = [
-        str(item.get("category"))
-        for item in target_section_classifications
-        if isinstance(item, dict) and item.get("category")
-    ]
+    target_section_classifications: list[dict[str, Any]] = (
+        [item for item in raw_section_classifications if isinstance(item, dict)]
+        if isinstance(raw_section_classifications, list)
+        else []
+    )
+    section_categories = [str(item.get("category")) for item in target_section_classifications if item.get("category")]
     category_changed = category != document.category
+    raw_categories = updates.get("categories")
     if "categories" in updates:
-        target_categories = [str(value) for value in updates["categories"]]
+        target_categories = [str(value) for value in raw_categories] if isinstance(raw_categories, list) else []
     elif category_changed:
         target_categories = [str(category), *section_categories]
     else:
@@ -595,11 +601,7 @@ def reclassify_document(
         )
 
     requires_reindex = (
-        was_pending_review
-        or category_changed
-        or categories_changed
-        or section_categories_changed
-        or project_changed
+        was_pending_review or category_changed or categories_changed or section_categories_changed or project_changed
     )
     previous_update_values = {field_name: getattr(document, field_name) for field_name in updates}
 

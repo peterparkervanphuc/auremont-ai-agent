@@ -1071,7 +1071,7 @@ code {
   position: relative;
   display: flex;
   min-width: 0;
-  min-height: 390px;
+  min-height: 400px;
   flex-direction: column;
   align-items: center;
   padding: 30px 26px 24px;
@@ -1141,15 +1141,29 @@ code {
 }
 
 .business-pricing-price small {
-  margin-left: 10px;
+  margin-left: 4px;
+  align-self: flex-start;
   color: var(--text-3);
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 1.1rem;
+  font-weight: 700;
 }
 
 .business-pricing-plan--featured .business-pricing-price strong,
 .business-pricing-plan--featured .business-pricing-quota strong {
   color: var(--accent);
+}
+
+.business-pricing-unit {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.business-pricing-seats-note {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: 0.76rem;
 }
 
 .business-pricing-quota {
@@ -1177,7 +1191,7 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 20px;
+  margin-top: 6px;
   color: var(--text-2);
   font-size: 0.85rem;
   font-weight: 600;
@@ -1187,6 +1201,13 @@ code {
 .business-pricing-benefit svg {
   flex: 0 0 auto;
   color: var(--emerald);
+}
+
+.business-pricing-support-note {
+  margin: 8px 0 20px;
+  color: var(--text-3);
+  font-size: 0.76rem;
+  line-height: 1.4;
 }
 
 .business-pricing-cta {
@@ -1207,7 +1228,7 @@ code {
 
 .business-pricing-benefits {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
   padding-top: 30px;
 }
@@ -1261,7 +1282,7 @@ code {
 
   .business-pricing-plan,
   .business-pricing-plan--featured {
-    min-height: 374px;
+    min-height: 0;
     padding: 27px 20px 20px;
   }
 

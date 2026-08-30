@@ -67,9 +67,9 @@ def recorder(monkeypatch):
     monkeypatch.setattr(
         ingestion_service,
         "chunk_sections_by_classification",
-        lambda sections, primary_category, section_classifications=None: events.append(
-            ("chunk", primary_category)
-        ) or ["chunk"],
+        lambda sections, primary_category, section_classifications=None: (
+            events.append(("chunk", primary_category)) or ["chunk"]
+        ),
     )
     monkeypatch.setattr(
         ingestion_service,

@@ -19,9 +19,11 @@ from backend.repositories.feedback import (
     list_top_failed,
 )
 from backend.schemas.admin_eval import (
+    ArtifactStatus,
     DeepEvalArtifactResponse,
     DeepEvalReportResponse,
     EvalReportsResponse,
+    PipelineArtifactSource,
     PipelineEvalArtifactResponse,
     PipelineEvalReportResponse,
 )
@@ -34,7 +36,9 @@ _MAX_REPORT_BYTES = 5 * 1024 * 1024
 _ReportModel = TypeVar("_ReportModel", bound=BaseModel)
 
 
-def _read_report(path_value: str, model: type[_ReportModel]) -> tuple[str, datetime | None, _ReportModel | None]:
+def _read_report(
+    path_value: str, model: type[_ReportModel]
+) -> tuple[ArtifactStatus, datetime | None, _ReportModel | None]:
     path = Path(path_value)
     try:
         stat = path.stat()
@@ -51,7 +55,7 @@ def _read_report(path_value: str, model: type[_ReportModel]) -> tuple[str, datet
     return "ready", generated_at, report
 
 
-def _artifact_message(status: str, label: str) -> str | None:
+def _artifact_message(status: ArtifactStatus, label: str) -> str | None:
     if status == "missing":
         return f"Chưa có báo cáo {label}."
     if status == "invalid":
@@ -62,12 +66,7 @@ def _artifact_message(status: str, label: str) -> str | None:
 def _pipeline_report_from_traces(
     db: Session, limit: int = 1000
 ) -> tuple[datetime | None, PipelineEvalReportResponse | None]:
-    rows = (
-        db.query(PipelineTraceRun)
-        .order_by(PipelineTraceRun.started_at.desc())
-        .limit(limit)
-        .all()
-    )
+    rows = db.query(PipelineTraceRun).order_by(PipelineTraceRun.started_at.desc()).limit(limit).all()
     payloads = [row.payload for row in reversed(rows) if isinstance(row.payload, dict)]
     if not payloads:
         return None, None
@@ -113,13 +112,11 @@ async def get_eval_reports(db: Session = Depends(get_db)) -> EvalReportsResponse
     short failure reasons are enough for triage without exposing complete conversations.
     """
 
-    deep_status, deep_generated_at, deep_report = _read_report(
-        settings.deepeval_report_path, DeepEvalReportResponse
-    )
+    deep_status, deep_generated_at, deep_report = _read_report(settings.deepeval_report_path, DeepEvalReportResponse)
     eval_status, eval_generated_at, eval_report = _read_report(
         settings.evaluation_report_path, PipelineEvalReportResponse
     )
-    eval_source = "artifact" if eval_status == "ready" else None
+    eval_source: PipelineArtifactSource | None = "artifact" if eval_status == "ready" else None
     if eval_status == "missing":
         eval_generated_at, eval_report = _pipeline_report_from_traces(db)
         if eval_report is not None:

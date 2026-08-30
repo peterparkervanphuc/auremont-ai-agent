@@ -73,9 +73,7 @@ def test_eval_reports_return_both_artifacts_without_raw_case_details(as_admin, t
                         "examples": ["Unsupported claim"],
                     }
                 },
-                "per_case": {
-                    "pricing-policy": {"attempts": 2, "passed": 1, "pass_rate": 0.5, "flaky": True}
-                },
+                "per_case": {"pricing-policy": {"attempts": 2, "passed": 1, "pass_rate": 0.5, "flaky": True}},
                 "flaky_cases": ["pricing-policy"],
                 "cases_detail": [{"input": "private question", "answer": "private answer"}],
             }

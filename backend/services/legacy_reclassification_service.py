@@ -330,9 +330,7 @@ def apply_document_reclassification(
         chunks = chunk_sections_by_classification(
             original.sections,
             primary_category=str(classification.category),
-            section_classifications=[
-                item.model_dump(mode="json") for item in classification.section_classifications
-            ],
+            section_classifications=[item.model_dump(mode="json") for item in classification.section_classifications],
         )
         if not chunks:
             raise LegacyReclassificationError("The proposed category produced no indexable chunks.")
@@ -602,7 +600,9 @@ def _classify_with_project_catalog(
     accepts_content_units = "content_units" in signature.parameters or any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
     )
-    kwargs: dict[str, object] = {}
+    # Typed `Any` rather than `object`: which keywords exist is decided at runtime by the
+    # introspection above, so no static signature covers every call this can make.
+    kwargs: dict[str, Any] = {}
     if accepts_catalog:
         kwargs["project_catalog"] = project_catalog
     if accepts_content_units:
@@ -666,9 +666,7 @@ def _apply_classification(
         setattr(document, field_name, getattr(classification, field_name))
 
     document.categories = [str(value) for value in classification.categories]
-    document.section_classifications = [
-        item.model_dump(mode="json") for item in classification.section_classifications
-    ]
+    document.section_classifications = [item.model_dump(mode="json") for item in classification.section_classifications]
 
     document.project_id = target_project_id
     document.conflict_facts = [fact.model_dump(mode="json") for fact in classification.conflict_facts]

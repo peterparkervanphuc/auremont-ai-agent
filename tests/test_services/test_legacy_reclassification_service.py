@@ -319,9 +319,7 @@ def test_admin_apply_activates_document_that_only_awaited_review(db_session, adm
     monkeypatch.setattr(
         service,
         "_embed_and_index",
-        lambda indexed_document, _chunks, *, is_current: indexed_documents.append(
-            (indexed_document.id, is_current)
-        ),
+        lambda indexed_document, _chunks, *, is_current: indexed_documents.append((indexed_document.id, is_current)),
     )
 
     preview = preview_document_reclassification(db_session, document_id=document.id, admin_id=admin.id)

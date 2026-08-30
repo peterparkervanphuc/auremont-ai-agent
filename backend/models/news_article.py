@@ -36,7 +36,9 @@ class NewsArticle(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
-    author_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    author_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     reviewer_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )

@@ -1,35 +1,52 @@
 import { ArrowRightIcon, CheckCircleIcon } from "./Icons";
 
+// Định giá theo seat (số Sale dùng AI), như phần lớn CRM B2B (Getfly, Zoho, HubSpot) —
+// dễ hiểu và dễ so sánh hơn tính theo tổng số cuộc hội thoại, vốn không phải đơn vị khách
+// hàng tự ước lượng được trước khi dùng thử. Mọi gói có đầy đủ tính năng AI như nhau; gói
+// chỉ khác số seat tối thiểu, hạn mức hội thoại và mức hỗ trợ — giá trị cốt lõi khách trả
+// tiền là chất lượng AI tư vấn, không phải tính năng quản trị bị khoá ở gói thấp.
 const PRICING_PLANS = [
   {
-    name: "Khởi động",
-    price: "10",
-    conversations: "500",
-    cta: "Chọn gói",
+    name: "Starter",
+    price: "390.000",
+    unit: "seat / tháng",
+    seatsNote: "Tối thiểu 1 seat",
+    conversationsPerSeat: "150",
+    support: "Hỗ trợ qua email, phản hồi trong 24h",
     featured: false,
   },
   {
-    name: "Tăng trưởng",
-    price: "20",
-    conversations: "2.000",
-    cta: "Bắt đầu ngay",
+    name: "Growth",
+    price: "550.000",
+    unit: "seat / tháng",
+    seatsNote: "Tối thiểu 3 seat",
+    conversationsPerSeat: "400",
+    support: "Hỗ trợ ưu tiên trong giờ hành chính",
     featured: true,
   },
   {
-    name: "Quy mô",
-    price: "40",
-    conversations: "6.000",
-    cta: "Liên hệ tư vấn",
+    name: "Enterprise",
+    price: "420.000",
+    unit: "seat / tháng",
+    seatsNote: "Từ 20 seat trở lên",
+    conversationsPerSeat: "Không giới hạn cứng",
+    support: "SLA riêng, hỗ trợ kỹ thuật 24/7",
     featured: false,
   },
 ] as const;
 
-const SHARED_BENEFITS = [
+const CTA_LABEL = "Đăng ký";
+
+const SHARED_FEATURES = [
   "AI tư vấn khách hàng 24/7",
   "Phân loại lead COLD / WARM / HOT",
   "Sales tiếp quản và theo dõi hội thoại",
-  "Dashboard, dữ liệu và phân quyền đầy đủ",
+  "Phân quyền theo team / dự án",
+  "Dashboard, báo cáo hiệu suất đầy đủ",
+  "Tích hợp CRM / Zalo OA",
 ] as const;
+
+const OVERAGE_NOTE = "Vượt hạn mức: tính phụ phí theo cuộc, không tạm ngưng AI giữa tháng.";
 
 function buildContactHref(planName: string) {
   const subject = encodeURIComponent(`Tư vấn gói ${planName} - Auremont AI`);
@@ -46,10 +63,11 @@ export function PricingSection() {
         <header className="business-pricing-head">
           <p className="section-eyebrow">Bảng giá dành cho doanh nghiệp</p>
           <h2 className="business-pricing-title" id="business-pricing-title">
-            Một nền tảng, đầy đủ tính năng
+            Trả theo số Sale đang dùng
           </h2>
           <p className="business-pricing-subtitle">
-            Mọi gói đều có toàn bộ quyền lợi, chỉ khác nhau về số cuộc tư vấn AI mỗi tháng.
+            Mọi gói đều có toàn bộ tính năng AI. Không tính theo tổng hội thoại toàn công ty —
+            chi phí tăng đúng theo quy mô đội ngũ thực tế, chỉ khác nhau về hạn mức và mức hỗ trợ.
           </p>
         </header>
 
@@ -62,28 +80,30 @@ export function PricingSection() {
               {plan.featured && <span className="business-pricing-badge">Phổ biến nhất</span>}
 
               <h3 className="business-pricing-plan-name">{plan.name}</h3>
-              <div className="business-pricing-price" aria-label={`${plan.price} triệu đồng mỗi tháng`}>
+              <div className="business-pricing-price" aria-label={`${plan.price} đồng mỗi seat mỗi tháng`}>
                 <strong>{plan.price}</strong>
-                <span>triệu</span>
-                <small>/ tháng</small>
+                <small>đ</small>
               </div>
+              <p className="business-pricing-unit">{plan.unit}</p>
+              <p className="business-pricing-seats-note">{plan.seatsNote}</p>
 
               <p className="business-pricing-quota">
-                <strong>{plan.conversations}</strong> cuộc tư vấn AI
+                <strong>{plan.conversationsPerSeat}</strong> cuộc tư vấn AI / seat / tháng
               </p>
-              <p className="business-pricing-quota-note">Mỗi cuộc gồm nhiều câu hỏi trong cùng một phiên</p>
+              <p className="business-pricing-quota-note">Hạn mức gộp chung cho cả team, không chia cứng theo người</p>
 
               <div className="business-pricing-included">
                 <CheckCircleIcon size={19} />
                 <span>Đầy đủ mọi tính năng</span>
               </div>
+              <p className="business-pricing-support-note">{plan.support}</p>
 
               <a
                 href={buildContactHref(plan.name)}
                 className={`btn business-pricing-cta ${plan.featured ? "btn-primary" : "btn-outline"}`}
-                aria-label={`${plan.cta} ${plan.name}`}
+                aria-label={`${CTA_LABEL} gói ${plan.name}`}
               >
-                {plan.cta}
+                {CTA_LABEL}
                 <ArrowRightIcon size={16} />
               </a>
             </article>
@@ -91,16 +111,16 @@ export function PricingSection() {
         </div>
 
         <div className="business-pricing-benefits" aria-label="Quyền lợi chung của mọi gói">
-          {SHARED_BENEFITS.map((benefit) => (
-            <div key={benefit} className="business-pricing-benefit">
+          {SHARED_FEATURES.map((feature) => (
+            <div key={feature} className="business-pricing-benefit">
               <CheckCircleIcon size={18} />
-              <span>{benefit}</span>
+              <span>{feature}</span>
             </div>
           ))}
         </div>
 
         <p className="business-pricing-footnote">
-          Hạn mức được làm mới mỗi tháng. Có thể nâng gói bất cứ lúc nào khi nhu cầu tăng.
+          {OVERAGE_NOTE} Hạn mức được làm mới mỗi tháng. Có thể nâng/hạ số seat bất cứ lúc nào.
         </p>
       </div>
     </section>

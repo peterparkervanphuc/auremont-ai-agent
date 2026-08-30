@@ -70,11 +70,7 @@ class _TranscriptMessage:
 
 
 def get_saved_summary(db: Session, customer_id: int) -> CustomerConversationSummary | None:
-    return (
-        db.query(CustomerConversationSummary)
-        .filter(CustomerConversationSummary.customer_id == customer_id)
-        .first()
-    )
+    return db.query(CustomerConversationSummary).filter(CustomerConversationSummary.customer_id == customer_id).first()
 
 
 def get_summary_response(db: Session, customer_id: int) -> CustomerConversationSummaryResponse | None:
@@ -98,9 +94,11 @@ def refresh_summary(db: Session, customer_id: int) -> CustomerConversationSummar
     record = get_saved_summary(db, customer_id)
     latest_message_id, total_message_count = _source_watermark(db, customer_id)
 
+    # `record is not None` is repeated rather than folded into `compatible` so the type
+    # checker can narrow it — a bare `compatible` flag tells it nothing about `record`.
     compatible = record is not None and record.schema_version == SUMMARY_SCHEMA_VERSION
-    checkpoint = record.last_processed_message_id if compatible else 0
-    if compatible and latest_message_id <= checkpoint:
+    checkpoint = record.last_processed_message_id if record is not None and compatible else 0
+    if record is not None and compatible and latest_message_id <= checkpoint:
         return _to_response(
             db,
             record,

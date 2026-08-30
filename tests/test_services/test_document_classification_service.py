@@ -221,7 +221,7 @@ def test_classifier_returns_complete_grounded_section_labels_for_mixed_document(
     ]
     assert result.section_classifications[1].page == 2
     assert result.section_classifications[1].content_type == "table"
-    assert "\"sections\"" in captured["prompt"]
+    assert '"sections"' in captured["prompt"]
 
 
 def test_classifier_falls_back_and_requires_review_when_a_section_label_is_missing(monkeypatch):
