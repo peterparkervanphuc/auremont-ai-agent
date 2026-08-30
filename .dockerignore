@@ -18,6 +18,10 @@ __pycache__
 tmp/
 docs/
 presentation/
+# The backend image builds with `context: .`, so without these the entire frontend tree —
+# node_modules included — is uploaded into its build context for no reason.
+node_modules
+frontend/
 *.md
 !requirements.txt
 .dockerignore
