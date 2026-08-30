@@ -75,6 +75,19 @@ export function ConflictsTab() {
     }
   };
 
+  const dismiss = async (conflictId: number) => {
+    setError(null);
+    setResolving(conflictId);
+    try {
+      await api.post(`/admin/conflicts/${conflictId}/dismiss`, {});
+      setConflicts((previous) => previous?.filter((conflict) => conflict.id !== conflictId) ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không đóng được cảnh báo này.");
+    } finally {
+      setResolving(null);
+    }
+  };
+
   const openDocument = async (documentId: number) => {
     try {
       const { url } = await api.get<{ url: string }>(`/documents/${documentId}/view-url`);
@@ -108,7 +121,7 @@ export function ConflictsTab() {
       {conflict.evidence?.semantic?.summary && <p className="conflict-analysis-summary">{conflict.evidence.semantic.summary}</p>}
       <div className="conflict-split"><DocumentPane label="Tài liệu A · nguồn cũ" document={conflict.document_a} conflict={conflict.description} evidence={evidenceForSide(conflict, "a")} onOpen={() => void openDocument(conflict.document_a.id)} /><DocumentPane label="Tài liệu B · nguồn mới" document={conflict.document_b} conflict={conflict.description} evidence={evidenceForSide(conflict, "b")} onOpen={() => void openDocument(conflict.document_b.id)} /></div>
       {manualId === conflict.id && <div className="manual-merge-note"><ScaleIcon size={19} /><div><strong>Quy trình gộp/chỉnh sửa thủ công</strong><p>Mở hai bản nguồn, tạo hoặc tải bản đã chỉnh sửa vào Kho tài liệu, rồi quay lại chọn tài liệu thắng. Cảnh báo vẫn mở để không vô tình đưa hai nguồn mâu thuẫn vào retrieval.</p></div><div><button className="btn btn-sm btn-outline" onClick={() => void openDocument(conflict.document_a.id)}>Mở A</button><button className="btn btn-sm btn-outline" onClick={() => void openDocument(conflict.document_b.id)}>Mở B</button><Link className="btn btn-sm btn-primary" to="/documents">Đến Kho tài liệu</Link></div></div>}
-      <footer className="conflict-compare-actions"><span>{conflict.evidence?.semantic?.decision === "uncertain" ? "AI chưa kết luận mâu thuẫn. Hãy mở hai nguồn và xác minh trước khi chọn." : "Chọn một nguồn sẽ chặn nguồn còn lại khỏi RAG."}</span><div><button className="btn btn-outline" type="button" disabled={resolving === conflict.id} onClick={() => void resolve(conflict.id, conflict.document_a.id)}>Chấp nhận Bản A</button><button className="btn btn-primary" type="button" disabled={resolving === conflict.id} onClick={() => void resolve(conflict.id, conflict.document_b.id)}>Chấp nhận Bản B</button><button className="btn btn-outline" type="button" onClick={() => setManualId((value) => value === conflict.id ? null : conflict.id)}><ScaleIcon size={15} /> Gộp/Chỉnh sửa thủ công</button></div></footer>
+      <footer className="conflict-compare-actions"><span>{conflict.evidence?.semantic?.decision === "uncertain" ? "AI chưa kết luận mâu thuẫn. Hãy mở hai nguồn và xác minh trước khi chọn." : "Chọn một nguồn sẽ chặn nguồn còn lại khỏi RAG."}</span><div><button className="btn btn-outline" type="button" disabled={resolving === conflict.id} onClick={() => void resolve(conflict.id, conflict.document_a.id)}>Chấp nhận Bản A</button><button className="btn btn-primary" type="button" disabled={resolving === conflict.id} onClick={() => void resolve(conflict.id, conflict.document_b.id)}>Chấp nhận Bản B</button><button className="btn btn-outline" type="button" disabled={resolving === conflict.id} onClick={() => void dismiss(conflict.id)}><CheckIcon size={15} /> Giữ cả 2 file</button><button className="btn btn-outline" type="button" onClick={() => setManualId((value) => value === conflict.id ? null : conflict.id)}><ScaleIcon size={15} /> Gộp/Chỉnh sửa thủ công</button></div></footer>
     </section>)}</div>}
   </div>;
 }

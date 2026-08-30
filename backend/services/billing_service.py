@@ -40,8 +40,6 @@ from backend.utils.time import utcnow
 
 logger = logging.getLogger(__name__)
 
-# One billing period. Calendar months vary in length and the MVP bills a flat monthly
-# amount, so a fixed 30-day window keeps renewal arithmetic honest and testable.
 BILLING_PERIOD_DAYS = 30
 
 
@@ -201,7 +199,6 @@ def approve_request(db: Session, request: SubscriptionRequest, reviewer: User, n
     request.reviewed_by_user_id = reviewer.id
     request.reviewed_at = started
     request.organization_id = organization.id
-    # The plaintext-derived hash has done its job; keep it only on the account.
     request.hashed_password = None
 
     db.commit()
@@ -278,8 +275,6 @@ def change_subscription(
     target_plan = get_plan(db, plan_id) if plan_id is not None else get_plan(db, subscription.plan_id)
     target_seats = seats if seats is not None else subscription.seats
 
-    # Member count first: when both rules fail, "you still have N people" is the one the
-    # owner can act on, while the plan minimum only tells them to pick a different plan.
     members = count_members(db, subscription.organization_id)
     if target_seats < members:
         raise BillingError(
@@ -298,7 +293,6 @@ def change_subscription(
         subscription.seats = target_seats
         subscription.pending_plan_id = None
         subscription.pending_seats = None
-        # An upgrade revives a subscription the owner had cancelled but not yet lost.
         if subscription.status == SubscriptionStatus.CANCELLED:
             subscription.status = SubscriptionStatus.ACTIVE
             subscription.cancelled_at = None

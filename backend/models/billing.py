@@ -44,8 +44,6 @@ class Plan(Base):
 
     price_per_seat_vnd: Mapped[int] = mapped_column(Integer, nullable=False)
     min_seats: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
-    # NULL means "no hard cap" (Enterprise). A number is the per-seat monthly allowance;
-    # the team's total is this times the seat count, pooled rather than split per person.
     conversations_per_seat: Mapped[int | None] = mapped_column(Integer, nullable=True)
     overage_price_vnd: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
@@ -204,11 +202,8 @@ class SubscriptionRequest(Base):
     billing_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Cleared on approval, once the owner account it was collected for exists.
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # The price the applicant was actually shown, kept so a later price change cannot
-    # silently alter what they agreed to between submitting and being approved.
     quoted_price_per_seat_vnd: Mapped[int] = mapped_column(Integer, nullable=False)
     quoted_monthly_total_vnd: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -233,7 +228,6 @@ class SubscriptionRequest(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
-# `PlanTier` is imported for the seeded ids; re-exported so callers need one import.
 __all__ = [
     "Organization",
     "OrganizationMember",

@@ -20,10 +20,6 @@ class CustomerNeeds(BaseModel):
     @field_validator("projects", "property_types", "unit_types", mode="after")
     @classmethod
     def _limit_multi_value_needs(cls, values: list[str]) -> list[str]:
-        # Do not express this as Field(max_length=10). Gemini 3.6 receives this
-        # Pydantic model as its response schema and rejects the combined set of
-        # maxItems constraints before generation. Keep the business bound here,
-        # after structured decoding, just like the document classifier does.
         return values[:10]
 
 

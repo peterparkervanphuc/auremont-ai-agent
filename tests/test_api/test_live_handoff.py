@@ -323,9 +323,6 @@ def test_only_assigned_sale_can_refresh_the_cross_channel_customer_summary(
     assert response.json()["source_message_count"] == 2
     assert response.json()["newly_processed_message_count"] == 2
 
-    # The app-level dependency override is shared; logging in as the other Sale switches
-    # the authenticated actor for this request and must make the live id indistinguishable
-    # from a non-existent one.
     forbidden = as_sale(other_sale).post(f"/api/v1/sale/live-inbox/{live_session.id}/customer-summary/refresh")
     assert forbidden.status_code == 404
 

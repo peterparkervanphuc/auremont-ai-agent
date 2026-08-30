@@ -462,9 +462,6 @@ def wants_human_agent(query: str) -> bool:
     return any(strip_diacritics(keyword) in normalized for keyword in _WANTS_HUMAN_KEYWORDS)
 
 
-# A consideration signal is stronger than generic browsing, but it is not evidence that the
-# person is ready to transact. Availability, payment calculations and a human request should
-# put a lead on Sale's radar without making that lead HOT by themselves.
 _CONSIDERATION_PATTERNS = (
     re.compile(r"\b(?:gui|cho|xin)\b.{0,30}\bbang hang\b.{0,40}\b(?:con trong|moi nhat)\b", re.IGNORECASE),
     re.compile(r"\bcan (?:nay|do|[a-z0-9.-]+)\b.{0,24}\b(?:hien )?con (?:khong|trong)\b", re.IGNORECASE),
@@ -495,8 +492,6 @@ def has_near_term_timeline(query: str) -> bool:
     return bool(_NEAR_TERM_TIMELINE_PATTERN.search(strip_diacritics(query)))
 
 
-# Only a concrete commitment step belongs here. These signals may contribute to HOT after
-# the person is reachable and has supplied a qualifying detail such as budget, unit or time.
 _TRANSACTION_READY_PATTERNS = (
     re.compile(r"\b(?:hom nay|bay gio)\b.{0,50}\bdat coc\b", re.IGNORECASE),
     re.compile(r"\bdat coc\b.{0,50}\b(?:chuyen|can|bao nhieu)\b", re.IGNORECASE),

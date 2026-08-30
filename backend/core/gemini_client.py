@@ -263,7 +263,6 @@ def _embed(
     if not response.embeddings:
         raise GeminiEmbeddingError("Gemini returned no embeddings.")
 
-    # element type: `embedding.values` is optional in the SDK's own typing, and a None
     vectors: list[list[float]] = []
     for embedding in response.embeddings:
         if embedding.values is None:

@@ -101,6 +101,33 @@ def test_resolving_keeps_the_chosen_document_and_blocks_the_other(client, db_ses
     assert get_document(db_session, new.id).is_current is True
 
 
+def test_dismissing_keeps_both_documents_untouched(client, db_session, conflict):
+    flag, old, new = conflict
+    old_before = get_document(db_session, old.id)
+    new_before = get_document(db_session, new.id)
+    old_status, old_is_current = old_before.status, old_before.is_current
+    new_status, new_is_current = new_before.status, new_before.is_current
+
+    response = client.post(f"/api/v1/admin/conflicts/{flag.id}/dismiss")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "resolved"
+    assert response.json()["resolved_by"] is not None
+
+    assert get_document(db_session, old.id).status == old_status
+    assert get_document(db_session, old.id).is_current == old_is_current
+    assert get_document(db_session, new.id).status == new_status
+    assert get_document(db_session, new.id).is_current == new_is_current
+
+
+def test_dismissing_an_already_resolved_conflict_is_rejected(client, conflict):
+    flag, _old, new = conflict
+    first = client.post(f"/api/v1/admin/conflicts/{flag.id}/resolve", json={"keep_document_id": new.id})
+    assert first.status_code == 200
+
+    second = client.post(f"/api/v1/admin/conflicts/{flag.id}/dismiss")
+    assert second.status_code == 409
+
+
 def test_existing_conflict_is_enriched_by_semantic_rescan_and_exposed_by_api(client, db_session, conflict):
     flag, old, new = conflict
     flag.evidence = {

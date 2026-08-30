@@ -18,8 +18,6 @@ class NewsArticle(Base):
     __tablename__ = "news_articles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    # SHA-256 of the canonical URL: unlike a 1,000-char URL this can safely be
-    # unique-indexed on both MySQL utf8mb4 and SQLite.
     url_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     canonical_url: Mapped[str] = mapped_column(Text, nullable=False)
     source_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)

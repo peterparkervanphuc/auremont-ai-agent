@@ -123,7 +123,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # This is deliberately non-destructive.  Revision b1c2d3e4f5a6 existed in two
-    # incompatible forms, so Alembic cannot know whether this revision created an object
-    # or merely discovered one that already contained production data.
     pass

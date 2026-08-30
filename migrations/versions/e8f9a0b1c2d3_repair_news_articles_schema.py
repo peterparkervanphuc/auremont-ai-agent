@@ -74,6 +74,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # The missing table may contain recovered production data by the time a downgrade
-    # is requested, so this repair revision intentionally remains non-destructive.
     pass

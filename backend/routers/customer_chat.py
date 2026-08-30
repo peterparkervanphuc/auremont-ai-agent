@@ -67,9 +67,6 @@ _TURN_LIMIT_MESSAGE = (
     "Cảm ơn bạn đã trò chuyện cùng Auremont! Để mình lưu lại đoạn chat này và tư vấn sâu hơn, "
     "bạn vui lòng đăng ký/đăng nhập tài khoản nhé."
 )
-# Two different walls, two different messages: the anonymous one is an invitation to sign
-# up (there is a bigger allowance on the other side), while the registered one has nothing
-# left to upsell and points at a human instead.
 _DAILY_LIMIT_ANONYMOUS_MESSAGE = (
     "Bạn đã dùng hết lượt hỏi miễn phí hôm nay. Đăng ký tài khoản để được hỏi nhiều hơn mỗi ngày "
     "và lưu lại toàn bộ lịch sử tư vấn nhé!"
@@ -326,16 +323,9 @@ async def ask_in_customer_session(
     suggested_questions: list[str] = []
     images: list[dict] = []
 
-    # The budget is charged on every turn, before any gate decides what to say — a question
-    # that reaches this point has been asked, whichever wall answers it. The message itself
-    # is already persisted above, so a gated turn costs a stored row but never an LLM call.
     daily_used = _consume_daily_question(db, session)
     over_daily_budget = daily_used > _daily_limit_for(session)
 
-    # The sign-up nudge is checked first for anonymous visitors on purpose. When both walls
-    # land on the same turn, "đăng ký để chat tiếp" gives them something to do about it,
-    # while "hết lượt hôm nay" is a dead end — and registering is exactly the outcome the
-    # free tier exists to produce.
     if is_anonymous and _anonymous_turn_count(db, session_id) >= settings.customer_anonymous_turn_limit:
         gate = "turn_limit"
         answer_text = _TURN_LIMIT_MESSAGE

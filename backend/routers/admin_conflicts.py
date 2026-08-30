@@ -12,7 +12,7 @@ from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
 from backend.models.project import Project
 from backend.models.user import User
-from backend.repositories.conflict_flag import list_open_conflicts, resolve_conflict
+from backend.repositories.conflict_flag import dismiss_conflict, list_open_conflicts, resolve_conflict
 from backend.repositories.document import get_document
 from backend.schemas.conflict_flag import (
     ConflictDetailResponse,
@@ -200,6 +200,31 @@ async def resolve_conflict_flag(
         ) from exc
 
     db.refresh(conflict)
+    clear_cache()
+    return ConflictFlagResponse.model_validate(conflict).model_copy(update={"severity": _severity(conflict)})
+
+
+@router.post("/{conflict_id}/dismiss", response_model=ConflictFlagResponse)
+async def dismiss_conflict_flag(
+    conflict_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role(UserRole.ADMIN)),
+) -> ConflictFlagResponse:
+    """Close a conflict without blocking either document — both keep participating in RAG."""
+    try:
+        conflict = dismiss_conflict(db, conflict_id, resolved_by=admin.id)
+    except ValueError as exc:
+        db.rollback()
+        if "already been resolved" in str(exc):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Conflict could not be dismissed.",
+        ) from exc
+
     clear_cache()
     return ConflictFlagResponse.model_validate(conflict).model_copy(update={"severity": _severity(conflict)})
 

@@ -113,7 +113,7 @@ flowchart TB
 | **Memory & Cache** | Redis 7 Alpine *(AOF persistence, fail-open)* | Long-term user preferences, Reflection Memory, rate-limiting buckets |
 | **Object Storage** | MinIO (S3-compatible) | Secure document storage, project image CDN caching |
 | **Frontend SPA** | React 19 • Vite • TypeScript • Tailwind CSS • Lucide Icons | Responsive UI with separate Sale, Admin, and Public Customer chat modes |
-| **Evaluation** | Custom Graders • Golden Regression Dataset • Pytest | Continuous quality evaluation, latency benchmarking, hallucination tracking |
+| **Evaluation** | Custom Graders • Golden Regression Dataset • DeepEval • Pytest | Continuous quality evaluation, latency benchmarking, hallucination tracking |
 
 ---
 
@@ -241,6 +241,10 @@ pytest tests/test_services/test_inventory_service.py tests/test_services/test_ag
 
 # Run full golden regression gate
 pytest tests/test_services/test_golden_regression.py -v
+
+# Run nightly answer-quality eval against the real model (requires GEMINI_API_KEY,
+# pip install -r requirements-eval.txt)
+python -m eval.deepeval_suite --judge-model gemini-3.1-pro-preview --repeats 3
 
 # Format and lint code
 ruff check . && ruff format --check .

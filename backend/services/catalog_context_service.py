@@ -369,8 +369,6 @@ def _number(value: object) -> float | None:
     if value is None or value == "":
         return None
     try:
-        # `str()` first because `value` is deliberately `object` here; the except clause
-        # still turns anything unparseable into None.
         return float(value) if isinstance(value, int | float) else float(str(value))
     except (TypeError, ValueError):
         return None

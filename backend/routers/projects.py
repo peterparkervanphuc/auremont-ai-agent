@@ -158,12 +158,6 @@ _SHOPHOUSE_IMAGE_KEYWORDS = ("shop-thuong-mai", "shophouse", "shop")
 
 def _cover_image_for(category: str, groups: dict[str, list[dict]], gallery: list[str]) -> str | None:
     if category == "Shophouse":
-        # The index-based pick below can land on any photo regardless of what it actually
-        # shows — for Shophouse specifically that surfaced a wrong photo (an apartment-zone
-        # map), because this project's own gallery has no real shop photo at all. Match by
-        # filename keyword instead, falling back to no photo (the frontend then shows its
-        # placeholder icon) rather than a wrong one. Every other category keeps the original
-        # index-based behavior below untouched.
         for url in gallery:
             if any(keyword in url.lower() for keyword in _SHOPHOUSE_IMAGE_KEYWORDS):
                 return url

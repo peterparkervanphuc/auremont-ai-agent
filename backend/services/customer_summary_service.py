@@ -94,8 +94,6 @@ def refresh_summary(db: Session, customer_id: int) -> CustomerConversationSummar
     record = get_saved_summary(db, customer_id)
     latest_message_id, total_message_count = _source_watermark(db, customer_id)
 
-    # `record is not None` is repeated rather than folded into `compatible` so the type
-    # checker can narrow it — a bare `compatible` flag tells it nothing about `record`.
     compatible = record is not None and record.schema_version == SUMMARY_SCHEMA_VERSION
     checkpoint = record.last_processed_message_id if record is not None and compatible else 0
     if record is not None and compatible and latest_message_id <= checkpoint:
@@ -110,7 +108,6 @@ def refresh_summary(db: Session, customer_id: int) -> CustomerConversationSummar
     delta = _load_messages(db, customer_id, after_message_id=checkpoint, through_message_id=latest_message_id)
     previous = _snapshot_from_record(record) if compatible else _empty_snapshot()
 
-    # An empty transcript still gets a useful deterministic brief without spending a call.
     if not delta:
         snapshot = previous
     else:
@@ -218,8 +215,6 @@ def _message_batches(messages: list[_TranscriptMessage]) -> list[list[_Transcrip
     current: list[_TranscriptMessage] = []
     current_chars = 0
     for message in messages:
-        # A single pathological chat turn must not consume the whole model context. Normal
-        # product messages are far shorter; this cap is solely defensive.
         message_chars = min(len(message.content), MAX_BATCH_CHARS)
         if current and current_chars + message_chars > MAX_BATCH_CHARS:
             batches.append(current)
@@ -260,8 +255,6 @@ def _generate_next_snapshot(
             temperature=0.1,
         )
     except Exception as exc:
-        # Never log the prompt because it contains private customer conversations.
-        # The provider exception and model identify schema/service failures safely.
         logger.exception(
             "Customer summary LLM request failed.",
             extra={
@@ -270,7 +263,7 @@ def _generate_next_snapshot(
                 "message_count": len(messages),
             },
         )
-        raise CustomerSummaryGenerationError("Không thể tạo tóm tắt khách hàng lúc này.") from exc
+        raise CustomerSummaryGenerationError("Không thể tạo tóm tắt khách hàng.") from exc
     if generated is None:
         logger.error(
             "Customer summary LLM returned no structured result.",

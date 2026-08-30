@@ -397,8 +397,6 @@ def _classify_document_with_catalog(
     accepts_content_units = "content_units" in signature.parameters or any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
     )
-    # Typed `Any` rather than `object`: which keywords exist is decided at runtime by the
-    # introspection above, so no static signature covers every call this can make.
     kwargs: dict[str, Any] = {}
     if accepts_catalog:
         kwargs["project_catalog"] = project_catalog
@@ -564,7 +562,6 @@ def reclassify_document(
     if target_project_id and db.get(Project, target_project_id) is None:
         raise DocumentIngestionError(f"project_id '{target_project_id}' does not exist in the project catalogue.")
 
-    # `updates` is an untyped Mapping, so narrow once here rather than at each use below.
     raw_section_classifications = updates.get(
         "section_classifications",
         document.section_classifications or [],

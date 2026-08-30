@@ -20,7 +20,6 @@ class PlanResponse(BaseModel):
     description: str | None = None
     price_per_seat_vnd: int
     min_seats: int
-    # None means no hard cap (Enterprise); the UI shows "không giới hạn cứng".
     conversations_per_seat: int | None = None
     overage_price_vnd: int
     support_note: str | None = None

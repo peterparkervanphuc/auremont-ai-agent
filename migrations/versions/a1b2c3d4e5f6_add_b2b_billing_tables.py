@@ -22,8 +22,6 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-# The seeded catalogue. `conversations_per_seat=None` on Enterprise is "no hard cap":
-# the quota check treats NULL as unlimited rather than as zero.
 _PLANS = [
     {
         "id": "starter",
@@ -189,8 +187,6 @@ def upgrade() -> None:
         sa.column("created_at", sa.DateTime()),
         sa.column("updated_at", sa.DateTime()),
     )
-    # A real datetime, not `sa.func.now()`: SQLite's DateTime binder rejects a SQL function
-    # passed as a bound parameter, and the test suite migrates a SQLite database.
     now = datetime.now(UTC).replace(tzinfo=None)
     op.get_bind().execute(
         sa.insert(plans),

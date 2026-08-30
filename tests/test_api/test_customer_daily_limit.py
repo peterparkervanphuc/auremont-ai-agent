@@ -107,7 +107,6 @@ def _ask(client: TestClient, session_id: int, text: str, token: str | None = Non
 
 def test_anonymous_visitor_is_cut_off_after_the_daily_allowance(anonymous_client, db_session, calls, monkeypatch):
     monkeypatch.setattr(settings, "customer_anonymous_daily_limit", 3)
-    # Raised so the per-session gate cannot be what stops the visitor here.
     monkeypatch.setattr(settings, "customer_anonymous_turn_limit", 99)
     session = _anonymous_session(db_session, "visitor-daily")
 

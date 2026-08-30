@@ -28,9 +28,6 @@ class CustomerConversationSummary(Base):
     summary_text: Mapped[str] = mapped_column(Text, nullable=False)
     summary_json: Mapped[dict] = mapped_column(JSON, nullable=False)
 
-    # Global Message ids are monotonically increasing.  Using an id checkpoint instead of
-    # only created_at prevents two messages written in the same MySQL DATETIME second from
-    # being skipped on the next incremental refresh.
     last_processed_message_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     source_message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     schema_version: Mapped[str] = mapped_column(String(32), nullable=False)

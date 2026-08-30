@@ -191,6 +191,4 @@ async def cancel_subscription(
     return _subscription_response(db, cancelled)
 
 
-# `get_current_user` is imported for routers that need the raw account rather than a role
-# gate; re-exported so the Admin billing router can share this module's helpers.
 __all__ = ["get_current_user", "router"]

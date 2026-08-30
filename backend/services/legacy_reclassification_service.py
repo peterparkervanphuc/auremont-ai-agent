@@ -311,10 +311,6 @@ def apply_document_reclassification(
     old_category = _enum_value(document.category)
     old_project_id = document.project_id
     target_category = _enum_value(classification.category)
-    # A pending upload is intentionally not chunked or embedded by the ingestion flow.
-    # It therefore needs a full index even when the LLM keeps category/project unchanged.
-    # Without this condition MySQL could become approved/current while Qdrant still had
-    # zero points for the document.
     requires_reindex = (
         old_category != target_category
         or document_categories(document) != [str(value) for value in classification.categories]
@@ -600,8 +596,6 @@ def _classify_with_project_catalog(
     accepts_content_units = "content_units" in signature.parameters or any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
     )
-    # Typed `Any` rather than `object`: which keywords exist is decided at runtime by the
-    # introspection above, so no static signature covers every call this can make.
     kwargs: dict[str, Any] = {}
     if accepts_catalog:
         kwargs["project_catalog"] = project_catalog

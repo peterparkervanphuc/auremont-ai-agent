@@ -53,12 +53,6 @@ class ChatSession(Base):
 
     project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
 
-    # The daily AI budget, counted here rather than by counting `messages`.
-    #
-    # "Xoá lịch sử" deletes the transcript but keeps this row, so a counter derived from
-    # messages would refund the whole allowance on every clear — one click from useless.
-    # `ai_questions_date` is the UTC day the counter belongs to; a question arriving on a
-    # later date resets the count instead of needing a scheduled job to zero it.
     ai_questions_today: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     ai_questions_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 

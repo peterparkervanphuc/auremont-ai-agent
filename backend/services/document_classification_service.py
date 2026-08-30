@@ -613,8 +613,6 @@ def _normalise_content_units(content_units: Sequence[Mapping[str, object]]) -> l
     for position, unit in enumerate(content_units):
         raw_index = unit.get("section_index", position)
         try:
-            # `raw_index` is `object` off an untyped Mapping; `str()` first so the call is
-            # well-typed, with the same except clause still rejecting anything unparseable.
             section_index = int(raw_index) if isinstance(raw_index, int) else int(str(raw_index))
         except (TypeError, ValueError):
             continue

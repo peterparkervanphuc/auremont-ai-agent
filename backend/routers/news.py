@@ -74,8 +74,6 @@ def get_news(
         source_id=source_id,
         query=q,
     )
-    # Converted explicitly rather than leaning on Pydantic's implicit ORM coercion, so the
-    # declared `list[NewsArticleResponse]` is what actually reaches the constructor.
     return NewsListResponse(
         items=[NewsArticleResponse.model_validate(row) for row in rows],
         total=total,

@@ -378,6 +378,37 @@ def resolve_conflict(
     return conflict, kept, superseded, previous_vector_metadata
 
 
+def dismiss_conflict(
+    db: Session,
+    conflict_id: int,
+    resolved_by: int | None = None,
+    *,
+    commit: bool = True,
+) -> ConflictFlag:
+    """Close a conflict flag while keeping both documents as-is.
+
+    Used when the Admin decides the two sources are not actually in conflict
+    (e.g. they apply to different scopes or periods), so neither document
+    should be blocked or have its `is_current` flag touched.
+    """
+    conflict = db.query(ConflictFlag).filter(ConflictFlag.id == conflict_id).with_for_update().first()
+    if conflict is None:
+        raise ValueError(f"ConflictFlag with id={conflict_id} not found.")
+    if conflict.status != ConflictStatus.OPEN:
+        raise ValueError(f"ConflictFlag with id={conflict_id} has already been resolved.")
+
+    conflict.status = ConflictStatus.RESOLVED
+    conflict.resolved_at = utcnow()
+    conflict.resolved_by = resolved_by
+
+    if commit:
+        db.commit()
+        db.refresh(conflict)
+    else:
+        db.flush()
+    return conflict
+
+
 def _resolve_open_conflicts_between_blocked_documents(
     db: Session,
     *,

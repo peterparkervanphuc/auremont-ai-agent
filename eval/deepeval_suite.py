@@ -574,9 +574,6 @@ def build_report(results: list[dict[str, Any]], *, judge_model: str, answer_mode
         "per_case": per_case,
         "flaky_cases": [case_id for case_id, stats in per_case.items() if stats["flaky"]],
         "pass_rate": round(passed / len(results), 4) if results else 0.0,
-        # The headline blends rules and opinion, so it is reported beside each half. A
-        # self-judging run can only inflate `judged_pass_rate`; `deterministic_pass_rate`
-        # is string matching over hand-written references and no model gets a vote on it.
         "deterministic_pass_rate": round(deterministic_passed / len(results), 4) if results else 0.0,
         "judged_pass_rate": round(judged_passed / len(results), 4) if results else 0.0,
         "answer_model": answer_model,
@@ -682,9 +679,6 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     report_path = args.out / "deepeval_report.json"
 
-    # A run the quota cut short must not replace a complete one. The Admin page reads
-    # whatever is here, and two graded cases standing in for five is a worse artifact than
-    # the full run it would overwrite — keep both and let the reader pick.
     if not report["complete"] and report_path.exists():
         report_path = args.out / "deepeval_report.partial.json"
         print(
@@ -705,8 +699,6 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    # Gated on the rule-based rate, not the blended one: a judge grading its own vendor's
-    # answers can lift the blend, and a gate a generous judge can open is not a gate.
     if args.fail_under is not None and report["deterministic_pass_rate"] < args.fail_under:
         print(
             f"\nFAIL: deterministic pass rate {report['deterministic_pass_rate']:.1%} "

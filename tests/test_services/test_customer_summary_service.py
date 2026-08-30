@@ -55,8 +55,6 @@ def _customer_sessions(db):
 def test_summary_schema_keeps_provider_contract_simple_and_enforces_bounds_after_decode():
     provider_schema = json.dumps(CustomerSummarySnapshot.model_json_schema())
 
-    # Gemini validates this schema before it reads a single chat message. Keeping
-    # maxItems out avoids the provider-side INVALID_ARGUMENT seen on refresh.
     assert "maxItems" not in provider_schema
 
     metadata = CustomerSummaryMetadata(
@@ -125,7 +123,6 @@ def test_incremental_refresh_reuses_metadata_and_only_sends_new_messages(db_sess
     assert first.newly_processed_message_count == 2
     assert len(prompts) == 1
     assert {message["channel"] for message in prompts[0]["new_messages"]} == {"ai", "live"}
-    # A hallucinated/cross-customer evidence id never leaves the service.
     assert first.metadata.evidence[0].message_ids == [first_customer_message.id]
 
     cached = customer_summary_service.refresh_summary(db_session, customer.id)

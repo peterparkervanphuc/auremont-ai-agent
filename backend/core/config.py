@@ -103,8 +103,6 @@ class Settings(BaseSettings):
     inventory_api_key: str = ""
     inventory_project_map: str = ""
 
-    # Sale-authored news is public only after Admin review. It remains separate
-    # from Documents/Qdrant so an unreviewed post can never enter RAG retrieval.
     news_default_ttl_days: int = Field(default=180, ge=7, le=1095)
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 768
@@ -113,25 +111,8 @@ class Settings(BaseSettings):
     document_security_max_findings: int = Field(default=20, ge=1, le=200)
     document_security_excerpt_context_chars: int = Field(default=80, ge=20, le=500)
 
-    # Per-session cap, kept for the registration gate: an anonymous visitor is nudged to
-    # sign up after this many turns in one conversation, independently of the daily budget.
-    #
-    # Keep this at or below `customer_anonymous_daily_limit`. If it is larger, the daily
-    # wall is always hit first and the sign-up nudge below becomes unreachable — the
-    # visitor sees "hết lượt hôm nay" instead of "đăng ký để chat tiếp", which is the
-    # weaker of the two prompts because it offers them nothing to do about it.
     customer_anonymous_turn_limit: int = 3
 
-    # Daily AI budget per person, counted across every session they open.
-    #
-    # The public chat is a marketing cost — nobody is billed for a visitor's questions —
-    # so the ceiling exists to bound that spend, not to price it. The per-session cap above
-    # resets the moment a visitor starts a new conversation or clears their token, which is
-    # why the real limit has to be counted per identity per day.
-    #
-    # Registered customers get a much larger allowance on purpose: they handed over contact
-    # details and are a real lead, so the gap between the two numbers is the reward for
-    # signing up rather than an afterthought.
     customer_anonymous_daily_limit: int = 3
     customer_registered_daily_limit: int = 10
 

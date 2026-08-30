@@ -23,8 +23,6 @@ def test_rewrites_the_reported_miscount_to_the_real_card_count():
     corrected = correct_unit_count(answer, 8)
 
     assert corrected.startswith("Có tổng cộng 8 căn 2 phòng ngủ")
-    # The price range rides along untouched: it is read off the units, not tallied, so it
-    # does not share the failure mode and must not be rewritten.
     assert "từ 2,82 tỷ đồng đến 3,40 tỷ đồng" in corrected
 
 

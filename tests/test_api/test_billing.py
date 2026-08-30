@@ -93,9 +93,6 @@ def billing_db() -> Iterator[sessionmaker[Session]]:
                     hashed_password="unused",
                     role="admin",
                 ),
-                # A Sale who belongs to no workspace: `get_current_user` resolves the
-                # account against the database, so an unknown username would 401 before
-                # the authorization rules under test ever run.
                 User(
                     id=2,
                     username="unaffiliated_sale",
@@ -156,7 +153,6 @@ def test_plans_are_public_and_ordered(billing_client):
     plans = response.json()
     assert [plan["id"] for plan in plans] == ["starter", "growth", "enterprise"]
     assert plans[1]["price_per_seat_vnd"] == 550_000
-    # Enterprise has no hard cap; the UI relies on this being null rather than 0.
     assert plans[2]["conversations_per_seat"] is None
 
 
@@ -188,7 +184,6 @@ def test_application_stores_the_price_it_was_quoted(billing_client, billing_db):
 
     with billing_db() as db:
         stored = db.get(SubscriptionRequest, body["id"])
-        # Hashed at submission so approval can create a working account later.
         assert stored.hashed_password and stored.hashed_password != "MatKhauRatManh123"
 
 
@@ -225,8 +220,6 @@ def test_approval_provisions_workspace_owner_and_subscription(billing_client, bi
 
     with billing_db() as db:
         owner = db.query(User).filter(User.email == "khang@minhkhang.vn").one()
-        # A customer of the platform, not staff of it: workspace authority is the
-        # OrganizationRole, while UserRole.ADMIN would mean Auremont's own admins.
         assert owner.role == "sale"
 
         organization = db.query(Organization).one()
@@ -238,7 +231,6 @@ def test_approval_provisions_workspace_owner_and_subscription(billing_client, bi
         subscription = db.query(Subscription).one()
         assert (subscription.plan_id, subscription.seats, subscription.status) == ("growth", 5, "active")
 
-        # The parked hash has done its job once the account exists.
         assert db.get(SubscriptionRequest, created["id"]).hashed_password is None
 
 
@@ -407,7 +399,6 @@ def test_cancelling_keeps_access_until_the_period_ends(billing_client, billing_d
 
     with billing_db() as db:
         subscription = db.query(Subscription).one()
-        # Distinct from EXPIRED precisely so this window keeps working.
         assert subscription.current_period_end > utcnow()
 
 

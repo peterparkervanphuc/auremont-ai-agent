@@ -23,8 +23,6 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     with op.batch_alter_table("chat_sessions") as batch_op:
         batch_op.add_column(sa.Column("ai_questions_today", sa.Integer(), server_default="0", nullable=False))
-        # NULL means "no question counted yet"; the first write stamps today's date, so
-        # existing sessions start the feature with a full allowance rather than a blocked one.
         batch_op.add_column(sa.Column("ai_questions_date", sa.Date(), nullable=True))
 
 

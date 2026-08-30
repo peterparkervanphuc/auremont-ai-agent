@@ -268,8 +268,6 @@ def workflow_responses(db: Session, articles: list[NewsArticle]) -> list[NewsWor
             project_names=article.project_names or [],
             published_at=article.published_at,
             fetched_at=article.fetched_at,
-            # The column is a plain String(30); every write goes through this module's own
-            # status constants, so the value is one of NewsStatus by construction.
             status=cast(NewsStatus, article.status),
             author_id=article.author_id,
             author_name=users.get(article.author_id, "Hệ thống") if article.author_id is not None else "Hệ thống",

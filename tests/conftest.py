@@ -70,8 +70,6 @@ def _no_live_qdrant(monkeypatch):
         raise ConnectionError("No live Qdrant in tests; stub the service function you need.")
 
     monkeypatch.setattr(qdrant_module, "QdrantClient", _refuse)
-    # get_qdrant_client is lru_cached, so a client built by an earlier test — or by
-    # importing something at collection time — would outlive the patch.
     qdrant_module.get_qdrant_client.cache_clear()
     yield
     qdrant_module.get_qdrant_client.cache_clear()
@@ -79,13 +77,7 @@ def _no_live_qdrant(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_live_cohere(monkeypatch):
-    """Make the "no test makes a billed API call" promise in CONTRIBUTING actually hold.
-
-    `rag_service._rerank` gates on `settings.cohere_api_key`, so blanking it is not a stub
-    — it is the documented degraded path, the same one a deployment without the key takes.
-    Until this existed, a developer with a real key in `.env` had every retrieval test
-    spending Cohere credits and waiting on the network for them.
-    """
+    """Prevent tests from making billed API calls."""
 
     monkeypatch.setattr(settings, "cohere_api_key", "")
 
@@ -101,9 +93,6 @@ def _no_live_redis(monkeypatch):
     from backend.core import redis_client as redis_module
 
     monkeypatch.setattr(settings, "redis_url", "")
-    # get_redis_client is lru_cached, so a `None` cached here would outlive this test and
-    # sink test_memory_service_integration.py's real-Redis run further down the suite —
-    # the same reason get_qdrant_client is cleared above.
     redis_module.get_redis_client.cache_clear()
     yield
     redis_module.get_redis_client.cache_clear()
@@ -111,15 +100,7 @@ def _no_live_redis(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _reset_anonymous_rate_limit():
-    """Give every test its own throttle budget.
-
-    `rate_limit._hits` is a module-level dict keyed by client IP, and every TestClient
-    request arrives from the same "testclient" host. Without this, the public endpoints'
-    requests accumulate across unrelated test files until some later test — usually the
-    first one to post a few customer messages — gets a 429 that has nothing to do with
-    what it is checking. The failure moves around as tests are added, which is what makes
-    it worth resetting here rather than in whichever file happens to trip it.
-    """
+    """Clear throttle budget between tests."""
     from backend.core import rate_limit
 
     rate_limit._hits.clear()

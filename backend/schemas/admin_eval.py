@@ -3,8 +3,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# Named so the router's readers can be typed with the same set the responses accept,
-# rather than widening to `str` and losing the check at the boundary.
 ArtifactStatus = Literal["ready", "missing", "invalid"]
 PipelineArtifactSource = Literal["artifact", "live_traces"]
 
@@ -30,8 +28,6 @@ class DeepEvalReportResponse(BaseModel):
     passed: int = 0
     failed: int = 0
     pass_rate: float = 0.0
-    # Split out so the Admin page can show which half of the headline a model got a vote
-    # on. Defaulted, because reports written before the split still have to load.
     deterministic_pass_rate: float | None = None
     judged_pass_rate: float | None = None
     complete: bool = True

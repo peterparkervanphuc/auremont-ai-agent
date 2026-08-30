@@ -297,7 +297,6 @@ def test_each_source_label_has_a_runtime_route_or_safety_boundary(case: Case):
     if source == "inventory":
         assert needs_inventory(case.query) or case.contract in stateful_inventory_contracts
     elif source == "project_profile":
-        # Structured project context is loaded independently of Qdrant routing.
         assert preflight_policy(case.query) is None
     elif source == "document":
         assert needs_document_retrieval(case.query)

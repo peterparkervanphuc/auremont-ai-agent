@@ -260,8 +260,6 @@ def load_demo_data() -> None:
             logger.info("Catalogue da co du lieu — bo qua buoc nap catalogue.")
             return
     except Exception:
-        # Bang chua ton tai (chua `alembic upgrade head`) hay MySQL chua san sang.
-        # Cu thu nap ben duoi; neu van hong thi cac khoi except o do se ghi log.
         logger.warning("Khong kiem tra duoc trang thai catalogue.", exc_info=True)
 
     from scripts.load_apartment_projects import main as load_apartments
