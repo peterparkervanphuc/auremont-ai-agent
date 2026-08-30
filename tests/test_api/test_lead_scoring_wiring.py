@@ -10,14 +10,11 @@ would look broken.
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.core.config import get_settings
 from backend.core.deps import get_current_user, get_optional_current_user
 from backend.core.enums import LeadTier, SessionChannel, SessionStatus, UserRole
-from backend.core.mysql_client import Base, get_db
+from backend.core.mysql_client import get_db
 from backend.core.rate_limit import anonymous_rate_limit
 from backend.main import app
 from backend.models.chat_session import ChatSession
@@ -27,19 +24,6 @@ from backend.services import agent_pipeline, lead_service
 from backend.services.agent_pipeline import PipelineResult
 
 QUALIFIED_MESSAGE = "cho mình xin bảng giá căn 2PN, ngân sách tầm 3.5 tỷ"
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine)
-    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = testing_session()
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture(autouse=True)

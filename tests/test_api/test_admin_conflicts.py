@@ -2,9 +2,7 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.core.deps import get_current_user
 from backend.core.enums import (
@@ -15,28 +13,17 @@ from backend.core.enums import (
     LegalStatus,
     UserRole,
 )
-from backend.core.mysql_client import Base, get_db
+from backend.core.mysql_client import get_db
 from backend.main import app
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document_relation import DocumentRelation
 from backend.models.user import User
 from backend.repositories.conflict_flag import create_conflict
 from backend.repositories.document import create_document, get_document
-from backend.routers import admin_conflicts as conflicts_router
 from backend.schemas.document import DocumentCreate
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine)
-    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = testing_session()
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
+from backend.services import vector_store_service
+from backend.services.document_category_service import document_categories
+from backend.services.vector_store_service import VectorStoreError
 
 
 @pytest.fixture
@@ -58,7 +45,7 @@ def vector_syncs(monkeypatch):
     """
     calls: list[dict] = []
     monkeypatch.setattr(
-        conflicts_router,
+        vector_store_service,
         "update_document_vector_metadata",
         lambda document_id, **kwargs: calls.append({"document_id": document_id, **kwargs}),
     )
@@ -262,6 +249,7 @@ def test_rejected_document_is_removed_from_retrieval(client, db_session, conflic
             "review_status": get_document(db_session, old.id).review_status,
             "legal_status": get_document(db_session, old.id).legal_status,
             "category": get_document(db_session, old.id).category,
+            "categories": document_categories(get_document(db_session, old.id)),
             "visibility": get_document(db_session, old.id).visibility,
             "is_current": False,
         },
@@ -270,6 +258,7 @@ def test_rejected_document_is_removed_from_retrieval(client, db_session, conflic
             "review_status": DocumentReviewStatus.APPROVED,
             "legal_status": get_document(db_session, new.id).legal_status,
             "category": get_document(db_session, new.id).category,
+            "categories": document_categories(get_document(db_session, new.id)),
             "visibility": get_document(db_session, new.id).visibility,
             "is_current": False,
         },
@@ -278,6 +267,7 @@ def test_rejected_document_is_removed_from_retrieval(client, db_session, conflic
             "review_status": DocumentReviewStatus.APPROVED,
             "legal_status": get_document(db_session, new.id).legal_status,
             "category": get_document(db_session, new.id).category,
+            "categories": document_categories(get_document(db_session, new.id)),
             "visibility": get_document(db_session, new.id).visibility,
             "is_current": True,
         },
@@ -377,9 +367,9 @@ def test_vector_failure_rolls_back_the_mysql_resolution(client, db_session, conf
     flag, old, new = conflict
 
     def fail_vector_sync(*_args, **_kwargs):
-        raise conflicts_router.VectorStoreError("Qdrant unavailable")
+        raise VectorStoreError("Qdrant unavailable")
 
-    monkeypatch.setattr(conflicts_router, "update_document_vector_metadata", fail_vector_sync)
+    monkeypatch.setattr(vector_store_service, "update_document_vector_metadata", fail_vector_sync)
 
     response = client.post(f"/api/v1/admin/conflicts/{flag.id}/resolve", json={"keep_document_id": new.id})
 
@@ -402,7 +392,7 @@ def test_unknown_mysql_commit_outcome_never_reactivates_pre_resolution_state(
     db_session.commit()
     calls: list[tuple[int, bool]] = []
     monkeypatch.setattr(
-        conflicts_router,
+        vector_store_service,
         "update_document_vector_metadata",
         lambda document_id, **metadata: calls.append((document_id, metadata["is_current"])),
     )
@@ -414,7 +404,7 @@ def test_unknown_mysql_commit_outcome_never_reactivates_pre_resolution_state(
         commit_count += 1
         real_commit()
         if commit_count == 1:
-            raise conflicts_router.SQLAlchemyError("lost commit acknowledgement")
+            raise SQLAlchemyError("lost commit acknowledgement")
 
     db_session.commit = commit_then_lose_ack
 
@@ -449,9 +439,9 @@ def test_winner_activation_failure_keeps_committed_decision_and_quarantine(
         calls.append((document_id, is_current))
         if document_id == new.id and is_current and not activation_failed:
             activation_failed = True
-            raise conflicts_router.VectorStoreError("Qdrant unavailable")
+            raise VectorStoreError("Qdrant unavailable")
 
-    monkeypatch.setattr(conflicts_router, "update_document_vector_metadata", fail_winner_activation)
+    monkeypatch.setattr(vector_store_service, "update_document_vector_metadata", fail_winner_activation)
 
     response = client.post(f"/api/v1/admin/conflicts/{flag.id}/resolve", json={"keep_document_id": new.id})
 
@@ -482,9 +472,9 @@ def test_failed_winner_requarantine_never_reactivates_the_old_loser(
         is_current = metadata["is_current"]
         calls.append((document_id, is_current))
         if document_id == new.id:
-            raise conflicts_router.VectorStoreError("Qdrant unavailable")
+            raise VectorStoreError("Qdrant unavailable")
 
-    monkeypatch.setattr(conflicts_router, "update_document_vector_metadata", fail_winner_updates)
+    monkeypatch.setattr(vector_store_service, "update_document_vector_metadata", fail_winner_updates)
 
     response = client.post(
         f"/api/v1/admin/conflicts/{flag.id}/resolve",

@@ -14,6 +14,7 @@ from backend.core.enums import (
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
 from backend.models.document_relation import DocumentRelation
+from backend.services.vector_store_service import document_vector_metadata_snapshot
 from backend.utils.time import utcnow
 
 DetectionMethod = Literal["rule", "llm", "hybrid"]
@@ -237,7 +238,7 @@ def resolve_conflict(
     resolved_by: int | None = None,
     *,
     commit: bool = True,
-) -> tuple[ConflictFlag, Document, Document, dict[int, dict[str, str | bool]]]:
+) -> tuple[ConflictFlag, Document, Document, dict[int, dict[str, object]]]:
     """Close a conflict flag: keep one document, disable the other.
 
     `keep_document_id` must be one of the flag's two documents — otherwise the
@@ -321,15 +322,8 @@ def resolve_conflict(
     if kept.status != DocumentStatus.COMPLETED:
         raise ValueError(f"Document {keep_document_id} is not an active completed document.")
 
-    previous_vector_metadata: dict[int, dict[str, str | bool]] = {
-        document.id: {
-            "review_status": str(document.review_status),
-            "legal_status": str(document.legal_status),
-            "category": str(document.category),
-            "visibility": str(document.visibility),
-            "is_current": bool(document.is_current),
-        }
-        for document in documents
+    previous_vector_metadata: dict[int, dict[str, object]] = {
+        document.id: document_vector_metadata_snapshot(document) for document in documents
     }
 
     superseded.status = DocumentStatus.BLOCKED

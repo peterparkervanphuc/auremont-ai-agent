@@ -54,7 +54,7 @@ flowchart TB
   IntentCheck -- "No" --> ImageTool
   ToolCall --> ImageTool["🖼️ Project Image Selector<br/>MinIO CDN Asset Routing"]
 
-  ImageTool --> Generate["🧠 Generation Agent<br/>Gemini 2.0 Flash / 3.5 Flash Lite"]
+  ImageTool --> Generate["🧠 Generation Agent<br/>Gemini 3.5 Flash Lite"]
 
   Generate --> FastPathCheck{"⚡ Fast-Path<br/>Eligible?"}
   FastPathCheck -- "Yes<br/>No Price/Risk" --> RiskCheck
@@ -106,7 +106,7 @@ flowchart TB
 | :--- | :--- | :--- |
 | **Backend Core** | FastAPI • Python 3.11/3.12 • Pydantic v2 | High-performance async REST API, validation, dependency injection |
 | **Orchestration** | LangGraph (`StateGraph`) | Stateful, cyclic multi-agent graph with conditional branching |
-| **LLM & Embeddings** | Google Gemini (`gemini-2.0-flash` / `gemini-3.5-flash-lite`, `gemini-embedding-001`) | Fast reasoning, structured JSON outputs, high-dimensional vector embeddings |
+| **LLM & Embeddings** | Google Gemini (`gemini-3.5-flash-lite`, `gemini-embedding-001`) | Fast reasoning, structured JSON outputs, high-dimensional vector embeddings |
 | **Reranking** | Cohere Rerank v3.5 *(optional hosted cross-encoder)* | Precision context ranking & duplicate removal |
 | **Vector DB** | Qdrant | Dense vector search, sparse BM25 payload storage, semantic QA cache |
 | **Relational DB** | MySQL 8.4 LTS • SQLAlchemy 2.0 • Alembic | Structured relational storage (users, sessions, messages, audit logs) |
@@ -221,7 +221,7 @@ P-110/
 ├── frontend/                  # React 19 + Vite SPA (Sale, Admin, Customer interfaces)
 ├── migrations/                # Alembic database schema migrations
 ├── eval/                      # Evaluation suite, golden dataset, LLM grading runners
-├── tests/                     # 75+ automated unit, integration, and regression tests
+├── tests/                     # 1,300+ automated unit, integration, and regression tests
 ├── docs/                      # Comprehensive developer guides, conflict resolution specs
 └── docker-compose.yml         # Production-parity 6-container development stack
 ```

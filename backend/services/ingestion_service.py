@@ -64,10 +64,12 @@ from backend.services.project_metadata_service import (
 from backend.services.vector_store_service import (
     delete_document_vectors,
     index_document_chunks,
+    sync_document_vector_metadata,
     update_document_vector_metadata,
 )
 from backend.utils.text import strip_diacritics
 from backend.utils.time import utcnow
+from backend.utils.vnd import DOCUMENT_UNIT_ALTERNATION, Profile, parse_vnd
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +136,7 @@ class _VectorMetadata:
     review_status: str
     legal_status: str
     category: str
+    categories: list[str]
     visibility: str
     is_current: bool
 
@@ -307,6 +310,7 @@ def ingest_uploaded_document(
                 review_status=document.review_status,
                 legal_status=document.legal_status,
                 category=document.category,
+                categories=document_categories(document),
                 visibility=document.visibility,
                 is_current=document.is_current,
             )
@@ -319,6 +323,7 @@ def ingest_uploaded_document(
                         review_status=final_vector_metadata.review_status,
                         legal_status=final_vector_metadata.legal_status,
                         category=final_vector_metadata.category,
+                        categories=final_vector_metadata.categories,
                         visibility=final_vector_metadata.visibility,
                         is_current=final_vector_metadata.is_current,
                     )
@@ -351,14 +356,7 @@ def ingest_uploaded_document(
 
         if vector_write_attempted:
             try:
-                update_document_vector_metadata(
-                    failed.id,
-                    review_status=failed.review_status,
-                    legal_status=failed.legal_status,
-                    category=failed.category,
-                    visibility=failed.visibility,
-                    is_current=False,
-                )
+                sync_document_vector_metadata(failed, is_current=False)
             except Exception:  # pragma: no cover - best-effort safety cleanup
                 logger.exception(
                     "Could not quarantine vectors for failed document %s.",
@@ -603,11 +601,16 @@ def reclassify_document(
     previous_update_values = {field_name: getattr(document, field_name) for field_name in updates}
 
     if not was_pending_review:
+        # `document.category`/`.categories` are still the pre-update values here — the
+        # `updates` dict above was only read from, never applied to the ORM object — so
+        # this quarantines the version currently live in Qdrant under its old labels,
+        # matching `category=previous_category` below rather than the incoming `category`.
         update_document_vector_metadata(
             document.id,
             review_status=document.review_status,
             legal_status=document.legal_status,
             category=previous_category,
+            categories=document_categories(document),
             visibility=document.visibility,
             is_current=False,
         )
@@ -723,14 +726,7 @@ def reclassify_document(
             if document.is_current != publication_current:
                 document.is_current = publication_current
                 db.flush()
-            update_document_vector_metadata(
-                document.id,
-                review_status=document.review_status,
-                legal_status=document.legal_status,
-                category=document.category,
-                visibility=document.visibility,
-                is_current=publication_current,
-            )
+            sync_document_vector_metadata(document, is_current=publication_current)
             db.commit()
     except Exception as exc:
         db.rollback()
@@ -742,14 +738,7 @@ def reclassify_document(
                         persisted.is_current = False
                         db.commit()
                         db.refresh(persisted)
-                    update_document_vector_metadata(
-                        persisted.id,
-                        review_status=persisted.review_status,
-                        legal_status=persisted.legal_status,
-                        category=persisted.category,
-                        visibility=persisted.visibility,
-                        is_current=False,
-                    )
+                    sync_document_vector_metadata(persisted, is_current=False)
             except Exception:  # pragma: no cover - best-effort cross-store reconciliation
                 logger.exception(
                     "Could not reassert pending vector quarantine for document %s.",
@@ -1290,8 +1279,7 @@ _NON_UNIT_CODE_RE = re.compile(
     re.IGNORECASE,
 )
 _PRICE_RE = re.compile(
-    r"(?<!\w)(\d{1,3}(?:[.,]\d{3}){2,}|\d+(?:[.,]\d+)?)\s*"
-    r"(tỷ|ty|triệu|trieu|tr|million|billion|vnđ|vnd|đ|đồng|dong)\b",
+    rf"(?<!\w)(\d{{1,3}}(?:[.,]\d{{3}}){{2,}}|\d+(?:[.,]\d+)?)\s*({DOCUMENT_UNIT_ALTERNATION})\b",
     re.IGNORECASE,
 )
 _COMPOUND_PRICE_RE = re.compile(
@@ -1649,20 +1637,17 @@ def _line_prices(line: str, *, vnd_table_context: bool) -> set[int]:
 
 
 def _price_to_vnd(number: str, unit: str) -> int:
-    compact = number.strip()
-    normalised_unit = strip_diacritics(unit).lower()
-    if normalised_unit in {"vnd", "dong", "d"} and re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", compact):
-        return int(re.sub(r"[.,]", "", compact))
-    if normalised_unit in {"trieu", "tr", "million"} and re.fullmatch(r"\d{1,3}(?:\.\d{3})+", compact):
-        return int(compact.replace(".", "")) * 1_000_000
-    if normalised_unit in {"ty", "billion"} and re.fullmatch(r"\d{1,3}(?:\.\d{3}){2,}", compact):
-        return int(compact.replace(".", "")) * 1_000_000_000
-    value = float(compact.replace(",", "."))
-    if normalised_unit in {"ty", "billion"}:
-        value *= 1_000_000_000
-    elif normalised_unit in {"trieu", "tr", "million"}:
-        value *= 1_000_000
-    return round(value)
+    """Thin adapter over the shared parser, kept so the regex loops above read unchanged.
+
+    One deliberate behaviour change came with the move: this used to treat a *single*
+    dot-group as thousands when the unit was triệu, so "1.500 trieu" parsed as 1.5 tỷ while
+    every other parser in the codebase read it as 1.5 triệu. A single group is now a decimal
+    under both profiles; only genuinely unambiguous grouping ("1.500.000") is thousands.
+
+    Returns 0 for unparseable input, which `_price_facts` discards along with any other
+    falsy price rather than recording it as a fact.
+    """
+    return parse_vnd(number, unit, profile=Profile.DOCUMENT) or 0
 
 
 def _price_differences(

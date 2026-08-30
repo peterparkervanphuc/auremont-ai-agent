@@ -150,8 +150,10 @@ eval/cache/
 
 # ========== Docker ==========
 docker-compose.override.yml
-.dockerignore
 .docker/
+# NOTE: .dockerignore is deliberately NOT ignored. It controls what ships into an image,
+# so it belongs in version control — the root one was only ever tracked because it was
+# committed before this rule existed, which silently kept frontend/.dockerignore out.
 
 # ========== Credentials & Secrets ==========
 *.pem

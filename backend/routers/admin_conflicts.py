@@ -23,7 +23,12 @@ from backend.schemas.conflict_flag import (
 )
 from backend.services.cache_service import clear_cache
 from backend.services.conflict_severity_service import ConflictSeverity, classify_conflict_severity
-from backend.services.vector_store_service import VectorStoreError, update_document_vector_metadata
+from backend.services.vector_store_service import (
+    VectorStoreError,
+    log_and_swallow_restore_failure,
+    restore_document_vector_metadata,
+    sync_document_vector_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +126,7 @@ async def resolve_conflict_flag(
 ) -> ConflictFlagResponse:
     """Keep the Admin's chosen document and atomically disable the other one."""
     attempted_vector_ids: set[int] = set()
-    previous_vector_metadata: dict[int, dict[str, str | bool]] = {}
+    previous_vector_metadata: dict[int, dict[str, object]] = {}
     try:
         conflict, kept, superseded, previous_vector_metadata = resolve_conflict(
             db,
@@ -151,14 +156,7 @@ async def resolve_conflict_flag(
     try:
         for document in (superseded, kept):
             attempted_vector_ids.add(document.id)
-            update_document_vector_metadata(
-                document.id,
-                review_status=document.review_status,
-                legal_status=document.legal_status,
-                category=document.category,
-                visibility=document.visibility,
-                is_current=False,
-            )
+            sync_document_vector_metadata(document, is_current=False)
     except VectorStoreError as exc:
         try:
             _restore_vector_metadata(previous_vector_metadata, attempted_vector_ids)
@@ -183,14 +181,7 @@ async def resolve_conflict_flag(
         if refreshed_winner is None:
             raise ValueError("The selected conflict winner no longer exists.")
         kept = refreshed_winner
-        update_document_vector_metadata(
-            kept.id,
-            review_status=kept.review_status,
-            legal_status=kept.legal_status,
-            category=kept.category,
-            visibility=kept.visibility,
-            is_current=kept.is_current,
-        )
+        sync_document_vector_metadata(kept)
         db.commit()
     except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
         db.rollback()
@@ -230,53 +221,37 @@ async def dismiss_conflict_flag(
 
 
 def _restore_vector_metadata(
-    previous_vector_metadata: dict[int, dict[str, str | bool]],
+    previous_vector_metadata: dict[int, dict[str, object]],
     document_ids: set[int],
 ) -> None:
-    """Best-effort compensation after a partial Qdrant update."""
+    """Best-effort compensation after a partial Qdrant update.
+
+    Quarantined documents (`is_current` was already `False` before this resolution
+    attempt) are restored first and only unconditionally: if even that fails, the
+    formerly-current documents are left quarantined rather than risk republishing them
+    with metadata Qdrant never actually finished writing.
+    """
     selected_ids = document_ids & previous_vector_metadata.keys()
     quarantined_ids = sorted(
         document_id for document_id in selected_ids if not bool(previous_vector_metadata[document_id]["is_current"])
     )
     active_ids = sorted(selected_ids - set(quarantined_ids))
+    event = "conflict.resolve.vector_compensation_failed"
 
     quarantine_restored = True
     for document_id in quarantined_ids:
-        metadata = previous_vector_metadata[document_id]
         try:
-            update_document_vector_metadata(
-                document_id,
-                review_status=str(metadata["review_status"]),
-                legal_status=str(metadata["legal_status"]),
-                category=str(metadata["category"]),
-                visibility=str(metadata["visibility"]),
-                is_current=bool(metadata["is_current"]),
-            )
-        except VectorStoreError:
+            restore_document_vector_metadata(document_id, previous_vector_metadata[document_id])
+        except VectorStoreError as exc:
             quarantine_restored = False
-            logger.exception(
-                "Could not restore vector metadata for document %s after conflict resolution failed.",
-                document_id,
-                extra={"event": "conflict.resolve.vector_compensation_failed", "document_id": document_id},
-            )
+            log_and_swallow_restore_failure(exc, document_id=document_id, event=event)
 
     if not quarantine_restored:
         return
 
     for document_id in active_ids:
-        metadata = previous_vector_metadata[document_id]
+        metadata = dict(previous_vector_metadata[document_id]) | {"is_current": True}
         try:
-            update_document_vector_metadata(
-                document_id,
-                review_status=str(metadata["review_status"]),
-                legal_status=str(metadata["legal_status"]),
-                category=str(metadata["category"]),
-                visibility=str(metadata["visibility"]),
-                is_current=True,
-            )
-        except VectorStoreError:
-            logger.exception(
-                "Could not restore vector metadata for document %s after conflict resolution failed.",
-                document_id,
-                extra={"event": "conflict.resolve.vector_compensation_failed", "document_id": document_id},
-            )
+            restore_document_vector_metadata(document_id, metadata)
+        except VectorStoreError as exc:
+            log_and_swallow_restore_failure(exc, document_id=document_id, event=event)

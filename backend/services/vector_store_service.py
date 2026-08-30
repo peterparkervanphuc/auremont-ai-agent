@@ -1,11 +1,13 @@
 import logging
 import uuid
+from typing import Any
 
 from qdrant_client import models
 
 from backend.core.config import settings
 from backend.core.qdrant_client import get_qdrant_client
 from backend.services.chunking_service import DocumentChunk
+from backend.services.document_category_service import document_categories
 
 logger = logging.getLogger(__name__)
 
@@ -256,3 +258,85 @@ def update_document_vector_metadata(
         )
     except Exception as exc:
         raise VectorStoreError(f"Could not update vector metadata for document {document_id}.") from exc
+
+
+def _enum_value(value: Any) -> str:
+    return str(value.value if hasattr(value, "value") else value)
+
+
+def sync_document_vector_metadata(document: Any, *, is_current: bool | None = None) -> None:
+    """Synchronise vector metadata straight off an ORM `Document`, `categories` included.
+
+    `update_document_vector_metadata` takes `categories` as an optional kwarg because a
+    handful of callers restore from an old snapshot dict rather than a live document (see
+    `document_vector_metadata_snapshot`/`restore_document_vector_metadata` below), and those
+    snapshots predate the field. Every caller that *does* have the live ORM row should go
+    through here instead of hand-listing five fields and forgetting `categories` — that
+    omission was live for months: `document_categories` is a keyword-indexed Qdrant field
+    (`_KEYWORD_INDEX_FIELDS` above) that `metadata_audit_service` cross-checks against
+    MySQL, and a caller that skips it leaves retrieval filtering on stale category labels
+    after a reclassification that changed `document.categories` but not `document.category`.
+    """
+    update_document_vector_metadata(
+        document.id,
+        review_status=_enum_value(document.review_status),
+        legal_status=_enum_value(document.legal_status),
+        category=_enum_value(document.category),
+        categories=document_categories(document),
+        visibility=_enum_value(document.visibility),
+        is_current=bool(document.is_current if is_current is None else is_current),
+    )
+
+
+def document_vector_metadata_snapshot(document: Any) -> dict[str, object]:
+    """Capture the fields `sync_document_vector_metadata` writes, for compensation."""
+    return {
+        "review_status": _enum_value(document.review_status),
+        "legal_status": _enum_value(document.legal_status),
+        "category": _enum_value(document.category),
+        "categories": document_categories(document),
+        "visibility": _enum_value(document.visibility),
+        "is_current": bool(document.is_current),
+    }
+
+
+def restore_document_vector_metadata(
+    document_id: int,
+    metadata: dict[str, object],
+) -> None:
+    """Re-apply a metadata snapshot captured by `document_vector_metadata_snapshot`.
+
+    Raises `VectorStoreError` on failure, same as `update_document_vector_metadata` — the
+    caller decides whether that failure is fatal (a batch restore that must know whether to
+    continue) or best-effort (log and swallow, see `log_and_swallow_restore_failure`).
+    """
+    raw_categories = metadata.get("categories")
+    categories = [str(value) for value in raw_categories] if isinstance(raw_categories, list) else None
+    update_document_vector_metadata(
+        document_id,
+        review_status=str(metadata["review_status"]),
+        legal_status=str(metadata["legal_status"]),
+        category=str(metadata["category"]),
+        categories=categories,
+        visibility=str(metadata["visibility"]),
+        is_current=bool(metadata["is_current"]),
+    )
+
+
+def log_and_swallow_restore_failure(exc: VectorStoreError, *, document_id: int, event: str) -> None:
+    """Shared logging for a best-effort `restore_document_vector_metadata` call.
+
+    Called from inside the caller's own `except VectorStoreError as exc:` block, so
+    `logger.exception` still picks up the live traceback via `sys.exc_info()` — `exc` is
+    taken as a parameter only to make that call site self-documenting, not because the
+    logger needs it passed explicitly.
+
+    Used where the compensation attempt runs inside a handler for a failure the caller is
+    about to re-raise: a second exception from the compensation itself would shadow the
+    original one the client needs to see, so it is logged and swallowed instead.
+    """
+    del exc  # captured only via the active exception context; see docstring
+    logger.exception(
+        "Could not restore vector metadata after a cross-store operation failed.",
+        extra={"event": event, "document_id": document_id},
+    )

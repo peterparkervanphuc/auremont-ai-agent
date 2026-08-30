@@ -19,7 +19,12 @@ from backend.schemas.document_relation import (
     DocumentRelationResponse,
     DocumentRelationReview,
 )
-from backend.services.vector_store_service import VectorStoreError, update_document_vector_metadata
+from backend.services.vector_store_service import (
+    VectorStoreError,
+    log_and_swallow_restore_failure,
+    restore_document_vector_metadata,
+    sync_document_vector_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +62,7 @@ async def review_relation(
     admin: User = Depends(require_role(UserRole.ADMIN)),
 ) -> DocumentRelationResponse:
     attempted_document_id: int | None = None
-    previous_vector_metadata: dict[str, str | bool] | None = None
+    previous_vector_metadata: dict[str, object] | None = None
     try:
         relation, superseded, previous_vector_metadata = review_document_relation(
             db,
@@ -79,18 +84,18 @@ async def review_relation(
     if superseded is not None:
         attempted_document_id = superseded.id
         try:
-            update_document_vector_metadata(
-                superseded.id,
-                review_status=superseded.review_status,
-                legal_status=superseded.legal_status,
-                category=superseded.category,
-                visibility=superseded.visibility,
-                is_current=False,
-            )
+            sync_document_vector_metadata(superseded, is_current=False)
         except VectorStoreError as exc:
             try:
                 if previous_vector_metadata is not None:
-                    _restore_document_vector_metadata(attempted_document_id, previous_vector_metadata)
+                    try:
+                        restore_document_vector_metadata(attempted_document_id, previous_vector_metadata)
+                    except VectorStoreError as restore_exc:
+                        log_and_swallow_restore_failure(
+                            restore_exc,
+                            document_id=attempted_document_id,
+                            event="document_relation.vector_compensation_failed",
+                        )
             finally:
                 db.rollback()
             raise HTTPException(
@@ -109,24 +114,3 @@ async def review_relation(
 
     db.refresh(relation)
     return relation
-
-
-def _restore_document_vector_metadata(
-    document_id: int,
-    metadata: dict[str, str | bool],
-) -> None:
-    """Best-effort compensation after Qdrant changed but MySQL did not commit."""
-    try:
-        update_document_vector_metadata(
-            document_id,
-            review_status=str(metadata["review_status"]),
-            legal_status=str(metadata["legal_status"]),
-            category=str(metadata["category"]),
-            visibility=str(metadata["visibility"]),
-            is_current=bool(metadata["is_current"]),
-        )
-    except VectorStoreError:
-        logger.exception(
-            "Could not restore vector metadata after relation review failed.",
-            extra={"event": "document_relation.vector_compensation_failed", "document_id": document_id},
-        )

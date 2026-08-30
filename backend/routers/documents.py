@@ -82,7 +82,10 @@ from backend.services.project_metadata_service import ProjectCatalogEntry, class
 from backend.services.vector_store_service import (
     VectorStoreError,
     delete_document_vectors,
-    update_document_vector_metadata,
+    document_vector_metadata_snapshot,
+    log_and_swallow_restore_failure,
+    restore_document_vector_metadata,
+    sync_document_vector_metadata,
 )
 
 logger = logging.getLogger(__name__)
@@ -643,7 +646,7 @@ async def set_document_visibility(
         db.refresh(document)
         return document
 
-    previous_metadata = _vector_metadata_snapshot(document)
+    previous_metadata = document_vector_metadata_snapshot(document)
     loosening_access = (
         document.visibility == DocumentVisibility.INTERNAL and payload.visibility == DocumentVisibility.PUBLIC
     )
@@ -652,20 +655,20 @@ async def set_document_visibility(
         quarantine_attempted = False
         try:
             quarantine_attempted = True
-            update_document_vector_metadata(
-                document.id,
-                review_status=document.review_status,
-                legal_status=document.legal_status,
-                category=document.category,
-                visibility=document.visibility,
-                is_current=False,
-            )
+            sync_document_vector_metadata(document, is_current=False)
             update_document_visibility(db, document_id, payload.visibility, commit=False)
             db.commit()
         except (VectorStoreError, SQLAlchemyError, ValueError) as exc:
             try:
                 if quarantine_attempted:
-                    _restore_document_vector_metadata(document.id, previous_metadata)
+                    try:
+                        restore_document_vector_metadata(document.id, previous_metadata)
+                    except VectorStoreError as restore_exc:
+                        log_and_swallow_restore_failure(
+                            restore_exc,
+                            document_id=document.id,
+                            event="document.visibility.vector_compensation_failed",
+                        )
             finally:
                 db.rollback()
             raise HTTPException(
@@ -677,14 +680,7 @@ async def set_document_visibility(
             document = get_document(db, document_id, for_update=True)
             if document is None:  # pragma: no cover - deletion also needs the same row lock
                 raise ValueError(f"Document with id={document_id} not found.")
-            update_document_vector_metadata(
-                document.id,
-                review_status=document.review_status,
-                legal_status=document.legal_status,
-                category=document.category,
-                visibility=document.visibility,
-                is_current=_safe_vector_current(document),
-            )
+            sync_document_vector_metadata(document, is_current=_safe_vector_current(document))
             db.commit()
             db.refresh(document)
             _clear_answer_cache()
@@ -703,14 +699,7 @@ async def set_document_visibility(
             payload.visibility,
             commit=False,
         )
-        update_document_vector_metadata(
-            document.id,
-            review_status=document.review_status,
-            legal_status=document.legal_status,
-            category=document.category,
-            visibility=document.visibility,
-            is_current=_safe_vector_current(document),
-        )
+        sync_document_vector_metadata(document, is_current=_safe_vector_current(document))
         db.commit()
         db.refresh(document)
         _clear_answer_cache()
@@ -870,14 +859,7 @@ async def update_document_metadata(
             reviewed_by=admin.id,
             commit=False,
         )
-        update_document_vector_metadata(
-            document.id,
-            review_status=document.review_status,
-            legal_status=document.legal_status,
-            category=document.category,
-            visibility=document.visibility,
-            is_current=False,
-        )
+        sync_document_vector_metadata(document, is_current=False)
         db.commit()
     except ValueError as exc:
         db.rollback()
@@ -925,14 +907,7 @@ async def update_document_metadata(
             if document.is_current != publication_current:
                 document.is_current = publication_current
                 db.flush()
-            update_document_vector_metadata(
-                document.id,
-                review_status=document.review_status,
-                legal_status=document.legal_status,
-                category=document.category,
-                visibility=document.visibility,
-                is_current=publication_current,
-            )
+            sync_document_vector_metadata(document, is_current=publication_current)
             db.commit()
         _clear_answer_cache()
         return document
@@ -959,16 +934,6 @@ def _clear_answer_cache() -> None:
     clear_cache()
 
 
-def _vector_metadata_snapshot(document: Document) -> dict[str, str | bool]:
-    return {
-        "review_status": str(document.review_status),
-        "legal_status": str(document.legal_status),
-        "category": str(document.category),
-        "visibility": str(document.visibility),
-        "is_current": bool(document.is_current),
-    }
-
-
 def _safe_vector_current(document: Document) -> bool:
     """Clamp cross-store publication to states retrieval is allowed to expose."""
     return bool(
@@ -984,24 +949,3 @@ def _safe_vector_current(document: Document) -> bool:
             LegalStatus.REPLACED,
         }
     )
-
-
-def _restore_document_vector_metadata(
-    document_id: int,
-    metadata: dict[str, str | bool],
-) -> None:
-    """Best-effort compensation while the document row remains locked."""
-    try:
-        update_document_vector_metadata(
-            document_id,
-            review_status=str(metadata["review_status"]),
-            legal_status=str(metadata["legal_status"]),
-            category=str(metadata["category"]),
-            visibility=str(metadata["visibility"]),
-            is_current=bool(metadata["is_current"]),
-        )
-    except VectorStoreError:
-        logger.exception(
-            "Could not restore vector metadata after classification approval failed.",
-            extra={"event": "document.classification.vector_compensation_failed", "document_id": document_id},
-        )

@@ -21,6 +21,7 @@ import httpx
 
 from backend.core.config import settings
 from backend.utils.text import sanitize_external_field
+from backend.utils.vnd import BUDGET_UNIT_ALTERNATION_WITH_BARE_T, Profile, parse_vnd
 
 logger = logging.getLogger(__name__)
 
@@ -58,17 +59,17 @@ _AREA_MAX_PATTERN = re.compile(
 )
 _AREA_MIN_PATTERN = re.compile(r"\b(?:trên|tren|>=?|từ|tu)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
 _PRICE_RANGE_PATTERN = re.compile(
-    r"\b(?:(?:từ|tu)\s*)?(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr|t)?\s*"
-    r"(?:-|đến|den|tới|toi)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr|t)\b",
+    rf"\b(?:(?:từ|tu)\s*)?(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION_WITH_BARE_T})?\s*"
+    rf"(?:-|đến|den|tới|toi)\s*(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION_WITH_BARE_T})\b",
     re.IGNORECASE,
 )
 _PRICE_MAX_PATTERN = re.compile(
-    r"\b(?:dưới|duoi|<=?|không quá|khong qua|tối đa|toi da)\s*(\d+(?:[.,]\d+)?)\s*"
-    r"(tỷ|ty|triệu|trieu|tr|t)\b",
+    rf"\b(?:dưới|duoi|<=?|không quá|khong qua|tối đa|toi da)\s*(\d+(?:[.,]\d+)?)\s*"
+    rf"({BUDGET_UNIT_ALTERNATION_WITH_BARE_T})\b",
     re.IGNORECASE,
 )
 _PRICE_MIN_PATTERN = re.compile(
-    r"\b(?:trên|tren|>=?|từ|tu)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr|t)\b",
+    rf"\b(?:trên|tren|>=?|từ|tu)\s*(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION_WITH_BARE_T})\b",
     re.IGNORECASE,
 )
 _STATUS_PATTERN = re.compile(
@@ -852,15 +853,15 @@ def _to_number(value: str) -> float:
 
 
 def _price_to_vnd(value: str, unit: str | None) -> float:
-    multiplier = {
-        "tỷ": 1_000_000_000,
-        "ty": 1_000_000_000,
-        "t": 1_000_000_000,
-        "triệu": 1_000_000,
-        "trieu": 1_000_000,
-        "tr": 1_000_000,
-    }.get((unit or "").lower(), 1.0)
-    return _to_number(value) * multiplier
+    """Thin adapter over the shared parser; callers here compare against float bounds.
+
+    Kept as a float-returning wrapper rather than churning `_extract_price_range`, whose
+    open-ended bounds are `float("inf")` sentinels. Unparseable input used to raise
+    ValueError — "1.500.000" did, and no caller had a branch for it — so it now falls back
+    to 0.0, which the range comparisons already treat as "no lower bound".
+    """
+    dong = parse_vnd(value, unit, profile=Profile.CONVERSATIONAL)
+    return float(dong) if dong is not None else 0.0
 
 
 def _ordered_range(first: float, second: float) -> tuple[float, float]:

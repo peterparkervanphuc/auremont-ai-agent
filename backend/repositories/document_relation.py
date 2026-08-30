@@ -9,6 +9,7 @@ from backend.core.enums import (
 from backend.models.document import Document
 from backend.models.document_relation import DocumentRelation
 from backend.schemas.document_relation import DocumentRelationCreate
+from backend.services.vector_store_service import document_vector_metadata_snapshot
 from backend.utils.time import utcnow
 
 
@@ -46,7 +47,7 @@ def review_document_relation(
     approve: bool,
     reviewed_by: int,
     commit: bool = True,
-) -> tuple[DocumentRelation, Document | None, dict[str, str | bool] | None]:
+) -> tuple[DocumentRelation, Document | None, dict[str, object] | None]:
     relation = (
         db.query(DocumentRelation)
         .filter(DocumentRelation.id == relation_id)
@@ -64,7 +65,7 @@ def review_document_relation(
     relation.reviewed_at = utcnow()
 
     superseded: Document | None = None
-    previous_vector_metadata: dict[str, str | bool] | None = None
+    previous_vector_metadata: dict[str, object] | None = None
     inactive_relations = {
         DocumentRelationType.REPLACES,
         DocumentRelationType.SUPERSEDES,
@@ -104,13 +105,7 @@ def review_document_relation(
         ):
             raise ValueError(f"Target document {superseded.id} is not eligible to be retired.")
         if superseded is not None:
-            previous_vector_metadata = {
-                "review_status": str(superseded.review_status),
-                "legal_status": str(superseded.legal_status),
-                "category": str(superseded.category),
-                "visibility": str(superseded.visibility),
-                "is_current": bool(superseded.is_current),
-            }
+            previous_vector_metadata = document_vector_metadata_snapshot(superseded)
             superseded.status = DocumentStatus.BLOCKED
             superseded.is_current = False
             if relation.relation_type == DocumentRelationType.REPEALS:

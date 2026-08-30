@@ -1,28 +1,9 @@
 """repositories.lead — the persistence layer between lead_scoring_service and the DB row."""
 
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from backend.core.enums import LeadTier
-from backend.core.mysql_client import Base
 from backend.models.lead import Lead
 from backend.repositories.lead import update_lead_score
 from backend.services.lead_scoring_service import LeadVerdict
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine)
-    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = testing_session()
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 def _verdict(*, signals: dict) -> LeadVerdict:

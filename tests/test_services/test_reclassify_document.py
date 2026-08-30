@@ -11,33 +11,16 @@ it no longer has.
 """
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.core.enums import DocumentCategory, DocumentReviewStatus, DocumentStatus
-from backend.core.mysql_client import Base
 from backend.models.document import Document
 from backend.models.project import Project
-from backend.services import ingestion_service
+from backend.services import ingestion_service, vector_store_service
 from backend.services.ingestion_service import (
     ConflictScanOutcome,
     DocumentIngestionError,
     reclassify_document,
 )
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine)
-    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = testing_session()
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture
@@ -81,11 +64,16 @@ def recorder(monkeypatch):
         "_embed_and_index",
         lambda doc, chunks, is_current=None: events.append(("index", is_current)),
     )
-    monkeypatch.setattr(
-        ingestion_service,
-        "update_document_vector_metadata",
-        lambda document_id, **kwargs: events.append(("sync", kwargs["category"], kwargs["is_current"])),
+    # Patched in both places on purpose. `ingestion_service` did `from ... import
+    # update_document_vector_metadata`, so its module-level name is a separate binding that
+    # a patch on the source module cannot reach; but the calls routed through
+    # `sync_document_vector_metadata` resolve the name inside `vector_store_service` and
+    # only the source patch reaches those.
+    record_sync = lambda document_id, **kwargs: events.append(  # noqa: E731
+        ("sync", kwargs["category"], kwargs["is_current"])
     )
+    monkeypatch.setattr(ingestion_service, "update_document_vector_metadata", record_sync)
+    monkeypatch.setattr(vector_store_service, "update_document_vector_metadata", record_sync)
     monkeypatch.setattr(
         ingestion_service,
         "scan_conflicts_for",
