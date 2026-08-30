@@ -2,36 +2,15 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.core.deps import get_current_user
 from backend.core.enums import MessageSender, UserRole
-from backend.core.mysql_client import Base, get_db
+from backend.core.mysql_client import get_db
 from backend.main import app
 from backend.models.user import User
 from backend.repositories.message import create_message
 from backend.services import agent_pipeline, memory_service, reflection_memory, search_criteria
 from backend.services.agent_pipeline import PipelineResult
-
-
-@pytest.fixture
-def db_session():
-    """In-memory SQLite so the suite runs without a live MySQL."""
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = testing_session()
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture

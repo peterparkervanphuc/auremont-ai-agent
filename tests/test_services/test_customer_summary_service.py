@@ -1,12 +1,8 @@
 import json
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.core.enums import MessageSender, SessionChannel, UserRole
-from backend.core.mysql_client import Base
 from backend.models.chat_session import ChatSession
 from backend.models.user import User
 from backend.repositories.message import create_message
@@ -17,19 +13,6 @@ from backend.schemas.customer_summary import (
     SummaryEvidence,
 )
 from backend.services import customer_summary_service
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine)
-    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = testing_session()
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 def _customer_sessions(db):

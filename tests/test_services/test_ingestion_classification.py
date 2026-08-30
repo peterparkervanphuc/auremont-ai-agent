@@ -1,9 +1,6 @@
 from datetime import date
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.core.config import settings
 from backend.core.enums import (
@@ -14,7 +11,6 @@ from backend.core.enums import (
     DocumentStatus,
     LegalStatus,
 )
-from backend.core.mysql_client import Base
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
 from backend.models.project import Project
@@ -22,29 +18,6 @@ from backend.services import ingestion_service, vector_store_service
 from backend.services.document_category_service import document_categories
 from backend.services.document_classification_service import ConflictFact, DocumentClassification
 from backend.services.parser_service import ParsedSection
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-
-    session_factory = sessionmaker(
-        autocommit=False,
-        autoflush=False,
-        bind=engine,
-    )
-    db = session_factory()
-
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 def _document(db_session, title: str) -> Document:

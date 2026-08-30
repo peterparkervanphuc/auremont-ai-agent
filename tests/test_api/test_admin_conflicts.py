@@ -2,10 +2,7 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.core.deps import get_current_user
 from backend.core.enums import (
@@ -16,7 +13,7 @@ from backend.core.enums import (
     LegalStatus,
     UserRole,
 )
-from backend.core.mysql_client import Base, get_db
+from backend.core.mysql_client import get_db
 from backend.main import app
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document_relation import DocumentRelation
@@ -27,19 +24,6 @@ from backend.schemas.document import DocumentCreate
 from backend.services import vector_store_service
 from backend.services.document_category_service import document_categories
 from backend.services.vector_store_service import VectorStoreError
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine)
-    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = testing_session()
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture

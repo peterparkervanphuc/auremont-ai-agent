@@ -6,29 +6,13 @@ never persisted, and no test covered this endpoint at all, so these are the firs
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.core.config import get_settings
-from backend.core.mysql_client import Base, get_db
+from backend.core.mysql_client import get_db
 from backend.core.rate_limit import anonymous_rate_limit
 from backend.main import app
 from backend.models.user import User
 from backend.utils.phone import normalise_vn_mobile
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine)
-    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = testing_session()
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture

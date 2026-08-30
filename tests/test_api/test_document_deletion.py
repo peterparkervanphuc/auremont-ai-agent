@@ -7,31 +7,16 @@ còn tồn tại.
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.core.deps import get_current_user
 from backend.core.enums import UserRole
-from backend.core.mysql_client import Base, get_db
+from backend.core.mysql_client import get_db
 from backend.main import app
 from backend.models.user import User
 from backend.repositories.document import create_document, get_document
 from backend.routers import documents as documents_router
 from backend.schemas.document import DocumentCreate
 from backend.services.vector_store_service import VectorStoreError
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine)
-    db = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
-    try:
-        yield db
-    finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture

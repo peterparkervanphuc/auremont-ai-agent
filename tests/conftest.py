@@ -2,11 +2,36 @@ import logging
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from backend.core.config import settings
 from backend.core.context import request_id_var
 from backend.core.logging_config import AUDIT_LOGGER_NAME
+from backend.core.mysql_client import Base
 from backend.main import app
+
+
+@pytest.fixture
+def db_session():
+    """A fresh in-memory SQLite database, isolated per test.
+
+    Was hand-rolled, byte-for-byte identical, in 28 test files before moving here. A file
+    that needs different setup (a pre-seeded row, a custom teardown) still can — a fixture
+    of the same name defined in that file shadows this one, which is how e.g. the document
+    tests that also need `Base.metadata.drop_all` before the next test's `create_all` keep
+    working unchanged.
+    """
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    testing_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db = testing_session()
+    try:
+        yield db
+    finally:
+        db.close()
+        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture

@@ -4,9 +4,6 @@ from contextlib import nullcontext
 
 import pytest
 from google.genai import errors as genai_errors
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from backend.core.enums import (
     DocumentCategory,
@@ -16,7 +13,6 @@ from backend.core.enums import (
     LegalStatus,
     UserRole,
 )
-from backend.core.mysql_client import Base
 from backend.models.document import Document
 from backend.models.project import Project
 from backend.models.user import User
@@ -35,22 +31,6 @@ from backend.services.legacy_reclassification_service import (
     preview_document_reclassification,
 )
 from backend.services.parser_service import ParsedSection
-
-
-@pytest.fixture
-def db_session():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    session = sessionmaker(bind=engine, autocommit=False, autoflush=False)()
-    try:
-        yield session
-    finally:
-        session.close()
-        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture
