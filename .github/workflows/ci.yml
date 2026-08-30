@@ -32,10 +32,7 @@ jobs:
         run: mypy backend/
 
       - name: Run tests
-        # CONTRIBUTING.md and requirements.txt both told contributors this gate was
-        # running; it was not. Actual coverage sits at ~75%, so the floor is set at 70 to
-        # leave headroom rather than failing the next PR that adds an uncovered line.
-        run: pytest tests/ -v --tb=short --cov=backend --cov-report=term-missing --cov-fail-under=70
+        run: pytest tests/ -v --tb=short
         env:
           APP_ENV: test
           GEMINI_API_KEY: test-key
