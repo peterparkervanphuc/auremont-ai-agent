@@ -2,7 +2,7 @@
 
 ## Overview
 
-One React SPA, role-routed (Sale / Admin / Customer) via JWT. One FastAPI backend orchestrating a LangGraph pipeline (preflight → scope → cache → retrieve → criteria → inventory tool → image tool → generate → verify → risk-check). Four data stores: MySQL (relational), Qdrant (vectors + semantic cache), Redis (memory, fail-open), MinIO (files). Docker Compose for local dev; no production infra configured.
+One React SPA with public routes and JWT-protected Sale / Admin / Customer routes. Anonymous customer chat uses a visitor token. One FastAPI backend orchestrates a LangGraph pipeline (preflight → scope → cache → retrieve → criteria → inventory tool → image tool → generate → verify → risk-check). Four data stores: MySQL (relational), Qdrant (vectors + semantic cache), Redis (memory, fail-open), and MinIO (files). Docker Compose supports local development; `render.yaml` and `frontend/vercel.json` provide partial production hosting configuration whose external database, Qdrant, MinIO, domains, and secrets must still be supplied.
 
 ## Diagram
 
@@ -12,12 +12,12 @@ flowchart TB
         SPA["React SPA<br/>Sale / Admin / Customer"]
     end
 
-    FeNginx["nginx (in frontend container)"]
+    FeServing["Vite dev / nginx container / Vercel static hosting"]
 
     subgraph BACKEND["FastAPI Backend"]
         direction TB
         API["REST API — /docs"]
-        Auth["JWT + RBAC"]
+        Auth["JWT + RBAC / visitor-token ownership"]
 
         subgraph AGENT["Agent Pipeline (LangGraph)"]
             direction TB
@@ -61,22 +61,22 @@ flowchart TB
         direction LR
         Gemini["Gemini<br/>generate/verify/embed"]
         Cohere["Cohere Rerank<br/>optional"]
-        InventoryAPI["Inventory API<br/>mock (mockapi.io)"]
+        InventoryAPI["Configured Inventory HTTP API"]
     end
 
     subgraph DEV["Docker Compose (local)"]
         direction LR
         DcFrontend["frontend :5173"]
         DcBackend["backend :8000"]
-        DcMysql["mysql :3307"]
+        DcMysql["mysql host :3307<br/>internal :3306"]
         DcQdrant["qdrant :6333"]
         DcRedis["redis :6379"]
         DcMinio["minio :9000/9001"]
     end
 
-    SPA --> FeNginx --> API --> Auth --> PreflightNode
+    SPA --> FeServing --> API --> Auth --> PreflightNode
     PreflightNode --> ScopeNode --> CacheNode
-    CacheNode -->|hit| END1(("answer"))
+    CacheNode -->|hit| END1(("cached answer + risk flag"))
     CacheNode -->|miss| RetrieveNode --> Qdrant
     RetrieveNode --> CriteriaNode
     CriteriaNode -->|needs inventory| ToolCallNode --> InventoryAPI
@@ -84,16 +84,17 @@ flowchart TB
     CriteriaNode -->|no inventory| ImageNode
     ImageNode --> GenerateNode
     GenerateNode --> Gemini
-    GenerateNode --> LongTerm
-    GenerateNode --> Reflection
+    LongTerm --> GenerateNode
+    Reflection --> GenerateNode
     GenerateNode --> VerifyNode --> Gemini
     VerifyNode -->|low score, retry left| RetryNode --> GenerateNode
-    VerifyNode -->|pass| RiskNode --> END2(("HITL if price/commitment"))
+    VerifyNode -->|pass| RiskNode --> END2(("Sale HITL flag / Customer direct"))
     VerifyNode -.reject.-> Reflection
 
     Sanitizer -->|clean| Classifier --> MinIO
-    Classifier --> Chunker --> Embedder -.optional.-> Cohere
+    Classifier --> Chunker --> Embedder
     Embedder --> Qdrant
+    RetrieveNode -. optional query-time rerank .-> Cohere
 
     API --> MySQL
     MinIO -.reference.-> MySQL
@@ -111,22 +112,22 @@ flowchart TB
 ## Components
 
 ### Frontend
-Single SPA, role-routed via JWT claim (`ProtectedRoute`). Sale: chat, HITL confirm card, feedback, inventory catalogue, live-inbox handoff. Customer: public/anon chat, quick-replies, registration gate. Admin: document ingestion, eval dashboard, conflict resolution. State via React Context + hooks — no Zustand/TanStack Query.
+Single SPA with public landing, chat, catalogue, and news routes plus JWT role-gated Sale/Admin/Customer routes (`ProtectedRoute`). Sale: chat, HITL confirm card, feedback, inventory catalogue, live-inbox handoff. Customer: public/anonymous chat, quick-replies, and registration limits. Admin: document ingestion, eval dashboard, conflict resolution, sales management, billing requests, settings, and observability. State uses React Context + hooks — no Zustand/TanStack Query.
 
 ### Backend
 FastAPI, RESTful, Swagger at `/docs`. JWT (HS256) with `role` claim (SALE/ADMIN/CUSTOMER); anonymous customers use a `visitor_token` instead. RBAC enforced at the route (`require_role`) and retrieval layer (Qdrant payload filter on `visibility`).
 
-Routers: `auth`, `users`, `projects`, `documents`, `document_relations`, `sale_chat`, `customer_chat`, `sale_live`, `hitl`, `feedback`, `admin_conflicts`, `admin_eval`, `admin_stats`, `admin_settings`, `admin_sales`, `admin_observability`, `dev_seed` (dev-only).
+Routers: `auth`, `users`, `projects`, `documents`, `document_relations`, `sale_chat`, `customer_chat`, `sale_live`, `hitl`, `feedback`, `news`, `billing`, `admin_billing`, `admin_conflicts`, `admin_eval`, `admin_stats`, `admin_settings`, `admin_sales`, `admin_observability`, and `dev_seed` (dev-only).
 
 ### Customer chat & AI↔Sale handoff
-Separate flow from Sale's own chat. Anonymous sessions use a `visitor_token`; logged-in customers use `customer_id`. Three gates for anonymous visitors — `turn_limit`, `closing_intent`, `human_request` — each short-circuits before the pipeline runs (zero LLM cost). Logged-in customers can be handed off to a live Sale (`WAITING_SALE`); `sale_live.py` is the claim/reply/co-pilot inbox for that queue. Anonymous endpoints are per-IP rate-limited.
+Separate flow from Sale's own chat. Anonymous sessions use a `visitor_token`; logged-in customers use `customer_id`. Anonymous visitors have per-session turn and daily-question limits; both short-circuit before the pipeline runs. Registered customers also have a daily limit and can be handed off to a live Sale (`WAITING_SALE`) when handoff intent is detected. `sale_live.py` is the claim/reply/co-pilot inbox for that queue. Anonymous endpoints are rate-limited per IP in the backend process.
 
 ### Agent Pipeline (LangGraph)
 One `StateGraph`, 13 nodes: `preflight → scope_resolve → cache_check → retrieve → criteria_resolve → tool_call → criteria_diagnose → image_tool → generate → verify → risk_check`, with `bump_retry`/`low_confidence` on the retry path.
 
 - **preflight** — early exits (e.g. conversation-meta questions) before any retrieval.
 - **scope_resolve** — resolves project/topic scope for the question.
-- **cache_check** — semantic cache (Qdrant, cosine ≥ 0.95); skipped when there's conversation history or a personalization profile.
+- **cache_check** — semantic cache (Qdrant, normalized similarity ≥ 0.95); skipped when there is conversation history, a personalization profile, or active search criteria.
 - **retrieve** — Qdrant search.
 - **criteria_resolve** — resolves search criteria and inventory-need detection.
 - **tool_call** — live inventory API; only reached when criteria_resolve determines inventory is needed.
@@ -164,7 +165,7 @@ Two independent namespaces, both fail-open (Redis down → pipeline still answer
 `.env.example` currently omits `REDIS_URL`/`MEMORY_TTL_SECONDS` despite code defaults — should be added.
 
 ### Database (MySQL + Alembic)
-Key tables: `users` (SALE/ADMIN/CUSTOMER share one table), `documents`, `projects`, `document_relations`, `conflict_flags`, `chat_sessions` (shared by Sale self-consult and customer chat, tracks handoff status), `messages` (citations, images, `quick_replies`, `suggested_questions`, `emotion`, Verifier scores), `hitl_logs`, `feedback`, `audit_logs`.
+Key tables: `users` (SALE/ADMIN/CUSTOMER share one table), `documents`, `projects`, `document_relations`, `conflict_flags`, `chat_sessions`, `messages`, `hitl_logs`, `feedback`, `audit_logs`, `leads`, `news_articles`, `customer_conversation_summaries`, observability tables, and billing/subscription tables.
 
 `audit_logs` has **no foreign key on purpose**, so its rows outlive the user they describe — which makes anything personal written there undeletable by deleting the account. Free text bound for it goes through `audit.redact_and_truncate`, which strips Vietnamese mobile numbers, citizen IDs and emails (`backend/utils/pii.py`) before the row is written; plain `truncate` does not redact, because its other callers build the Sale's inbox preview where the customer's number is the point. The redactor is a backstop for free text, not a substitute for the rule at the top of `audit.py`: a contact detail passed as its own field is invisible to it, and names are deliberately not attempted (Vietnamese given names collide with ordinary words). Customer message text is stored unredacted in `messages` — that is the conversation itself, and `leads` stores the phone number deliberately, as the record the Sale calls back.
 
@@ -190,38 +191,42 @@ Four complementary layers, none replacing the others. They differ in what they c
 
 ## Data Flow
 1. Sale/Customer sends a question.
-2. Auth (JWT or visitor token) + role check; anonymous customers also pass rate-limit + 3 gates.
+2. JWT role authorization or anonymous visitor-token ownership check; anonymous customers also pass per-IP rate limiting, turn limits, and daily limits.
 3. `preflight` — early exit for conversation-meta questions; `scope_resolve` resolves project/topic scope.
-4. `cache_check` — semantic cache hit answers immediately; skipped with history or a personalization profile.
+4. `cache_check` — semantic cache hit answers immediately; skipped with history, a personalization profile, or active search criteria.
 5. `retrieve` — Qdrant search; `criteria_resolve` decides if live inventory is needed, then `tool_call` + `criteria_diagnose` if so.
 6. `image_tool` — requested (uncapped) or auto-attached (capped at 3) photos.
 7. `generate` — Gemini answer + citations + suggested questions (+ quick-replies), informed by memory + reflection lessons.
 8. `verify` — score, one corrected retry max, decline if still low.
-9. `risk_check` — HITL flag for Sale; for customers, a risky answer never shows directly — it becomes a registration gate or a Sale handoff.
+9. `risk_check` — sets the HITL flag for Sale answers. Customer self-service receives verified PUBLIC-tier answers directly and does not expose a HITL confirmation state.
 10. Response returned; Verifier scores written to MySQL for the Admin dashboard; rejections feed reflection memory.
 
-## Deployment (local — Docker Compose)
+## Deployment
+
+### Local — Docker Compose
 
 ```mermaid
 graph LR
     FE["frontend :5173"] -->|"/api/*"| BE["backend :8000"]
-    BE --> DB[("mysql :3307")]
+    BE --> DB[("mysql :3306")]
     BE --> VDB[("qdrant :6333")]
     BE --> RDS[("redis :6379")]
     BE --> OBJ[("minio :9000/9001")]
 ```
 
-> No production hosting configured — no `vercel.json`/`fly.toml`, no deploy step in CI (ruff + mypy + pytest + golden regression gate, self-hosted runner). Docker Compose is the only working deployment path today.
+### Hosted configuration
+
+`render.yaml` defines the backend and Redis service on Render, while `frontend/vercel.json` supplies the SPA rewrite for Vercel. MySQL, Qdrant, MinIO, frontend build-time API URLs, domains, and production secrets remain external configuration. CI validates code quality and tests but does not perform deployment.
 
 ## Security
-- Secrets in `.env`, not committed.
+- Local secrets use `.env`; hosted secrets are supplied as environment variables and are not committed.
 - Pydantic validation on every endpoint.
 - CORS via `cors_origins`.
 - RBAC: route-level (`require_role`) + retrieval-level (Qdrant `visibility` filter).
-- Prompt-injection scanning blocks files before ingest.
-- HITL mandatory for price/commitment answers to Sale; never shown directly to customers.
+- Prompt-injection scanning blocks unsafe uploads before object storage and vectorization.
+- HITL is mandatory for price/commitment answers in the Sale co-pilot. Customer self-service receives verified PUBLIC-tier answers directly with `requires_hitl=false`.
 - Rate limiting: per-IP, anonymous customer endpoints only — not applied API-wide.
-- Redis fail-open: connection loss degrades personalization, never breaks a request.
+- Redis-backed personalization, reflection memory, and search criteria fail open when Redis is unavailable.
 
 ## Design Decisions
 
@@ -233,9 +238,9 @@ graph LR
 | Vector store | Qdrant | Self-hosted, payload filtering for RBAC, doubles as semantic cache |
 | Memory | Redis, fail-open | Personalization is a nice-to-have, not a source of truth |
 | Embedding | `gemini-embedding-001` direct | Same ecosystem as generation, no LlamaIndex needed |
-| Generation/Verify | Gemini `gemini-3.5-flash-lite` only | Cost/latency fit the <3s budget |
-| Retrieval | Dense + optional BM25/Cohere rerank, fail-open to heuristic | Off by default (Render free tier); safe to enable later |
-| Eval | Live scores (dashboard) + trace/graders (real traffic) + golden set (CI) | Three needs: fast dashboard, real-traffic detection, pre-merge regression gate |
-| Customer chat | Separate flow, HITL never shown directly | AI must not commit pricing to an end customer unsupervised |
+| Generation/Verify | Configurable Gemini model; default `gemini-3.5-flash-lite` | Shared structured-output client for drafting and verification |
+| Retrieval | Dense + optional BM25/Cohere rerank, fail-open to heuristic | Code defaults are off; `.env.example` enables both optional stages |
+| Eval | Live scores + trace/graders + golden regression + nightly answer quality | Dashboard monitoring, real-traffic detection, pre-merge routing regression, and model-quality trends |
+| Customer chat | Separate PUBLIC-clearance flow with no customer-facing HITL state | Registered customers can explicitly hand off to a Sale; self-service answers remain direct |
 | Inventory | Mock API via env var | No real internal API yet; swap is a config change |
-| Deploy | Docker Compose only | End-to-end locally first; production infra deferred |
+| Deploy | Docker Compose locally; partial Render/Vercel configuration | Hosted dependencies and production environment values remain externally managed |
