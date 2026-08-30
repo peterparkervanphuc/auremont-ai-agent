@@ -69,6 +69,7 @@ from backend.services.vector_store_service import (
 )
 from backend.utils.text import strip_diacritics
 from backend.utils.time import utcnow
+from backend.utils.vnd import DOCUMENT_UNIT_ALTERNATION, Profile, parse_vnd
 
 logger = logging.getLogger(__name__)
 
@@ -1278,8 +1279,7 @@ _NON_UNIT_CODE_RE = re.compile(
     re.IGNORECASE,
 )
 _PRICE_RE = re.compile(
-    r"(?<!\w)(\d{1,3}(?:[.,]\d{3}){2,}|\d+(?:[.,]\d+)?)\s*"
-    r"(tỷ|ty|triệu|trieu|tr|million|billion|vnđ|vnd|đ|đồng|dong)\b",
+    rf"(?<!\w)(\d{{1,3}}(?:[.,]\d{{3}}){{2,}}|\d+(?:[.,]\d+)?)\s*({DOCUMENT_UNIT_ALTERNATION})\b",
     re.IGNORECASE,
 )
 _COMPOUND_PRICE_RE = re.compile(
@@ -1637,20 +1637,17 @@ def _line_prices(line: str, *, vnd_table_context: bool) -> set[int]:
 
 
 def _price_to_vnd(number: str, unit: str) -> int:
-    compact = number.strip()
-    normalised_unit = strip_diacritics(unit).lower()
-    if normalised_unit in {"vnd", "dong", "d"} and re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", compact):
-        return int(re.sub(r"[.,]", "", compact))
-    if normalised_unit in {"trieu", "tr", "million"} and re.fullmatch(r"\d{1,3}(?:\.\d{3})+", compact):
-        return int(compact.replace(".", "")) * 1_000_000
-    if normalised_unit in {"ty", "billion"} and re.fullmatch(r"\d{1,3}(?:\.\d{3}){2,}", compact):
-        return int(compact.replace(".", "")) * 1_000_000_000
-    value = float(compact.replace(",", "."))
-    if normalised_unit in {"ty", "billion"}:
-        value *= 1_000_000_000
-    elif normalised_unit in {"trieu", "tr", "million"}:
-        value *= 1_000_000
-    return round(value)
+    """Thin adapter over the shared parser, kept so the regex loops above read unchanged.
+
+    One deliberate behaviour change came with the move: this used to treat a *single*
+    dot-group as thousands when the unit was triệu, so "1.500 trieu" parsed as 1.5 tỷ while
+    every other parser in the codebase read it as 1.5 triệu. A single group is now a decimal
+    under both profiles; only genuinely unambiguous grouping ("1.500.000") is thousands.
+
+    Returns 0 for unparseable input, which `_price_facts` discards along with any other
+    falsy price rather than recording it as a fact.
+    """
+    return parse_vnd(number, unit, profile=Profile.DOCUMENT) or 0
 
 
 def _price_differences(

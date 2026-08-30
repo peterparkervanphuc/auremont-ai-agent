@@ -32,6 +32,7 @@ from backend.schemas.admin_dashboard import (
     UserMonitoringMetric,
 )
 from backend.utils.time import utcnow
+from backend.utils.vnd import BUDGET_UNIT_ALTERNATION, Profile, parse_vnd
 
 router = APIRouter(
     prefix="/admin/observability",
@@ -46,7 +47,8 @@ _TOOL_NAMES = {
     "generate": "Gemini Generation",
     "verify": "Answer Verifier",
 }
-_BUDGET_PATTERN = re.compile(r"(?<!\d)(\d+(?:[.,]\d+)?)\s*(tỷ|tỉ|triệu|tr)(?!\w)", re.IGNORECASE)
+_BUDGET_PATTERN = re.compile(rf"(?<!\d)(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION})(?!\w)", re.IGNORECASE)
+_BILLION = 1_000_000_000
 
 
 def _parse_trace_time(value: object) -> datetime | None:
@@ -293,9 +295,10 @@ def _budget_intents(db: Session, cutoff: datetime) -> list[IntentBucketMetric]:
         match = _BUDGET_PATTERN.search(content)
         if match is None:
             continue
-        value = float(match.group(1).replace(",", "."))
-        if match.group(2).lower() in {"triệu", "tr"}:
-            value /= 1000
+        dong = parse_vnd(match.group(1), match.group(2), profile=Profile.CONVERSATIONAL)
+        if dong is None:
+            continue
+        value = dong / _BILLION
         if value < 3:
             counts["Dưới 3 tỷ"] += 1
         elif value < 5:

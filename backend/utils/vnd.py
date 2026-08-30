@@ -14,8 +14,9 @@ abbreviation as tỷ ("căn 3t") and treats a dot as a decimal point, because so
 "2.5 tỷ" means two and a half billion.
 
 `DOCUMENT` reads price tables lifted out of PDFs. It accepts English unit names and explicit
-đồng units, and reads a dot as a thousands separator where the grouping is unambiguous
-("1.500.000 VND" is one and a half million, not one and a half). It deliberately does *not*
+đồng units, and reads a dot as a thousands separator once the grouping is unambiguous for
+that unit — "500.000 VND" is five hundred thousand đồng, "3.500 triệu" is 3500 triệu, but
+"1.500 tỷ" is still 1,5 tỷ (see `_reads_dots_as_thousands`). It deliberately does *not*
 accept a bare `t`, which in a spreadsheet cell is far more likely to be "tầng" or "tấn".
 
 Both return whole đồng: there is no such thing as a fractional đồng in a price list, and an
@@ -67,22 +68,71 @@ _UNITS: dict[Profile, dict[str, int]] = {
     Profile.DOCUMENT: _DOCUMENT_UNITS,
 }
 
-# Every spelling any caller may need to match, longest first so `trieu` wins over `tr` and
-# the alternation never truncates a longer unit. Exported so the five regexes that used to
-# hand-list their own subset share one vocabulary and cannot drift apart again.
-UNIT_ALTERNATION = "|".join(
-    sorted(
-        {"tỷ", "tỉ", "ty", "ti", "t", "triệu", "trieu", "tr", "million", "billion", "vnd", "dong"},
-        key=len,
-        reverse=True,
-    )
+
+def _alternation(*spellings: str) -> str:
+    """Longest spelling first, so `trieu` wins over `tr` and no match is truncated."""
+    return "|".join(sorted(set(spellings), key=len, reverse=True))
+
+
+# The units a *budget* is quoted in. This is the vocabulary for matching what a person says
+# they want to spend, so it deliberately excludes `vnd`/`dong` (a fee or a deposit line, not
+# a budget) and bare `t` (too eager: it fires on "t" inside ordinary text).
+BUDGET_UNIT_ALTERNATION = _alternation("tỷ", "tỉ", "ty", "ti", "triệu", "trieu", "tr")
+
+# As above plus the bare `t` shorthand. Only for patterns anchored tightly enough that `t`
+# cannot run away — inventory's price ranges require a digit immediately before it ("căn 3t",
+# "từ 2t đến 4t"), which is what makes the abbreviation safe there and nowhere else.
+BUDGET_UNIT_ALTERNATION_WITH_BARE_T = _alternation("tỷ", "tỉ", "ty", "ti", "triệu", "trieu", "tr", "t")
+
+# The vocabulary for prices printed in a document: English unit names and the accented đồng
+# forms, but NO bare `t`. A price table is full of "tầng 15 t" and "tải trọng 5 t", and
+# admitting `t` here would feed those into conflict detection as if they were prices.
+#
+# `đ`/`đồng`/`vnđ` are matched here but resolve through strip_diacritics to the `d`/`dong`/
+# `vnd` keys in the tables above, so no separate multiplier entry is needed.
+DOCUMENT_UNIT_ALTERNATION = _alternation(
+    "tỷ",
+    "tỉ",
+    "ty",
+    "ti",
+    "triệu",
+    "trieu",
+    "tr",
+    "million",
+    "billion",
+    "vnd",
+    "vnđ",
+    "dong",
+    "đồng",
+    "đ",
 )
 
-# "1.500.000" — two or more groups of three, which no decimal notation produces. A single
-# group ("1.500") is deliberately excluded: it is ambiguous, and reading it as one thousand
-# five hundred would turn "1.500 tỷ" into 1500 tỷ. One group stays a decimal, so "1.500 tỷ"
-# is 1.5 tỷ under both profiles.
-_GROUPED_THOUSANDS = re.compile(r"\d{1,3}(?:[.,]\d{3}){2,}")
+# Every spelling any caller may need, bare `t` included. Exported so the regexes that used
+# to hand-list their own subset share one vocabulary and cannot drift apart again; prefer
+# one of the narrower alternations above unless a pattern really needs all of them.
+UNIT_ALTERNATION = _alternation(
+    "tỷ",
+    "tỉ",
+    "ty",
+    "ti",
+    "t",
+    "triệu",
+    "trieu",
+    "tr",
+    "million",
+    "billion",
+    "vnd",
+    "vnđ",
+    "dong",
+    "đồng",
+    "đ",
+)
+
+# Dot- or comma-separated groups of exactly three digits. One group ("500.000") is already
+# unambiguous in a printed table; two or more ("1.500.000") cannot be a decimal under any
+# notation.
+_GROUPED_THOUSANDS = re.compile(r"\d{1,3}(?:[.,]\d{3})+")
+_MULTI_GROUP_THOUSANDS = re.compile(r"\d{1,3}(?:[.,]\d{3}){2,}")
 
 
 def parse_vnd(number: str, unit: str | None, *, profile: Profile) -> int | None:
@@ -101,9 +151,7 @@ def parse_vnd(number: str, unit: str | None, *, profile: Profile) -> int | None:
     key = strip_diacritics(unit or "").strip().lower()
     multiplier = units.get(key)
 
-    # A grouped-thousands literal is only read as such under DOCUMENT: "1.500 tỷ" typed by a
-    # person is 1.5 tỷ, while "1.500.000 VND" printed in a table is one and a half million.
-    if profile is Profile.DOCUMENT and _GROUPED_THOUSANDS.fullmatch(compact):
+    if _reads_dots_as_thousands(compact, multiplier=multiplier, profile=profile):
         digits = re.sub(r"[.,]", "", compact)
         return int(digits) * (multiplier if multiplier is not None else 1)
 
@@ -113,3 +161,22 @@ def parse_vnd(number: str, unit: str | None, *, profile: Profile) -> int | None:
         return None
 
     return round(value * (multiplier if multiplier is not None else 1))
+
+
+def _reads_dots_as_thousands(compact: str, *, multiplier: int | None, profile: Profile) -> bool:
+    """Whether "3.500" means three thousand five hundred rather than three and a half.
+
+    How many groups it takes to be sure depends on the unit, because the unit sets the scale
+    at which a fraction stops being plausible:
+
+    With đồng or triệu, one group is already unambiguous. "500.000 VND" is five hundred
+    thousand đồng — nobody prints half a đồng — and "3.500 triệu" in a price table is 3500
+    triệu, i.e. 3,5 tỷ. With tỷ it is not: "1.500 tỷ" is far more likely to be 1,5 tỷ than
+    1500 tỷ, so billions need two groups ("1.500.000") before the grouping is beyond doubt.
+
+    CONVERSATIONAL is stricter across the board. Someone typing into a chat box means a
+    decimal point, so nothing short of two groups counts there whatever the unit.
+    """
+    if profile is not Profile.DOCUMENT or multiplier == _BILLION:
+        return _MULTI_GROUP_THOUSANDS.fullmatch(compact) is not None
+    return _GROUPED_THOUSANDS.fullmatch(compact) is not None

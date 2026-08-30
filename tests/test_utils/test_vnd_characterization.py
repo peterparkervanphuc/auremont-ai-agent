@@ -1,109 +1,82 @@
-"""Records what every VND price parser in the codebase does today, disagreements included.
+"""Proves the five VND parsers now agree, and pins the six inputs that used to split them.
 
-Written before unifying them, so the unification has something to diff against. The table
-below is not a specification — several rows document behaviour that is plainly wrong. They
-are pinned here anyway, because a refactor that silently changes what "1.500 trieu" means is
-exactly the failure this file exists to catch.
+This file started as a characterization of the disagreement: five call sites parsed
+Vietnamese money and none of them matched. Every case below is annotated with what the old
+implementations returned, so the regression these assertions guard is legible without
+digging through git history.
 
-Five call sites parse Vietnamese money, and they do not agree:
-
-  backend/services/inventory_service.py:_price_to_vnd   units: tỷ ty t triệu trieu tr
-  backend/services/ingestion_service.py:_price_to_vnd   units: ty billion trieu tr million vnd dong d
-  backend/services/search_criteria.py                   regex only; delegates to inventory's
-  backend/services/memory_service.py                    regex only; no `tr`
-  backend/routers/admin_observability.py                regex only; the only one with `tỉ`
-
-The disagreements that matter are marked DIFF in the ids below.
+The remaining asymmetries are deliberate and documented in backend/utils/vnd.py: the
+CONVERSATIONAL profile accepts the bare `t` shorthand and reads a lone dot-group as a
+decimal, while DOCUMENT accepts English unit names and reads printed thousands separators.
 """
 
 import pytest
 
 from backend.services import ingestion_service, inventory_service
+from backend.utils.vnd import Profile, parse_vnd
 
-# (number, unit, inventory_result, ingestion_result, note)
-# `None` for a result means the parser raises rather than returning a number.
-CASES = [
-    # --- the two agree here ---
-    ("3", "tỷ", 3_000_000_000.0, 3_000_000_000, "agree"),
-    ("3", "ty", 3_000_000_000.0, 3_000_000_000, "agree"),
-    ("3", "triệu", 3_000_000.0, 3_000_000, "agree"),
-    ("3", "trieu", 3_000_000.0, 3_000_000, "agree"),
-    ("3", "tr", 3_000_000.0, 3_000_000, "agree"),
-    ("2,5", "tỷ", 2_500_000_000.0, 2_500_000_000, "agree: comma is a decimal separator"),
-    ("2.5", "tỷ", 2_500_000_000.0, 2_500_000_000, "agree: dot is a decimal separator"),
-    ("1.500", "tỷ", 1_500_000_000.0, 1_500_000_000, "agree: 1.5 tỷ, dot read as decimal"),
-    ("3", "vnd", 3.0, 3, "agree: plain đồng"),
-    # --- DIFF: `tỉ` (northern spelling) is a unit to neither, so both read a bare number ---
-    ("3", "tỉ", 3.0, 3, "DIFF vs admin_observability, whose regex is the only one matching tỉ"),
-    # --- DIFF: bare `t` means tỷ to inventory and nothing to ingestion ---
-    ("3", "t", 3_000_000_000.0, 3, "DIFF: 3 tỷ vs 3 đồng"),
-    # --- DIFF: grouped thousands. ingestion is the only parser that handles them ---
-    ("1.500.000", "VND", None, 1_500_000, "DIFF: inventory raises, ingestion reads 1.5 triệu"),
-    ("1.500", "trieu", 1_500_000.0, 1_500_000_000, "DIFF 1000x: 1.5 triệu vs 1.5 tỷ"),
-    # --- DIFF: English unit names are ingestion-only ---
-    ("3", "million", 3.0, 3_000_000, "DIFF: unit ignored vs 3 triệu"),
-    ("3", "billion", 3.0, 3_000_000_000, "DIFF: unit ignored vs 3 tỷ"),
+BILLION = 1_000_000_000
+MILLION = 1_000_000
+
+# (number, unit, expected_dong, what the old parsers did)
+FIXED = [
+    ("3", "tỉ", 3 * BILLION, "was 3 đồng everywhere: only admin_observability's regex knew `tỉ`"),
+    ("1.500", "trieu", 1_500 * MILLION, "inventory said 1,5 triệu and ingestion said 1,5 tỷ — 1000x apart"),
+    ("1.500.000", "VND", 1_500_000, "inventory raised ValueError and no caller had a branch for it"),
+    ("3", "million", 3 * MILLION, "inventory ignored the unit and returned 3 đồng"),
+    ("3", "billion", 3 * BILLION, "inventory ignored the unit and returned 3 đồng"),
 ]
 
 
-def _ids() -> list[str]:
-    return [f"{number}_{unit}_{note.split(':')[0]}" for number, unit, _, _, note in CASES]
+@pytest.mark.parametrize(("number", "unit", "expected", "history"), FIXED)
+def test_previously_divergent_inputs_now_have_one_answer(number, unit, expected, history):
+    assert parse_vnd(number, unit, profile=Profile.DOCUMENT) == expected, history
 
 
-@pytest.mark.parametrize(("number", "unit", "expected", "_ingestion", "_note"), CASES, ids=_ids())
-def test_inventory_price_to_vnd(number, unit, expected, _ingestion, _note):
-    if expected is None:
-        with pytest.raises(ValueError):
-            inventory_service._price_to_vnd(number, unit)
-        return
-    assert inventory_service._price_to_vnd(number, unit) == expected
+@pytest.mark.parametrize(
+    ("number", "unit", "expected"),
+    [
+        ("3", "tỷ", 3 * BILLION),
+        ("3", "ty", 3 * BILLION),
+        ("3", "tỉ", 3 * BILLION),
+        ("3", "triệu", 3 * MILLION),
+        ("3", "trieu", 3 * MILLION),
+        ("3", "tr", 3 * MILLION),
+        ("2,5", "tỷ", 2_500_000_000),
+        ("2.5", "tỷ", 2_500_000_000),
+        ("1.500", "tỷ", 1_500_000_000),
+    ],
+)
+def test_the_two_arithmetic_call_sites_agree(number, unit, expected):
+    """`inventory_service` and `ingestion_service` both delegate to the shared parser now,
+    so the same sentence cannot mean two different prices depending on which read it."""
+    assert inventory_service._price_to_vnd(number, unit) == float(expected)
+    assert ingestion_service._price_to_vnd(number, unit) == expected
 
 
-@pytest.mark.parametrize(("number", "unit", "_inventory", "expected", "_note"), CASES, ids=_ids())
-def test_ingestion_price_to_vnd(number, unit, _inventory, expected, _note):
-    assert ingestion_service._price_to_vnd(number, unit or "") == expected
+def test_document_thousands_separators_survived_the_unification():
+    """Printed price tables were the one place the old ingestion parser got right, and its
+    rules are unit-dependent: a lone group is thousands for triệu/đồng but not for tỷ."""
+    assert ingestion_service._price_to_vnd("500.000", "VND") == 500_000
+    assert ingestion_service._price_to_vnd("3.500", "triệu") == 3_500 * MILLION
+    assert ingestion_service._price_to_vnd("1.500", "tỷ") == 1_500 * MILLION
 
 
-def test_the_two_arithmetic_parsers_disagree_on_five_inputs():
-    """Pins the size of the problem, so unifying them has a number to drive to zero.
-
-    Kept as one assertion rather than a per-case xfail: the point is the exact set, and a
-    per-case marker would quietly pass if a sixth divergence appeared.
-
-    `("3", "tỉ")` is absent because both parsers ignore that spelling identically (3.0 == 3);
-    its divergence is against admin_observability's regex, covered separately below.
-    """
-    disagreements = []
-    for number, unit, inventory_expected, ingestion_expected, _note in CASES:
-        if inventory_expected is None or inventory_expected != ingestion_expected:
-            disagreements.append((number, unit))
-
-    assert disagreements == [
-        ("3", "t"),
-        ("1.500.000", "VND"),
-        ("1.500", "trieu"),
-        ("3", "million"),
-        ("3", "billion"),
-    ]
+def test_unparseable_input_no_longer_raises():
+    """The old inventory parser raised ValueError from inside a regex loop, which would
+    abort a whole document scan over one malformed match."""
+    assert inventory_service._price_to_vnd("abc", "tỷ") == 0.0
+    assert ingestion_service._price_to_vnd("abc", "tỷ") == 0
 
 
-def test_only_admin_observability_recognises_the_ti_spelling():
-    """`tỉ` and `tỷ` are the same word; four of the five sites see only one of them."""
+def test_every_budget_regex_shares_one_unit_vocabulary():
+    """`tỉ` was matched by one of the five patterns and `tr` was rejected by another, so a
+    northern-spelled or abbreviated budget was silently dropped depending on the code path."""
     from backend.routers.admin_observability import _BUDGET_PATTERN
     from backend.services.memory_service import BUDGET_PATTERN
     from backend.services.search_criteria import _VAGUE_AROUND_PATTERN
 
-    assert _BUDGET_PATTERN.search("tầm 3 tỉ") is not None
-    assert BUDGET_PATTERN.search("tầm 3 tỉ") is None
-    assert _VAGUE_AROUND_PATTERN.search("tầm 3 tỉ") is None
-
-
-def test_only_memory_service_rejects_the_tr_abbreviation():
-    """ "800tr" is ordinary Vietnamese for 800 triệu; long-term memory drops it."""
-    from backend.routers.admin_observability import _BUDGET_PATTERN
-    from backend.services.memory_service import BUDGET_PATTERN
-    from backend.services.search_criteria import _VAGUE_AROUND_PATTERN
-
-    assert BUDGET_PATTERN.search("ngân sách 800tr") is None
-    assert _BUDGET_PATTERN.search("ngân sách 800tr") is not None
-    assert _VAGUE_AROUND_PATTERN.search("tầm 800tr") is not None
+    for pattern in (_BUDGET_PATTERN, BUDGET_PATTERN, _VAGUE_AROUND_PATTERN):
+        assert pattern.search("tầm 3 tỉ") is not None, pattern.pattern
+        assert pattern.search("tầm 800tr") is not None, pattern.pattern
+        assert pattern.search("tầm 3 tỷ") is not None, pattern.pattern

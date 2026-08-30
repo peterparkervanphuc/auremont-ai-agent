@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from backend.core.config import get_settings
 from backend.core.redis_client import get_redis_client
 from backend.utils.text import strip_diacritics
+from backend.utils.vnd import BUDGET_UNIT_ALTERNATION
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,11 @@ MAX_ITEMS_PER_FIELD = 5
 
 UNIT_TYPE_PATTERN = re.compile(r"\b(\d\s?PN|studio|shophouse|penthouse|duplex)\b", re.IGNORECASE)
 
-BUDGET_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu)\b", re.IGNORECASE)
+# Shared vocabulary rather than a hand-listed subset: this pattern used to omit `tr`, so
+# "ngân sách 800tr" — ordinary Vietnamese — was never remembered as a budget at all.
+BUDGET_PATTERN = re.compile(rf"(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION})\b", re.IGNORECASE)
 BUDGET_RANGE_PATTERN = re.compile(
-    r"(\d+(?:[.,]\d+)?)\s*(?:-|–|đến|den|tới|toi)\s*"
-    r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu)\b",
+    rf"(\d+(?:[.,]\d+)?)\s*(?:-|–|đến|den|tới|toi)\s*(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION})\b",
     re.IGNORECASE,
 )
 

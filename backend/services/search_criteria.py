@@ -207,6 +207,7 @@ class ZeroResultDiagnosis:
 
 
 from backend.services import inventory_service as _inv  # noqa: E402
+from backend.utils.vnd import BUDGET_UNIT_ALTERNATION, Profile, parse_vnd  # noqa: E402
 
 _MANDATORY_PATTERN = re.compile(r"\b(phải|bắt buộc|nhất định|chỉ lấy|chỉ xem|chỉ muốn)\b", re.IGNORECASE)
 
@@ -239,13 +240,13 @@ _LOCATION_EXCLUDE_PREFIX = re.compile(
 _RAISE_PATTERN = re.compile(
     r"\b(?:tăng|nâng|lên|tang|nang|len)\s*"
     r"(?:(?:giá|gia|ngân sách|ngan sach)\s*)?(?:(?:lên|len|tới|toi|đến|den)\s*)?"
-    r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr)\b",
+    rf"(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION})\b",
     re.IGNORECASE,
 )
 _LOWER_PATTERN = re.compile(
     r"\b(?:giảm|hạ|xuống|giam|ha|xuong)\s*"
     r"(?:(?:giá|gia|ngân sách|ngan sach)\s*)?(?:(?:xuống|xuong|còn|con)\s*)?"
-    r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr)\b",
+    rf"(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION})\b",
     re.IGNORECASE,
 )
 _AREA_ADJUST_PATTERN = re.compile(
@@ -256,7 +257,7 @@ _AREA_ADJUST_PATTERN = re.compile(
 )
 
 _VAGUE_AROUND_PATTERN = re.compile(
-    r"\b(?:tầm|khoảng|tam|khoang|cỡ|co)\s*(?:khoảng\s*)?(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr)\b",
+    rf"\b(?:tầm|khoảng|tam|khoang|cỡ|co)\s*(?:khoảng\s*)?(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION})\b",
     re.IGNORECASE,
 )
 _BARE_AREA_PATTERN = re.compile(r"\b(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
@@ -513,7 +514,10 @@ def _parse_price_adjustment(query: str) -> tuple[float, float] | None:
     match = _RAISE_PATTERN.search(query) or _LOWER_PATTERN.search(query)
     if match is None:
         return None
-    return 0.0, _inv._price_to_vnd(match.group(1), match.group(2))
+    ceiling = parse_vnd(match.group(1), match.group(2), profile=Profile.CONVERSATIONAL)
+    if ceiling is None:
+        return None
+    return 0.0, float(ceiling)
 
 
 def _parse_area_adjustment(query: str) -> tuple[float, float] | None:
@@ -533,7 +537,9 @@ def _parse_vague_price(query: str) -> tuple[float, float] | None:
     match = _VAGUE_AROUND_PATTERN.search(query)
     if match is None:
         return None
-    centre = _inv._price_to_vnd(match.group(1), match.group(2))
+    centre = parse_vnd(match.group(1), match.group(2), profile=Profile.CONVERSATIONAL)
+    if centre is None:
+        return None
     return round(centre * (1 - _VAGUE_PRICE_TOLERANCE)), round(centre * (1 + _VAGUE_PRICE_TOLERANCE))
 
 
