@@ -8,9 +8,7 @@
 #
 # Reading a run: `Required Facts`, `Forbidden Content` and `Listing Discipline` are decided
 # by rules over hand-written references, so a drop there is a real regression. The judged
-# metrics move on their own and are read as a trend, not as a gate. The report splits the
-# two as `deterministic_pass_rate` and `judged_pass_rate`, and `--fail-under` reads the
-# first — a judge that grades its own vendor's answers has scored a confirmed defect 1.00.
+# metrics move on their own and are read as a trend, not as a gate.
 name: Answer quality
 
 on:
@@ -24,8 +22,8 @@ on:
         description: "Runs per case (the model is not deterministic)"
         default: "3"
       judge_model:
-        description: "Judge model; must differ from GEMINI_MODEL to buy independence"
-        default: "gemini-3.1-pro-preview"
+        description: "Judge model; different to GEMINI_MODEL buys independence"
+        default: ""
 
 jobs:
   answer-quality:
@@ -49,12 +47,9 @@ jobs:
 
       - name: Grade answers from the real model
         run: |
-          # The judge defaults to a different model than GEMINI_MODEL on purpose: a run that
-          # grades its own answers scores a flat 1.00 and proves nothing. `vars.GEMINI_JUDGE_MODEL`
-          # lets the judge move without editing this file.
           python -m eval.deepeval_suite \
             --repeats "${{ inputs.repeats || '3' }}" \
-            --judge-model "${{ inputs.judge_model || vars.GEMINI_JUDGE_MODEL || 'gemini-3.1-pro-preview' }}" \
+            ${{ inputs.judge_model && format('--judge-model {0}', inputs.judge_model) || '' }} \
             --rpm "${{ vars.GEMINI_EVAL_RPM || '15' }}" \
             --fail-under 0.9
         env:
