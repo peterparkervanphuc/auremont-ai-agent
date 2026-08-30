@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -13,8 +14,9 @@ from backend.main import app
 from backend.models.document_relation import DocumentRelation
 from backend.models.user import User
 from backend.repositories.document import create_document, get_document
-from backend.routers import document_relations as relations_router
 from backend.schemas.document import DocumentCreate
+from backend.services import vector_store_service
+from backend.services.vector_store_service import VectorStoreError
 
 
 @pytest.fixture
@@ -40,13 +42,14 @@ def admin(db_session):
 
 
 @pytest.fixture
-def client(db_session, admin):
+def client(db_session, admin, monkeypatch):
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_current_user] = lambda: admin
-    original_sync = relations_router.update_document_vector_metadata
-    relations_router.update_document_vector_metadata = lambda *_args, **_kwargs: None
+    # monkeypatch, not direct assignment: this patches the shared source module, so a test
+    # that fails mid-way must still hand the real function back or every later test file
+    # sees the stub instead of Qdrant.
+    monkeypatch.setattr(vector_store_service, "update_document_vector_metadata", lambda *_args, **_kwargs: None)
     yield TestClient(app)
-    relations_router.update_document_vector_metadata = original_sync
     app.dependency_overrides.clear()
 
 
@@ -141,9 +144,9 @@ def test_vector_failure_rolls_back_relation_review(client, db_session, monkeypat
     )
 
     def fail_sync(*_args, **_kwargs):
-        raise relations_router.VectorStoreError("Qdrant unavailable")
+        raise VectorStoreError("Qdrant unavailable")
 
-    monkeypatch.setattr(relations_router, "update_document_vector_metadata", fail_sync)
+    monkeypatch.setattr(vector_store_service, "update_document_vector_metadata", fail_sync)
 
     response = client.post(
         f"/api/v1/document-relations/{created.json()['id']}/review",
@@ -260,7 +263,7 @@ def test_unknown_relation_commit_outcome_keeps_target_quarantined(
     )
     calls: list[bool] = []
     monkeypatch.setattr(
-        relations_router,
+        vector_store_service,
         "update_document_vector_metadata",
         lambda _document_id, **metadata: calls.append(metadata["is_current"]),
     )
@@ -268,7 +271,7 @@ def test_unknown_relation_commit_outcome_keeps_target_quarantined(
 
     def commit_then_lose_ack():
         real_commit()
-        raise relations_router.SQLAlchemyError("lost commit acknowledgement")
+        raise SQLAlchemyError("lost commit acknowledgement")
 
     db_session.commit = commit_then_lose_ack
 

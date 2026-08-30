@@ -64,6 +64,7 @@ from backend.services.project_metadata_service import (
 from backend.services.vector_store_service import (
     delete_document_vectors,
     index_document_chunks,
+    sync_document_vector_metadata,
     update_document_vector_metadata,
 )
 from backend.utils.text import strip_diacritics
@@ -134,6 +135,7 @@ class _VectorMetadata:
     review_status: str
     legal_status: str
     category: str
+    categories: list[str]
     visibility: str
     is_current: bool
 
@@ -307,6 +309,7 @@ def ingest_uploaded_document(
                 review_status=document.review_status,
                 legal_status=document.legal_status,
                 category=document.category,
+                categories=document_categories(document),
                 visibility=document.visibility,
                 is_current=document.is_current,
             )
@@ -319,6 +322,7 @@ def ingest_uploaded_document(
                         review_status=final_vector_metadata.review_status,
                         legal_status=final_vector_metadata.legal_status,
                         category=final_vector_metadata.category,
+                        categories=final_vector_metadata.categories,
                         visibility=final_vector_metadata.visibility,
                         is_current=final_vector_metadata.is_current,
                     )
@@ -351,14 +355,7 @@ def ingest_uploaded_document(
 
         if vector_write_attempted:
             try:
-                update_document_vector_metadata(
-                    failed.id,
-                    review_status=failed.review_status,
-                    legal_status=failed.legal_status,
-                    category=failed.category,
-                    visibility=failed.visibility,
-                    is_current=False,
-                )
+                sync_document_vector_metadata(failed, is_current=False)
             except Exception:  # pragma: no cover - best-effort safety cleanup
                 logger.exception(
                     "Could not quarantine vectors for failed document %s.",
@@ -603,11 +600,16 @@ def reclassify_document(
     previous_update_values = {field_name: getattr(document, field_name) for field_name in updates}
 
     if not was_pending_review:
+        # `document.category`/`.categories` are still the pre-update values here — the
+        # `updates` dict above was only read from, never applied to the ORM object — so
+        # this quarantines the version currently live in Qdrant under its old labels,
+        # matching `category=previous_category` below rather than the incoming `category`.
         update_document_vector_metadata(
             document.id,
             review_status=document.review_status,
             legal_status=document.legal_status,
             category=previous_category,
+            categories=document_categories(document),
             visibility=document.visibility,
             is_current=False,
         )
@@ -723,14 +725,7 @@ def reclassify_document(
             if document.is_current != publication_current:
                 document.is_current = publication_current
                 db.flush()
-            update_document_vector_metadata(
-                document.id,
-                review_status=document.review_status,
-                legal_status=document.legal_status,
-                category=document.category,
-                visibility=document.visibility,
-                is_current=publication_current,
-            )
+            sync_document_vector_metadata(document, is_current=publication_current)
             db.commit()
     except Exception as exc:
         db.rollback()
@@ -742,14 +737,7 @@ def reclassify_document(
                         persisted.is_current = False
                         db.commit()
                         db.refresh(persisted)
-                    update_document_vector_metadata(
-                        persisted.id,
-                        review_status=persisted.review_status,
-                        legal_status=persisted.legal_status,
-                        category=persisted.category,
-                        visibility=persisted.visibility,
-                        is_current=False,
-                    )
+                    sync_document_vector_metadata(persisted, is_current=False)
             except Exception:  # pragma: no cover - best-effort cross-store reconciliation
                 logger.exception(
                     "Could not reassert pending vector quarantine for document %s.",

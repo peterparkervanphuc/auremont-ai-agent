@@ -18,7 +18,8 @@ from backend.core.mysql_client import Base
 from backend.models.conflict_flag import ConflictFlag
 from backend.models.document import Document
 from backend.models.project import Project
-from backend.services import ingestion_service
+from backend.services import ingestion_service, vector_store_service
+from backend.services.document_category_service import document_categories
 from backend.services.document_classification_service import ConflictFact, DocumentClassification
 from backend.services.parser_service import ParsedSection
 
@@ -94,11 +95,8 @@ def _mock_external_services(
         "index_document_chunks",
         lambda **_kwargs: 1,
     )
-    monkeypatch.setattr(
-        ingestion_service,
-        "update_document_vector_metadata",
-        lambda *_args, **_kwargs: None,
-    )
+    for _module in (ingestion_service, vector_store_service):
+        monkeypatch.setattr(_module, "update_document_vector_metadata", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         ingestion_service,
         "scan_conflicts_for",
@@ -660,11 +658,14 @@ def test_conflicting_document_vectors_remain_quarantined(db_session, monkeypatch
         "scan_conflicts_for",
         lambda *_args, **_kwargs: ingestion_service.ConflictScanOutcome(conflict_ids=(123,)),
     )
-    monkeypatch.setattr(
-        ingestion_service,
-        "update_document_vector_metadata",
-        lambda document_id, **kwargs: activations.append({"document_id": document_id, **kwargs}),
-    )
+    # Both bindings: `ingestion_service` imported the name directly, while calls routed
+    # through `sync_document_vector_metadata` resolve it inside `vector_store_service`.
+    for _module in (ingestion_service, vector_store_service):
+        monkeypatch.setattr(
+            _module,
+            "update_document_vector_metadata",
+            lambda document_id, **kwargs: activations.append({"document_id": document_id, **kwargs}),
+        )
 
     result = ingestion_service.ingest_uploaded_document(
         db_session,
@@ -710,11 +711,14 @@ def test_exact_duplicate_is_blocked_without_an_open_conflict(db_session, monkeyp
         lambda sibling: text if sibling.id == old.id else "",
     )
     monkeypatch.setattr(ingestion_service, "index_document_chunks", lambda **kwargs: indexed.append(kwargs))
-    monkeypatch.setattr(
-        ingestion_service,
-        "update_document_vector_metadata",
-        lambda document_id, **kwargs: activations.append({"document_id": document_id, **kwargs}),
-    )
+    # Both bindings: `ingestion_service` imported the name directly, while calls routed
+    # through `sync_document_vector_metadata` resolve it inside `vector_store_service`.
+    for _module in (ingestion_service, vector_store_service):
+        monkeypatch.setattr(
+            _module,
+            "update_document_vector_metadata",
+            lambda document_id, **kwargs: activations.append({"document_id": document_id, **kwargs}),
+        )
 
     result = ingestion_service.ingest_uploaded_document(
         db_session,
@@ -735,6 +739,7 @@ def test_exact_duplicate_is_blocked_without_an_open_conflict(db_session, monkeyp
             "review_status": DocumentReviewStatus.REJECTED,
             "legal_status": result.legal_status,
             "category": result.category,
+            "categories": document_categories(result),
             "visibility": result.visibility,
             "is_current": False,
         }
@@ -754,11 +759,14 @@ def test_conflict_scan_failure_fails_ingestion_and_keeps_vectors_quarantined(db_
         raise RuntimeError("MinIO unavailable")
 
     monkeypatch.setattr(ingestion_service, "scan_conflicts_for", fail_scan)
-    monkeypatch.setattr(
-        ingestion_service,
-        "update_document_vector_metadata",
-        lambda document_id, **kwargs: activations.append({"document_id": document_id, **kwargs}),
-    )
+    # Both bindings: `ingestion_service` imported the name directly, while calls routed
+    # through `sync_document_vector_metadata` resolve it inside `vector_store_service`.
+    for _module in (ingestion_service, vector_store_service):
+        monkeypatch.setattr(
+            _module,
+            "update_document_vector_metadata",
+            lambda document_id, **kwargs: activations.append({"document_id": document_id, **kwargs}),
+        )
 
     with pytest.raises(ingestion_service.DocumentIngestionError):
         ingestion_service.ingest_uploaded_document(
@@ -779,6 +787,7 @@ def test_conflict_scan_failure_fails_ingestion_and_keeps_vectors_quarantined(db_
             "review_status": document.review_status,
             "legal_status": document.legal_status,
             "category": document.category,
+            "categories": document_categories(document),
             "visibility": document.visibility,
             "is_current": False,
         }
@@ -857,6 +866,7 @@ def test_conflict_free_document_is_activated_after_scan(db_session, monkeypatch)
             "review_status": result.review_status,
             "legal_status": result.legal_status,
             "category": result.category,
+            "categories": document_categories(result),
             "visibility": result.visibility,
             "is_current": True,
         }
@@ -2201,11 +2211,14 @@ def test_an_unidentifiable_upload_waits_for_admin_without_indexing(db_session, m
         ),
     )
     monkeypatch.setattr(ingestion_service, "index_document_chunks", lambda **kwargs: indexed.append(kwargs))
-    monkeypatch.setattr(
-        ingestion_service,
-        "update_document_vector_metadata",
-        lambda document_id, **kwargs: activations.append({"document_id": document_id, **kwargs}),
-    )
+    # Both bindings: `ingestion_service` imported the name directly, while calls routed
+    # through `sync_document_vector_metadata` resolve it inside `vector_store_service`.
+    for _module in (ingestion_service, vector_store_service):
+        monkeypatch.setattr(
+            _module,
+            "update_document_vector_metadata",
+            lambda document_id, **kwargs: activations.append({"document_id": document_id, **kwargs}),
+        )
 
     result = ingestion_service.ingest_uploaded_document(
         db_session,

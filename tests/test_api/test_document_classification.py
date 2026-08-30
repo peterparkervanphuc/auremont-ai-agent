@@ -24,8 +24,9 @@ from backend.models.user import User
 from backend.repositories.document import create_document
 from backend.routers import documents as documents_router
 from backend.schemas.document import DocumentCreate
-from backend.services import ingestion_service
+from backend.services import ingestion_service, vector_store_service
 from backend.services.parser_service import ParsedSection
+from backend.services.vector_store_service import VectorStoreError
 
 
 @pytest.fixture
@@ -83,11 +84,16 @@ def sale(db_session):
 def client(db_session, admin, monkeypatch):
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_current_user] = lambda: admin
-    original_metadata_sync = documents_router.update_document_vector_metadata
-    original_clear_cache = documents_router.clear_cache
     vector_sync_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
-    documents_router.update_document_vector_metadata = lambda *args, **kwargs: vector_sync_calls.append((args, kwargs))
-    documents_router.clear_cache = lambda: None
+    # monkeypatch, not direct assignment: this patches the shared source module, so a test
+    # that fails mid-way must still hand the real function back or every later test file
+    # sees the stub instead of Qdrant.
+    monkeypatch.setattr(
+        vector_store_service,
+        "update_document_vector_metadata",
+        lambda *args, **kwargs: vector_sync_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(documents_router, "clear_cache", lambda: None)
     monkeypatch.setattr(ingestion_service, "_read_original_file", lambda _key: b"stored-file")
     monkeypatch.setattr(
         ingestion_service,
@@ -111,8 +117,6 @@ def client(db_session, admin, monkeypatch):
     test_client.vector_sync_calls = vector_sync_calls
     yield test_client
 
-    documents_router.update_document_vector_metadata = original_metadata_sync
-    documents_router.clear_cache = original_clear_cache
     app.dependency_overrides.clear()
 
 
@@ -503,7 +507,7 @@ def test_classification_index_failure_keeps_pending_document_unapproved(
     db_session.commit()
 
     def fail_index(*_args, **_kwargs):
-        raise documents_router.VectorStoreError("Qdrant unavailable")
+        raise VectorStoreError("Qdrant unavailable")
 
     monkeypatch.setattr(ingestion_service, "_embed_and_index", fail_index)
 
@@ -543,9 +547,9 @@ def test_classification_activation_failure_leaves_approved_document_quarantined(
     def fail_activation(_document_id, **metadata):
         calls.append(metadata["is_current"])
         if metadata["is_current"]:
-            raise documents_router.VectorStoreError("Qdrant unavailable")
+            raise VectorStoreError("Qdrant unavailable")
 
-    monkeypatch.setattr(ingestion_service, "update_document_vector_metadata", fail_activation)
+    monkeypatch.setattr(vector_store_service, "update_document_vector_metadata", fail_activation)
 
     response = client.patch(
         f"/api/v1/documents/{document.id}/classification",
@@ -564,6 +568,7 @@ def test_tightening_visibility_updates_qdrant_before_mysql(
     client,
     db_session,
     admin,
+    monkeypatch,
 ):
     document = create_document(
         db_session,
@@ -584,7 +589,7 @@ def test_tightening_visibility_updates_qdrant_before_mysql(
         client.vector_sync_calls.append(((_document_id,), kwargs))
 
     db_session.commit = record_commit
-    documents_router.update_document_vector_metadata = record_sync
+    monkeypatch.setattr(vector_store_service, "update_document_vector_metadata", record_sync)
 
     response = client.patch(
         f"/api/v1/documents/{document.id}/visibility",
@@ -601,6 +606,7 @@ def test_tightening_visibility_rolls_back_mysql_when_qdrant_fails(
     client,
     db_session,
     admin,
+    monkeypatch,
 ):
     document = create_document(
         db_session,
@@ -611,9 +617,9 @@ def test_tightening_visibility_rolls_back_mysql_when_qdrant_fails(
     db_session.commit()
 
     def fail_sync(*_args, **_kwargs):
-        raise documents_router.VectorStoreError("Qdrant unavailable")
+        raise VectorStoreError("Qdrant unavailable")
 
-    documents_router.update_document_vector_metadata = fail_sync
+    monkeypatch.setattr(vector_store_service, "update_document_vector_metadata", fail_sync)
 
     response = client.patch(
         f"/api/v1/documents/{document.id}/visibility",
@@ -629,6 +635,7 @@ def test_loosening_visibility_quarantines_then_publishes_fresh_state(
     client,
     db_session,
     admin,
+    monkeypatch,
 ):
     document = create_document(
         db_session,
@@ -643,7 +650,11 @@ def test_loosening_visibility_quarantines_then_publishes_fresh_state(
     document.review_status = DocumentReviewStatus.APPROVED
     db_session.commit()
     calls: list[dict[str, object]] = []
-    documents_router.update_document_vector_metadata = lambda _document_id, **metadata: calls.append(metadata)
+    monkeypatch.setattr(
+        vector_store_service,
+        "update_document_vector_metadata",
+        lambda _document_id, **metadata: calls.append(metadata),
+    )
 
     response = client.patch(
         f"/api/v1/documents/{document.id}/visibility",
@@ -661,6 +672,7 @@ def test_loosening_visibility_does_not_reactivate_document_blocked_between_phase
     client,
     db_session,
     admin,
+    monkeypatch,
 ):
     document = create_document(
         db_session,
@@ -670,8 +682,10 @@ def test_loosening_visibility_does_not_reactivate_document_blocked_between_phase
     document.status = DocumentStatus.COMPLETED
     db_session.commit()
     calls: list[bool] = []
-    documents_router.update_document_vector_metadata = lambda _document_id, **metadata: calls.append(
-        metadata["is_current"]
+    monkeypatch.setattr(
+        vector_store_service,
+        "update_document_vector_metadata",
+        lambda _document_id, **metadata: calls.append(metadata["is_current"]),
     )
     original_commit = db_session.commit
     commit_count = 0
@@ -836,7 +850,7 @@ def test_classifying_an_unknown_document_returns_404(client):
     assert response.status_code == 404
 
 
-def test_changing_visibility_clears_the_semantic_cache(client, db_session, admin):
+def test_changing_visibility_clears_the_semantic_cache(client, db_session, admin, monkeypatch):
     """Otherwise a question cached while this document was still internal keeps serving
     that stale answer forever after it goes public — the cache has no idea anything about
     this specific document changed, so the only correct move is clearing all of it."""
@@ -848,7 +862,7 @@ def test_changing_visibility_clears_the_semantic_cache(client, db_session, admin
     document.status = DocumentStatus.COMPLETED
     db_session.commit()
     calls = []
-    documents_router.clear_cache = lambda: calls.append("cleared")
+    monkeypatch.setattr(documents_router, "clear_cache", lambda: calls.append("cleared"))
 
     response = client.patch(
         f"/api/v1/documents/{document.id}/visibility",
