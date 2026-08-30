@@ -14,6 +14,7 @@ from backend.core.mysql_client import Base
 
 from backend.models import (  # noqa: F401
     audit_log,
+    billing,
     chat_session,
     conflict_flag,
     customer_conversation_summary,

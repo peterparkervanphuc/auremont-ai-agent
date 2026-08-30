@@ -9,6 +9,7 @@ import { Landing } from "./routes/Landing";
 import { Home } from "./routes/Home";
 import { Login } from "./routes/sale/Login";
 import { Register } from "./routes/Register";
+import { RegisterBusiness } from "./routes/RegisterBusiness";
 import { SalePage } from "./routes/sale/SalePage";
 import { CustomerChatPage } from "./routes/CustomerChatPage";
 import { CategoryDetailPage } from "./routes/sale/CategoryDetailPage";
@@ -23,6 +24,7 @@ import { DocumentReviewTab } from "./routes/admin/DocumentReviewTab";
 import { DocumentRelationsTab } from "./routes/admin/DocumentRelationsTab";
 import { EvalTab } from "./routes/admin/EvalTab";
 import { ConflictsTab } from "./routes/admin/ConflictsTab";
+import { BillingRequestsTab } from "./routes/admin/BillingRequestsTab";
 import { SettingsTab } from "./routes/admin/SettingsTab";
 import { SalesManagementPage } from "./routes/admin/SalesManagementPage";
 import { ObservabilityPage } from "./routes/admin/ObservabilityPage";
@@ -194,6 +196,14 @@ function AppShell() {
             }
           />
           <Route
+            path="/billing-requests"
+            element={
+              <ProtectedRoute allowedRole="admin">
+                <BillingRequestsTab />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/settings"
             element={
               <ProtectedRoute allowedRole="admin">
@@ -222,6 +232,8 @@ function App() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      {/* Business sign-up files a subscription request; /register still creates CUSTOMER accounts. */}
+      <Route path="/register-business" element={<RegisterBusiness />} />
       <Route path="/chat/*" element={<ChatRoute />} />
       <Route path="*" element={<AppShell />} />
     </Routes>

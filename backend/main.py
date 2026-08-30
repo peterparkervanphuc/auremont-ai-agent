@@ -16,6 +16,7 @@ from backend.core.logging_config import setup_logging
 from backend.core.seed import seed_projects, seed_users
 from backend.middleware.logging import RequestContextMiddleware
 from backend.middleware.metrics import PrometheusMiddleware
+from backend.models import billing as billing_models  # noqa: F401
 from backend.models import (  # noqa: F401
     chat_session,
     conflict_flag,
@@ -32,6 +33,7 @@ from backend.models import (  # noqa: F401
 )
 from backend.models import feedback as feedback_model  # noqa: F401
 from backend.routers import (
+    admin_billing,
     admin_conflicts,
     admin_eval,
     admin_observability,
@@ -39,6 +41,7 @@ from backend.routers import (
     admin_settings,
     admin_stats,
     auth,
+    billing,
     customer_chat,
     dev_seed,
     document_relations,
@@ -107,6 +110,8 @@ app.include_router(admin_sales.router, prefix="/api/v1")
 app.include_router(admin_observability.router, prefix="/api/v1")
 app.include_router(admin_settings.router, prefix="/api/v1")
 app.include_router(news.router, prefix="/api/v1")
+app.include_router(billing.router, prefix="/api/v1")
+app.include_router(admin_billing.router, prefix="/api/v1")
 
 app.include_router(customer_chat.router, prefix="/api/v1")
 

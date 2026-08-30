@@ -178,3 +178,54 @@ class LeadPurpose(StrEnum):
     INVESTMENT = "investment"
     BUSINESS = "business"
     UNKNOWN = "unknown"
+
+
+class PlanTier(StrEnum):
+    """The three published plans. The string is the primary key in `plans`, so it is part
+    of the API contract (`/billing/plans`) and must not be renamed without a migration."""
+
+    STARTER = "starter"
+    GROWTH = "growth"
+    ENTERPRISE = "enterprise"
+
+
+class SubscriptionStatus(StrEnum):
+    """Where a workspace's subscription sits in its lifecycle.
+
+    TRIALING and ACTIVE both grant access; everything else denies it. CANCELLED means the
+    owner asked to stop but the paid period has not run out yet — access continues to
+    `current_period_end`, which is why it is distinct from EXPIRED.
+    """
+
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+
+
+class SubscriptionRequestStatus(StrEnum):
+    """A business's application to subscribe, before any workspace exists.
+
+    The MVP has no payment gateway, so an Admin moves the request by hand: PENDING until
+    someone looks at it, then APPROVED (workspace created, subscription activated) or
+    REJECTED. CONTACTED is for Enterprise leads that need a call before either verdict.
+    """
+
+    PENDING = "pending"
+    CONTACTED = "contacted"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class OrganizationRole(StrEnum):
+    """A member's authority inside one workspace, orthogonal to `UserRole`.
+
+    `UserRole` says what the account can do in the product (Sale vs Admin vs Customer);
+    this says what they can do to the workspace itself — only an OWNER can change the plan
+    or cancel it, and only OWNER/ADMIN can manage members.
+    """
+
+    OWNER = "owner"
+    ADMIN = "admin"
+    MEMBER = "member"

@@ -58,5 +58,5 @@ class CustomerAskRequest(BaseModel):
 
 
 class CustomerAskResponse(MessageResponse):
-    gate: Literal["turn_limit", "closing_intent", "human_request"] | None = None
+    gate: Literal["turn_limit", "daily_limit", "closing_intent", "human_request"] | None = None
     status: SessionStatus = SessionStatus.BOT_HANDLING

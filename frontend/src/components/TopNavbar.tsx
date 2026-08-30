@@ -10,6 +10,7 @@ import {
   AlertIcon,
   ActivityIcon,
   AuremontLogoIcon,
+  BuildingIcon,
   ChartIcon,
   ChatIcon,
   CheckIcon,
@@ -51,6 +52,7 @@ const ADMIN_NAV: AdminNavEntry[] = [
   { to: "/document-review", label: "Duyệt metadata", icon: CheckIcon, roles: ["admin"] },
   { to: "/eval", label: "Chất lượng trả lời", icon: ChartIcon, roles: ["admin"] },
   { to: "/conflicts", label: "Cảnh báo mâu thuẫn", icon: AlertIcon, roles: ["admin"] },
+  { to: "/billing-requests", label: "Đăng ký doanh nghiệp", icon: BuildingIcon, roles: ["admin"] },
   { to: "/settings", label: "Cài đặt chung", icon: SettingsIcon, roles: ["admin"] },
 ];
 

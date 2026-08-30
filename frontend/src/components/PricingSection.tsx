@@ -1,41 +1,55 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { billingApi, formatVnd, type Plan } from "../api/billing";
 import { ArrowRightIcon, CheckCircleIcon } from "./Icons";
 
-// Định giá theo seat (số Sale dùng AI), như phần lớn CRM B2B (Getfly, Zoho, HubSpot) —
-// dễ hiểu và dễ so sánh hơn tính theo tổng số cuộc hội thoại, vốn không phải đơn vị khách
-// hàng tự ước lượng được trước khi dùng thử. Mọi gói có đầy đủ tính năng AI như nhau; gói
-// chỉ khác số seat tối thiểu, hạn mức hội thoại và mức hỗ trợ — giá trị cốt lõi khách trả
-// tiền là chất lượng AI tư vấn, không phải tính năng quản trị bị khoá ở gói thấp.
-const PRICING_PLANS = [
+// Priced per seat (the number of Sales using the AI), like most B2B CRMs — easier to
+// compare than a whole-company conversation count, which nobody can estimate before they
+// have used the product. Every plan carries the full feature set; only the seat minimum,
+// the pooled quota and the support level differ.
+//
+// The rows come from GET /billing/plans so the marketing page and the biller can never
+// quote different numbers. FALLBACK_PLANS exists only for the window where that request
+// fails: a pricing section that renders nothing is worse than one that renders the prices
+// we shipped with, and the Đăng ký flow re-reads the live plan anyway.
+const FALLBACK_PLANS: Plan[] = [
   {
+    id: "starter",
     name: "Starter",
-    price: "390.000",
-    unit: "seat / tháng",
-    seatsNote: "Tối thiểu 1 seat",
-    conversationsPerSeat: "150",
-    support: "Hỗ trợ qua email, phản hồi trong 24h",
-    featured: false,
+    description: null,
+    price_per_seat_vnd: 390_000,
+    min_seats: 1,
+    conversations_per_seat: 150,
+    overage_price_vnd: 2_000,
+    support_note: "Hỗ trợ qua email, phản hồi trong 24h",
+    sort_order: 1,
   },
   {
+    id: "growth",
     name: "Growth",
-    price: "550.000",
-    unit: "seat / tháng",
-    seatsNote: "Tối thiểu 3 seat",
-    conversationsPerSeat: "400",
-    support: "Hỗ trợ ưu tiên trong giờ hành chính",
-    featured: true,
+    description: null,
+    price_per_seat_vnd: 550_000,
+    min_seats: 3,
+    conversations_per_seat: 400,
+    overage_price_vnd: 2_000,
+    support_note: "Hỗ trợ ưu tiên trong giờ hành chính",
+    sort_order: 2,
   },
   {
+    id: "enterprise",
     name: "Enterprise",
-    price: "420.000",
-    unit: "seat / tháng",
-    seatsNote: "Từ 20 seat trở lên",
-    conversationsPerSeat: "Không giới hạn cứng",
-    support: "SLA riêng, hỗ trợ kỹ thuật 24/7",
-    featured: false,
+    description: null,
+    price_per_seat_vnd: 420_000,
+    min_seats: 20,
+    conversations_per_seat: null,
+    overage_price_vnd: 2_000,
+    support_note: "SLA riêng, hỗ trợ kỹ thuật 24/7",
+    sort_order: 3,
   },
-] as const;
+];
 
 const CTA_LABEL = "Đăng ký";
+const FEATURED_PLAN_ID = "growth";
 
 const SHARED_FEATURES = [
   "AI tư vấn khách hàng 24/7",
@@ -46,17 +60,34 @@ const SHARED_FEATURES = [
   "Tích hợp CRM / Zalo OA",
 ] as const;
 
-const OVERAGE_NOTE = "Vượt hạn mức: tính phụ phí theo cuộc, không tạm ngưng AI giữa tháng.";
+function seatsNote(plan: Plan): string {
+  // Enterprise's lower per-seat price is a volume discount, so the minimum is part of the
+  // price rather than a footnote — "Từ ... — tối thiểu 20 seat" says that in one line.
+  return plan.min_seats > 1 ? `Từ ${plan.min_seats} seat trở lên` : "Tối thiểu 1 seat";
+}
 
-function buildContactHref(planName: string) {
-  const subject = encodeURIComponent(`Tư vấn gói ${planName} - Auremont AI`);
-  const body = encodeURIComponent(
-    `Tôi muốn được tư vấn thêm về gói ${planName} dành cho doanh nghiệp.`,
-  );
-  return `mailto:support@auremont.vn?subject=${subject}&body=${body}`;
+function quotaLabel(plan: Plan): string {
+  return plan.conversations_per_seat === null
+    ? "Không giới hạn cứng"
+    : plan.conversations_per_seat.toLocaleString("vi-VN");
 }
 
 export function PricingSection() {
+  const [plans, setPlans] = useState<Plan[]>(FALLBACK_PLANS);
+
+  useEffect(() => {
+    billingApi
+      .listPlans()
+      .then((rows) => {
+        if (rows.length > 0) setPlans(rows);
+      })
+      .catch(() => {
+        /* Keep the shipped prices on screen; the sign-up flow reads the live plan itself. */
+      });
+  }, []);
+
+  const overageNote = `Vượt hạn mức: ${formatVnd(plans[0]?.overage_price_vnd ?? 2000)}/cuộc, không tạm ngưng AI giữa tháng.`;
+
   return (
     <section className="business-pricing" id="bang-gia" aria-labelledby="business-pricing-title">
       <div className="container">
@@ -72,42 +103,50 @@ export function PricingSection() {
         </header>
 
         <div className="business-pricing-grid">
-          {PRICING_PLANS.map((plan) => (
-            <article
-              key={plan.name}
-              className={`business-pricing-plan${plan.featured ? " business-pricing-plan--featured" : ""}`}
-            >
-              {plan.featured && <span className="business-pricing-badge">Phổ biến nhất</span>}
-
-              <h3 className="business-pricing-plan-name">{plan.name}</h3>
-              <div className="business-pricing-price" aria-label={`${plan.price} đồng mỗi seat mỗi tháng`}>
-                <strong>{plan.price}</strong>
-                <small>đ</small>
-              </div>
-              <p className="business-pricing-unit">{plan.unit}</p>
-              <p className="business-pricing-seats-note">{plan.seatsNote}</p>
-
-              <p className="business-pricing-quota">
-                <strong>{plan.conversationsPerSeat}</strong> cuộc tư vấn AI / seat / tháng
-              </p>
-              <p className="business-pricing-quota-note">Hạn mức gộp chung cho cả team, không chia cứng theo người</p>
-
-              <div className="business-pricing-included">
-                <CheckCircleIcon size={19} />
-                <span>Đầy đủ mọi tính năng</span>
-              </div>
-              <p className="business-pricing-support-note">{plan.support}</p>
-
-              <a
-                href={buildContactHref(plan.name)}
-                className={`btn business-pricing-cta ${plan.featured ? "btn-primary" : "btn-outline"}`}
-                aria-label={`${CTA_LABEL} gói ${plan.name}`}
+          {plans.map((plan) => {
+            const featured = plan.id === FEATURED_PLAN_ID;
+            return (
+              <article
+                key={plan.id}
+                className={`business-pricing-plan${featured ? " business-pricing-plan--featured" : ""}`}
               >
-                {CTA_LABEL}
-                <ArrowRightIcon size={16} />
-              </a>
-            </article>
-          ))}
+                {featured && <span className="business-pricing-badge">Phổ biến nhất</span>}
+
+                <h3 className="business-pricing-plan-name">{plan.name}</h3>
+                <div
+                  className="business-pricing-price"
+                  aria-label={`${plan.price_per_seat_vnd} đồng mỗi seat mỗi tháng`}
+                >
+                  <strong>{plan.price_per_seat_vnd.toLocaleString("vi-VN")}</strong>
+                  <small>đ</small>
+                </div>
+                <p className="business-pricing-unit">seat / tháng</p>
+                <p className="business-pricing-seats-note">{seatsNote(plan)}</p>
+
+                <p className="business-pricing-quota">
+                  <strong>{quotaLabel(plan)}</strong> cuộc tư vấn AI / seat / tháng
+                </p>
+                <p className="business-pricing-quota-note">
+                  Hạn mức gộp chung cho cả team, không chia cứng theo người
+                </p>
+
+                <div className="business-pricing-included">
+                  <CheckCircleIcon size={19} />
+                  <span>Đầy đủ mọi tính năng</span>
+                </div>
+                <p className="business-pricing-support-note">{plan.support_note}</p>
+
+                <Link
+                  to={`/register-business?plan=${plan.id}`}
+                  className={`btn business-pricing-cta ${featured ? "btn-primary" : "btn-outline"}`}
+                  aria-label={`${CTA_LABEL} gói ${plan.name}`}
+                >
+                  {CTA_LABEL}
+                  <ArrowRightIcon size={16} />
+                </Link>
+              </article>
+            );
+          })}
         </div>
 
         <div className="business-pricing-benefits" aria-label="Quyền lợi chung của mọi gói">
@@ -120,7 +159,7 @@ export function PricingSection() {
         </div>
 
         <p className="business-pricing-footnote">
-          {OVERAGE_NOTE} Hạn mức được làm mới mỗi tháng. Có thể nâng/hạ số seat bất cứ lúc nào.
+          {overageNote} Hạn mức được làm mới mỗi tháng. Có thể nâng/hạ số seat bất cứ lúc nào.
         </p>
       </div>
     </section>

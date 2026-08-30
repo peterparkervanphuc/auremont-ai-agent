@@ -6721,3 +6721,116 @@ code {
 .empty-state-text--spaced {
   margin-top: 10px;
 }
+
+/* ---------- Business (B2B) registration ---------------------------------- */
+/* Wider than the customer login card: this form collects company, billing and seat
+   details, and cramming them into the 380px auth card makes the review step unreadable. */
+.register-business-card {
+  width: min(100%, 620px);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-button:hover { text-decoration: underline; }
+
+.register-business-steps {
+  display: flex;
+  gap: 8px;
+  margin: 18px 0 20px;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.register-business-steps li {
+  flex: 1;
+  padding: 8px 10px;
+  border-top: 3px solid var(--border);
+  color: var(--text-3);
+  font-size: 0.78rem;
+  font-weight: 600;
+  counter-increment: step;
+}
+
+.register-business-steps li::before { content: counter(step) ". "; }
+.register-business-steps li.is-active { border-top-color: var(--accent); color: var(--accent); }
+.register-business-steps li.is-done { border-top-color: var(--emerald); color: var(--text-2); }
+
+.register-business-plans { display: grid; gap: 12px; }
+
+.register-business-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.register-business-plan:hover {
+  border-color: var(--accent);
+  box-shadow: 0 6px 20px rgba(0, 80, 239, 0.12);
+}
+
+.register-business-plan strong { color: var(--text-1); font-size: 1rem; }
+.register-business-plan-price { color: var(--accent); font-size: 0.95rem; font-weight: 700; }
+.register-business-plan-note { color: var(--text-3); font-size: 0.78rem; }
+
+.register-business-chosen {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-3, rgba(0, 80, 239, 0.06));
+  font-size: 0.85rem;
+}
+
+.register-business-review dl { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; }
+
+.register-business-review dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.register-business-review dt { color: var(--text-2); font-size: 0.85rem; }
+.register-business-review dd { margin: 0; color: var(--text-1); font-size: 0.9rem; font-weight: 600; }
+
+.register-business-total {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.register-business-total dt { font-weight: 700; color: var(--text-1); }
+.register-business-total dd { color: var(--accent); font-size: 1.25rem; font-weight: 800; }
+
+.register-business-hint { margin-bottom: 16px; color: var(--text-3); font-size: 0.78rem; line-height: 1.5; }
+
+.register-business-actions { display: flex; gap: 10px; }
+.register-business-actions .btn { flex: 1; justify-content: center; }
+
+.register-business-done { text-align: center; }
+.register-business-done svg { color: var(--emerald); margin-bottom: 12px; }
+.register-business-back { margin-top: 18px; display: inline-flex; }
+
+@media (max-width: 560px) {
+  .register-business-steps { flex-direction: column; gap: 4px; }
+  .register-business-actions { flex-direction: column; }
+}

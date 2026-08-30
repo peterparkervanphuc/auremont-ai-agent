@@ -113,7 +113,28 @@ class Settings(BaseSettings):
     document_security_max_findings: int = Field(default=20, ge=1, le=200)
     document_security_excerpt_context_chars: int = Field(default=80, ge=20, le=500)
 
-    customer_anonymous_turn_limit: int = 4
+    # Per-session cap, kept for the registration gate: an anonymous visitor is nudged to
+    # sign up after this many turns in one conversation, independently of the daily budget.
+    #
+    # Keep this at or below `customer_anonymous_daily_limit`. If it is larger, the daily
+    # wall is always hit first and the sign-up nudge below becomes unreachable — the
+    # visitor sees "hết lượt hôm nay" instead of "đăng ký để chat tiếp", which is the
+    # weaker of the two prompts because it offers them nothing to do about it.
+    customer_anonymous_turn_limit: int = 3
+
+    # Daily AI budget per person, counted across every session they open.
+    #
+    # The public chat is a marketing cost — nobody is billed for a visitor's questions —
+    # so the ceiling exists to bound that spend, not to price it. The per-session cap above
+    # resets the moment a visitor starts a new conversation or clears their token, which is
+    # why the real limit has to be counted per identity per day.
+    #
+    # Registered customers get a much larger allowance on purpose: they handed over contact
+    # details and are a real lead, so the gap between the two numbers is the reward for
+    # signing up rather than an afterthought.
+    customer_anonymous_daily_limit: int = 3
+    customer_registered_daily_limit: int = 10
+
     anonymous_rate_limit_per_window: int = 20
     anonymous_rate_limit_window_seconds: int = 300
     trusted_proxy_count: int = 0

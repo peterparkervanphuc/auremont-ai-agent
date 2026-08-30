@@ -14,6 +14,12 @@ const GATE_COPY: Record<CustomerGate, { title: string; body: string }> = {
       "Cảm ơn bạn đã trò chuyện cùng Auremont! Để mình lưu lại đoạn chat này và tư vấn sâu hơn, " +
       "bạn vui lòng đăng ký/đăng nhập tài khoản nhé.",
   },
+  daily_limit: {
+    title: "Hết lượt hỏi hôm nay",
+    body:
+      "Bạn đã dùng hết lượt hỏi miễn phí trong ngày. Đăng ký tài khoản để được hỏi nhiều hơn mỗi ngày " +
+      "và lưu lại toàn bộ lịch sử tư vấn nhé!",
+  },
   closing_intent: {
     title: "Mở khóa thông tin chi tiết",
     body:

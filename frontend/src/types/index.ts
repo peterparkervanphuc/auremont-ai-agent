@@ -150,7 +150,7 @@ export interface CustomerRegisterRequest {
 /** Which soft-paywall trigger intercepted this turn — null on a normally-answered turn.
  * "human_request" is an anonymous visitor asking for a live Sale — routed into the same
  * register/login gate as every other lead-qualification trigger, not a direct handoff. */
-export type CustomerGate = "turn_limit" | "closing_intent" | "human_request";
+export type CustomerGate = "turn_limit" | "daily_limit" | "closing_intent" | "human_request";
 
 export interface CustomerAskResponse extends MessageResponse {
   gate: CustomerGate | null;

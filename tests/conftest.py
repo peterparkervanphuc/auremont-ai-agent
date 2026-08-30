@@ -110,6 +110,24 @@ def _no_live_redis(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_anonymous_rate_limit():
+    """Give every test its own throttle budget.
+
+    `rate_limit._hits` is a module-level dict keyed by client IP, and every TestClient
+    request arrives from the same "testclient" host. Without this, the public endpoints'
+    requests accumulate across unrelated test files until some later test — usually the
+    first one to post a few customer messages — gets a 429 that has nothing to do with
+    what it is checking. The failure moves around as tests are added, which is what makes
+    it worth resetting here rather than in whichever file happens to trip it.
+    """
+    from backend.core import rate_limit
+
+    rate_limit._hits.clear()
+    yield
+    rate_limit._hits.clear()
+
+
+@pytest.fixture(autouse=True)
 def _no_live_audit_sink(monkeypatch):
     """Keep the audit trail on stdout in tests instead of reaching for MySQL.
 

@@ -3,13 +3,21 @@ import time
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.ai.intent import needs_human_handoff, wants_human_agent
 from backend.core.audit import log_event, redact_and_truncate
 from backend.core.config import settings
 from backend.core.deps import get_optional_current_user, require_role
-from backend.core.enums import DocumentVisibility, MessageEmotion, MessageSender, SessionStatus, UserRole
+from backend.core.enums import (
+    DocumentVisibility,
+    MessageEmotion,
+    MessageSender,
+    SessionChannel,
+    SessionStatus,
+    UserRole,
+)
 from backend.core.mysql_client import get_db
 from backend.core.rate_limit import anonymous_rate_limit
 from backend.core.security import create_access_token, create_refresh_token
@@ -51,12 +59,24 @@ from backend.schemas.customer import (
 from backend.schemas.message import MessageResponse
 from backend.schemas.user import TokenResponse, UserResponse
 from backend.services import agent_pipeline, lead_service, memory_service, search_criteria
+from backend.utils.time import utcnow
 
 router = APIRouter(prefix="/customer", tags=["Customer Chat"])
 
 _TURN_LIMIT_MESSAGE = (
     "Cảm ơn bạn đã trò chuyện cùng Auremont! Để mình lưu lại đoạn chat này và tư vấn sâu hơn, "
     "bạn vui lòng đăng ký/đăng nhập tài khoản nhé."
+)
+# Two different walls, two different messages: the anonymous one is an invitation to sign
+# up (there is a bigger allowance on the other side), while the registered one has nothing
+# left to upsell and points at a human instead.
+_DAILY_LIMIT_ANONYMOUS_MESSAGE = (
+    "Bạn đã dùng hết lượt hỏi miễn phí hôm nay. Đăng ký tài khoản để được hỏi nhiều hơn mỗi ngày "
+    "và lưu lại toàn bộ lịch sử tư vấn nhé!"
+)
+_DAILY_LIMIT_REGISTERED_MESSAGE = (
+    "Bạn đã dùng hết lượt hỏi AI hôm nay. Lượt mới sẽ được làm mới vào ngày mai. "
+    "Nếu cần gấp, bạn nhắn 'gặp tư vấn viên' để được chuyên viên hỗ trợ trực tiếp nhé."
 )
 _HANDOFF_NOTICE_MESSAGE = (
     "Dạ em xin phép kết nối anh/chị với "
@@ -296,7 +316,7 @@ async def ask_in_customer_session(
         return None
 
     is_anonymous = session.customer_id is None
-    gate: Literal["turn_limit", "closing_intent", "human_request"] | None = None
+    gate: Literal["turn_limit", "daily_limit", "closing_intent", "human_request"] | None = None
     used_cache = False
     duration_ms = 0.0
     new_status = SessionStatus(session.status)
@@ -306,9 +326,23 @@ async def ask_in_customer_session(
     suggested_questions: list[str] = []
     images: list[dict] = []
 
+    # The budget is charged on every turn, before any gate decides what to say — a question
+    # that reaches this point has been asked, whichever wall answers it. The message itself
+    # is already persisted above, so a gated turn costs a stored row but never an LLM call.
+    daily_used = _consume_daily_question(db, session)
+    over_daily_budget = daily_used > _daily_limit_for(session)
+
+    # The sign-up nudge is checked first for anonymous visitors on purpose. When both walls
+    # land on the same turn, "đăng ký để chat tiếp" gives them something to do about it,
+    # while "hết lượt hôm nay" is a dead end — and registering is exactly the outcome the
+    # free tier exists to produce.
     if is_anonymous and _anonymous_turn_count(db, session_id) >= settings.customer_anonymous_turn_limit:
         gate = "turn_limit"
         answer_text = _TURN_LIMIT_MESSAGE
+        verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
+    elif over_daily_budget:
+        gate = "daily_limit"
+        answer_text = _DAILY_LIMIT_ANONYMOUS_MESSAGE if is_anonymous else _DAILY_LIMIT_REGISTERED_MESSAGE
         verifier_score, requires_hitl, faithfulness, answer_relevancy = 0.0, False, None, None
     elif not is_anonymous and needs_human_handoff(payload.content):
         if session.customer_id is None:
@@ -476,6 +510,50 @@ async def return_to_ai(
 
 def _anonymous_turn_count(db: Session, session_id: int) -> int:
     return sum(1 for m in list_messages_for_session(db, session_id) if m.sender == MessageSender.CUSTOMER)
+
+
+def _consume_daily_question(db: Session, session: ChatSession) -> int:
+    """Charge one question against today's budget and return the new running total.
+
+    Held on the session row rather than derived from `messages`, because "Xoá lịch sử"
+    deletes the transcript and keeps the row: a message-derived count would refund the
+    whole allowance on every clear.
+
+    For a registered customer the budget is shared across their sessions, so the counter
+    on their canonical AI session is the one that moves — otherwise a second conversation
+    would come with a second allowance. Anonymous visitors own exactly one session
+    (`visitor_token` is UNIQUE), so their own row is already the right place.
+
+    The day boundary is midnight UTC: a visitor told "hết lượt hôm nay" can predict when
+    it resets, and rolling the date forward on write means no scheduled job has to zero
+    anything.
+    """
+    today = utcnow().date()
+
+    counter = session
+    if session.customer_id is not None:
+        canonical = db.scalar(
+            select(ChatSession)
+            .where(ChatSession.customer_id == session.customer_id, ChatSession.channel == SessionChannel.AI)
+            .order_by(ChatSession.id)
+            .limit(1)
+        )
+        counter = canonical or session
+
+    if counter.ai_questions_date != today:
+        counter.ai_questions_date = today
+        counter.ai_questions_today = 0
+
+    counter.ai_questions_today += 1
+    db.commit()
+    return counter.ai_questions_today
+
+
+def _daily_limit_for(session: ChatSession) -> int:
+    """A registered customer's larger allowance, or the anonymous one."""
+    if session.customer_id is not None:
+        return settings.customer_registered_daily_limit
+    return settings.customer_anonymous_daily_limit
 
 
 def _remember_customer_history(db: Session, session: ChatSession, customer_id: int) -> None:
