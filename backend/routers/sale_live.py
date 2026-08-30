@@ -53,6 +53,7 @@ from backend.services import (
     agent_pipeline,
     customer_summary_service,
     lead_scoring_service,
+    lead_service,
     memory_service,
 )
 from backend.utils.time import utcnow
@@ -133,11 +134,14 @@ def _lead_reason(lead: Lead | None) -> str | None:
 
 
 _SIGNAL_LABELS = {
+    "transaction_ready": "Đã yêu cầu bước giao dịch cụ thể",
+    "consideration_intent": "Đang cân nhắc căn / phương án thanh toán",
     "stated_budget": "Đã nêu ngân sách",
-    "budget_over_1bn": "Ngân sách từ 1 tỷ trở lên",
-    "closing_intent": "Muốn xem nhà / đặt lịch / xin bảng giá",
+    "closing_intent": "Muốn nhận tài liệu / đặt lịch / được liên hệ",
     "wants_human": "Xin gặp tư vấn viên",
+    "near_term_timeline": "Có thời gian mua / đi xem gần",
     "named_unit_code": "Hỏi đúng mã căn cụ thể",
+    "criteria_known": "Đã nêu tiêu chí tìm căn",
     "three_filters": "Đã lọc theo từ 3 tiêu chí trở lên",
     "registered": "Đã tạo tài khoản",
     "has_phone": "Đã có số điện thoại",
@@ -156,6 +160,7 @@ def _decorate(db: Session, sessions: list[ChatSession]) -> list[LiveInboxEntry]:
     customer_ids = [s.customer_id for s in sessions if s.customer_id is not None]
     users = list_users_by_ids(db, customer_ids)
     leads = list_leads_for_customers(db, customer_ids)
+    lead_service.rescore_stale_leads(db, list(leads.values()), users)
     return [_to_entry(db, session, users=users, leads=leads) for session in sessions]
 
 

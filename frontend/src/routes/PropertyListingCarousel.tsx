@@ -316,6 +316,8 @@ function ListingCardSlide({ listing, brokenUrls, onBroken, onZoom }: SlideProps)
               className="listing-card-hero-image"
               src={images[heroIndex]}
               alt={`${listing.project_name} ${heroIndex + 1}`}
+              loading="lazy"
+              decoding="async"
               onError={() => onBroken(images[heroIndex])}
             />
             {listing.status && (
@@ -357,6 +359,7 @@ function ListingCardSlide({ listing, brokenUrls, onBroken, onZoom }: SlideProps)
                       src={url}
                       alt={`${listing.project_name} ${globalIndex + 1}`}
                       loading="lazy"
+                      decoding="async"
                       onError={() => onBroken(url)}
                     />
                     {showMoreBadge && <span className="listing-card-thumb-more">+{hiddenThumbCount}</span>}

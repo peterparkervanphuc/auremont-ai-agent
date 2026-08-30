@@ -26,7 +26,7 @@ from backend.models.user import User
 from backend.services import agent_pipeline, lead_service
 from backend.services.agent_pipeline import PipelineResult
 
-HOT_MESSAGE = "cho mình xin bảng giá căn 2PN, ngân sách tầm 3.5 tỷ"
+QUALIFIED_MESSAGE = "cho mình xin bảng giá căn 2PN, ngân sách tầm 3.5 tỷ"
 
 
 @pytest.fixture
@@ -108,7 +108,7 @@ def test_the_turn_limit_gated_turn_is_still_scored(anonymous_client, db_session)
     for _ in range(limit):
         assert _ask(anonymous_client, session_id, token, "còn căn 2PN nào không ạ").status_code == 201
 
-    gated = _ask(anonymous_client, session_id, token, HOT_MESSAGE)
+    gated = _ask(anonymous_client, session_id, token, QUALIFIED_MESSAGE)
 
     assert gated.status_code == 201
     assert gated.json()["gate"] == "turn_limit"
@@ -128,7 +128,9 @@ def test_a_customer_turn_during_a_live_handoff_is_still_scored(customer_client, 
     db_session.commit()
     db_session.refresh(session)
 
-    response = customer_client.post(f"/api/v1/customer/sessions/{session.id}/messages", json={"content": HOT_MESSAGE})
+    response = customer_client.post(
+        f"/api/v1/customer/sessions/{session.id}/messages", json={"content": QUALIFIED_MESSAGE}
+    )
 
     assert response.status_code == 201
     lead = db_session.query(Lead).filter(Lead.customer_id == customer.id).one()
@@ -145,7 +147,7 @@ def test_a_scoring_failure_never_costs_the_customer_their_answer(anonymous_clien
     monkeypatch.setattr(lead_service, "_rescore", _boom)
     session_id, token = _start_anonymous(anonymous_client)
 
-    response = _ask(anonymous_client, session_id, token, HOT_MESSAGE)
+    response = _ask(anonymous_client, session_id, token, QUALIFIED_MESSAGE)
 
     assert response.status_code == 201
     assert response.json()["content"]
@@ -164,7 +166,7 @@ def test_registering_carries_the_anonymous_score_onto_the_account(anonymous_clie
     """The visitor's accumulated signals must survive signup, or the gate destroys exactly
     the evidence it was placed there to collect."""
     session_id, token = _start_anonymous(anonymous_client)
-    _ask(anonymous_client, session_id, token, HOT_MESSAGE)
+    _ask(anonymous_client, session_id, token, QUALIFIED_MESSAGE)
     before = db_session.query(Lead).filter(Lead.visitor_token == token).one().score
     assert before > 0
 
@@ -187,4 +189,4 @@ def test_registering_carries_the_anonymous_score_onto_the_account(anonymous_clie
     assert lead.score >= before
     assert db_session.query(Lead).filter(Lead.visitor_token == token).first() is None
     assert lead.signals["flags"]["has_phone"] is True
-    assert lead.tier == LeadTier.HOT
+    assert lead.tier == LeadTier.WARM

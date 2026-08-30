@@ -49,6 +49,87 @@ def _stub_dependency_readiness(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_qdrant(monkeypatch):
+    """Refuse a Qdrant connection instantly instead of waiting out its socket timeout.
+
+    CONTRIBUTING says the suite is hermetic, and it was not: `cache_service.clear_cache`
+    runs on every conflict resolve and document visibility change, and it builds a real
+    client against `qdrant_url`. The call is best-effort and swallows its own failure, so
+    nothing ever went red — it just sat there. On a machine that refuses connections to
+    localhost:6333 that costs milliseconds; on one whose firewall drops them it costs
+    QDRANT_TIMEOUT_SECONDS per call, which is the difference between a 2-minute suite and
+    an 8-hour one. Raising at construction keeps every caller on the same branch it
+    already took (an exception it catches) and makes the cost a constant.
+
+    A test that needs Qdrant to *work* stubs the service function it calls — see
+    `vector_syncs` in tests/test_api/test_admin_conflicts.py — and never reaches here.
+    """
+    from backend.core import qdrant_client as qdrant_module
+
+    def _refuse(*args, **kwargs):
+        raise ConnectionError("No live Qdrant in tests; stub the service function you need.")
+
+    monkeypatch.setattr(qdrant_module, "QdrantClient", _refuse)
+    # get_qdrant_client is lru_cached, so a client built by an earlier test — or by
+    # importing something at collection time — would outlive the patch.
+    qdrant_module.get_qdrant_client.cache_clear()
+    yield
+    qdrant_module.get_qdrant_client.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_cohere(monkeypatch):
+    """Make the "no test makes a billed API call" promise in CONTRIBUTING actually hold.
+
+    `rag_service._rerank` gates on `settings.cohere_api_key`, so blanking it is not a stub
+    — it is the documented degraded path, the same one a deployment without the key takes.
+    Until this existed, a developer with a real key in `.env` had every retrieval test
+    spending Cohere credits and waiting on the network for them.
+    """
+
+    monkeypatch.setattr(settings, "cohere_api_key", "")
+
+
+@pytest.fixture(autouse=True)
+def _no_live_redis(monkeypatch):
+    """Same rule for long-term memory: an empty URL is how the feature is switched off.
+
+    `get_redis_client` returns None on an empty `redis_url`, which memory_service already
+    handles as "no profile yet". The default is `redis://localhost:6379/0`, so without
+    this every memory read paid two socket timeouts to discover nothing was listening.
+    """
+    from backend.core import redis_client as redis_module
+
+    monkeypatch.setattr(settings, "redis_url", "")
+    # get_redis_client is lru_cached, so a `None` cached here would outlive this test and
+    # sink test_memory_service_integration.py's real-Redis run further down the suite —
+    # the same reason get_qdrant_client is cleared above.
+    redis_module.get_redis_client.cache_clear()
+    yield
+    redis_module.get_redis_client.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_audit_sink(monkeypatch):
+    """Keep the audit trail on stdout in tests instead of reaching for MySQL.
+
+    `persist_event` runs on every audited action — login, sale query, HITL confirm — and
+    opens its own session against `DATABASE_URL`. It swallows the failure by design, so a
+    developer with a MySQL URL in `.env` but no server running saw only a `WARNING` line
+    while each request quietly paid a connection timeout per audit event. That was most of
+    the wall-clock time in tests/test_api.
+
+    `None` is the module's own documented "no database configured" path (see
+    tests/test_core/test_audit_sink.py), not a stub — and the tests that assert on audit
+    content read the stdout record through `capture_audit`, which is unaffected. The two
+    files that exercise the MySQL write substitute their own factory, which wins over this.
+    """
+    from backend.core import audit_sink
+
+    monkeypatch.setattr(audit_sink, "SessionLocal", None)
+
+
+@pytest.fixture(autouse=True)
 def _disable_live_semantic_conflict_calls(monkeypatch):
     """Unit tests opt in explicitly; no test may accidentally spend an LLM request."""
 

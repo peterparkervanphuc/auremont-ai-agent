@@ -27,7 +27,9 @@ holds a hand-written reference answer, and `REQUIRED_FACTS_METRIC` checks by str
 that the facts the reference commits to — a price, a unit code, a discount — actually
 appear in what the model wrote. No model votes on that, so no model can be generous about
 it. The judged metrics stay for what strings cannot see (is a claim grounded, is the answer
-on topic, was a figure invented), and the report marks which numbers are which.
+on topic, was a figure invented), and the report marks which numbers are which:
+`deterministic_pass_rate` is the one to act on, `judged_pass_rate` is a trend, and
+`--fail-under` gates on the former so a generous judge cannot open the gate.
 
 Costs real API calls, so it runs on a schedule (`.github/workflows/answer-quality.yml`)
 rather than on every PR, and deepeval lives in `requirements-eval.txt` rather than
@@ -35,7 +37,7 @@ rather than on every PR, and deepeval lives in `requirements-eval.txt` rather th
 
     pip install -r requirements-eval.txt
     python -m eval.deepeval_suite --repeats 3
-    python -m eval.deepeval_suite --judge-model gemini-3-pro --rpm 150
+    python -m eval.deepeval_suite --judge-model gemini-3.1-pro-preview --rpm 150
     python -m eval.deepeval_suite --fail-under 0.9
 
 `--repeats` exists because the model is not deterministic: one sample cannot separate a
@@ -511,6 +513,25 @@ def run_case(case: GoldenCase, metrics: list[Any], attempt: int = 1, pacer: _Pac
     }
 
 
+def _deterministic_verdict(result: dict[str, Any]) -> bool:
+    """Whether the rule-based gates passed, ignoring every judged metric.
+
+    This is the number to act on. A judge sharing a vendor — or a training lineage — with
+    the answer model has been observed scoring a flat 1.00 on answers carrying a confirmed
+    defect, so a pass rate that includes its vote cannot distinguish "the answers are good"
+    from "the judge was generous". These three gates are string and structure checks over
+    `GoldenCase` references; they are as trustworthy as the references themselves.
+    """
+    entries = [entry for name, entry in result["metrics"].items() if name in DETERMINISTIC_METRICS]
+    return bool(entries) and all(entry["passed"] for entry in entries)
+
+
+def _judged_verdict(result: dict[str, Any]) -> bool:
+    """Whether every LLM-judged metric passed. Read as a trend, never as a gate."""
+    entries = [entry for name, entry in result["metrics"].items() if name not in DETERMINISTIC_METRICS]
+    return all(entry["passed"] for entry in entries)
+
+
 def build_report(results: list[dict[str, Any]], *, judge_model: str, answer_model: str) -> dict[str, Any]:
     """Aggregate to the same shape `eval/graders.py` reports in, so both live under
     `eval/results/` and can be read the same way.
@@ -543,6 +564,8 @@ def build_report(results: list[dict[str, Any]], *, judge_model: str, answer_mode
         }
 
     passed = sum(1 for result in results if result["passed"])
+    deterministic_passed = sum(1 for result in results if _deterministic_verdict(result))
+    judged_passed = sum(1 for result in results if _judged_verdict(result))
     return {
         "cases": len(per_case),
         "runs": len(results),
@@ -551,6 +574,11 @@ def build_report(results: list[dict[str, Any]], *, judge_model: str, answer_mode
         "per_case": per_case,
         "flaky_cases": [case_id for case_id, stats in per_case.items() if stats["flaky"]],
         "pass_rate": round(passed / len(results), 4) if results else 0.0,
+        # The headline blends rules and opinion, so it is reported beside each half. A
+        # self-judging run can only inflate `judged_pass_rate`; `deterministic_pass_rate`
+        # is string matching over hand-written references and no model gets a vote on it.
+        "deterministic_pass_rate": round(deterministic_passed / len(results), 4) if results else 0.0,
+        "judged_pass_rate": round(judged_passed / len(results), 4) if results else 0.0,
         "answer_model": answer_model,
         "judge_model": judge_model,
         "independent_judge": judge_model != answer_model,
@@ -568,6 +596,9 @@ def _summarise(report: dict[str, Any]) -> str:
         f"Cases:        {report['cases']} over {report['runs']} run(s)"
         + ("" if report.get("complete", True) else "  — PARTIAL, the daily quota ran out"),
         f"Pass rate:    {report['pass_rate']:.1%} ({report['passed']} passed, {report['failed']} failed)",
+        f"  rules:      {report.get('deterministic_pass_rate', 0.0):.1%}  (gates the run)",
+        f"  judged:     {report.get('judged_pass_rate', 0.0):.1%}  (trend only"
+        + ("" if report["independent_judge"] else ", self-graded — not evidence") + ")",
         "",
         "Metrics:",
     ]
@@ -649,14 +680,36 @@ def main() -> int:
     report["complete"] = len(results) == len(gradeable_cases()) * args.repeats
     args.out.mkdir(parents=True, exist_ok=True)
     report_path = args.out / "deepeval_report.json"
+
+    # A run the quota cut short must not replace a complete one. The Admin page reads
+    # whatever is here, and two graded cases standing in for five is a worse artifact than
+    # the full run it would overwrite — keep both and let the reader pick.
+    if not report["complete"] and report_path.exists():
+        report_path = args.out / "deepeval_report.partial.json"
+        print(
+            f"\nThe run was partial, so the complete report at {args.out / 'deepeval_report.json'} was kept.",
+            file=sys.stderr,
+        )
+
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(_summarise(report))
     print(f"\nWrote {report_path}")
 
-    if args.fail_under is not None and report["pass_rate"] < args.fail_under:
+    if not report["independent_judge"]:
         print(
-            f"\nFAIL: pass rate {report['pass_rate']:.1%} is below the required {args.fail_under:.1%}.",
+            f"\nWARNING: the judge and the answer model are both {report['answer_model']}, so the "
+            "judged metrics measure self-consistency, not quality — read them as a trend and act "
+            "on the rule-based rate. Pass --judge-model with a different model for a second opinion.",
+            file=sys.stderr,
+        )
+
+    # Gated on the rule-based rate, not the blended one: a judge grading its own vendor's
+    # answers can lift the blend, and a gate a generous judge can open is not a gate.
+    if args.fail_under is not None and report["deterministic_pass_rate"] < args.fail_under:
+        print(
+            f"\nFAIL: deterministic pass rate {report['deterministic_pass_rate']:.1%} "
+            f"is below the required {args.fail_under:.1%}.",
             file=sys.stderr,
         )
         return 1

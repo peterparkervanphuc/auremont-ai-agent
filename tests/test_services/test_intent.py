@@ -1,6 +1,7 @@
 """Keyword classifiers behind the customer-chat gates and the AI→Sale handoff trigger."""
 
 from backend.ai.intent import (
+    has_near_term_timeline,
     is_conversation_meta_query,
     is_customer_memory_query,
     is_search_refinement,
@@ -12,6 +13,12 @@ from backend.ai.intent import (
     preflight_policy,
     wants_human_agent,
 )
+
+
+def test_near_term_timeline_requires_a_concrete_time():
+    assert has_near_term_timeline("Tôi muốn xem căn cuối tuần này")
+    assert has_near_term_timeline("Tôi dự định đặt cọc trong 2 tuần tới")
+    assert not has_near_term_timeline("Tôi đang tìm hiểu để mua sau")
 
 
 def test_needs_inventory_matches_a_budget_threshold():

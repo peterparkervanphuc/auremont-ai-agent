@@ -237,17 +237,20 @@ _LOCATION_EXCLUDE_PREFIX = re.compile(
 )
 
 _RAISE_PATTERN = re.compile(
-    r"\b(?:tăng|nâng|lên|tang|nang)\s*(?:giá|gia|ngân sách|ngan sach|lên|len|tới|toi|đến|den)?\s*"
+    r"\b(?:tăng|nâng|lên|tang|nang|len)\s*"
+    r"(?:(?:giá|gia|ngân sách|ngan sach)\s*)?(?:(?:lên|len|tới|toi|đến|den)\s*)?"
     r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr)\b",
     re.IGNORECASE,
 )
 _LOWER_PATTERN = re.compile(
-    r"\b(?:giảm|hạ|giam|ha)\s*(?:giá|gia|ngân sách|ngan sach|xuống|xuong|còn|con)?\s*"
+    r"\b(?:giảm|hạ|xuống|giam|ha|xuong)\s*"
+    r"(?:(?:giá|gia|ngân sách|ngan sach)\s*)?(?:(?:xuống|xuong|còn|con)\s*)?"
     r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr)\b",
     re.IGNORECASE,
 )
 _AREA_ADJUST_PATTERN = re.compile(
-    r"\b(?:tăng|nâng|giảm|hạ|lên|xuống|tang|nang|giam|ha)\s*(?:diện tích|dien tich|lên|len|xuống|xuong|còn|con)?\s*"
+    r"\b(?:tăng|nâng|giảm|hạ|lên|xuống|tang|nang|giam|ha|len|xuong)\s*"
+    r"(?:(?:diện tích|dien tich)\s*)?(?:(?:lên|len|xuống|xuong|còn|con)\s*)?"
     r"(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b",
     re.IGNORECASE,
 )
@@ -269,7 +272,13 @@ _PURPOSE_PATTERNS = (
         re.compile(r"\b(để ở|mua ở|vừa ở|an cư|dinh cư|định cư|de o|mua o|vua o|an cu|dinh cu)\b", re.IGNORECASE),
         "living",
     ),
-    (re.compile(r"\b(đầu tư|dau tu|cho thuê lại|cho thue lai|tăng giá|tang gia)\b", re.IGNORECASE), "investment"),
+    (
+        re.compile(
+            r"\b(đầu tư|dau tu|cho thuê lại|cho thue lai|mua\s+(?:để\s+)?tăng giá|mua\s+(?:de\s+)?tang gia)\b",
+            re.IGNORECASE,
+        ),
+        "investment",
+    ),
     (re.compile(r"\b(kinh doanh|văn phòng|van phong|mở cửa hàng|mo cua hang)\b", re.IGNORECASE), "business"),
 )
 

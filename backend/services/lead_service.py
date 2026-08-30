@@ -18,7 +18,9 @@ from backend.core.audit import log_event
 from backend.core.config import get_settings
 from backend.core.enums import MessageSender
 from backend.models.chat_session import ChatSession
+from backend.models.lead import Lead
 from backend.models.message import Message
+from backend.models.user import User
 from backend.repositories.lead import get_or_create_lead, update_lead_score
 from backend.repositories.user import get_user_by_id
 from backend.services import lead_scoring_service as scoring
@@ -54,7 +56,7 @@ def _rescore(db: Session, session: ChatSession, query: str, settings) -> None:
     signals = scoring.collect_signals(
         query,
         criteria,
-        latched=(lead.signals or {}).get("flags"),
+        latched=scoring.compatible_latched_flags((lead.signals or {}).get("flags"), lead.analysis_version),
         turn_count=turn_count,
         is_registered=session.customer_id is not None,
         has_phone=bool(user is not None and user.phone),
@@ -110,7 +112,7 @@ def rescore_after_claim(db: Session, lead, user) -> None:
     try:
         settings = get_settings()
         signals = scoring.signals_from_stored(
-            (lead.signals or {}).get("flags"),
+            scoring.compatible_latched_flags((lead.signals or {}).get("flags"), lead.analysis_version),
             turn_count=lead.turn_count,
             is_registered=True,
             has_phone=bool(user is not None and user.phone),
@@ -125,6 +127,42 @@ def rescore_after_claim(db: Session, lead, user) -> None:
         update_lead_score(db, lead, verdict, turn_count=lead.turn_count, project_id=lead.project_id)
     except Exception:
         logger.warning("Post-registration rescore failed for lead %s.", lead.id, exc_info=True)
+
+
+def rescore_stale_leads(db: Session, leads: list[Lead], users: dict[int, User]) -> None:
+    """Upgrade persisted scores created by an older ruleset.
+
+    Inbox rows can remain untouched for days, so waiting for another customer message leaves
+    obsolete HOT badges visible after a scoring fix ships. Old intent flags are deliberately
+    filtered through ``compatible_latched_flags``; only stable facts survive the upgrade.
+    """
+    settings = get_settings()
+    if not settings.lead_scoring_enabled:
+        return
+
+    for lead in leads:
+        if lead.analysis_version == scoring.ANALYSIS_VERSION:
+            continue
+        lead_id = lead.id
+        try:
+            user = users.get(lead.customer_id) if lead.customer_id is not None else None
+            signals = scoring.signals_from_stored(
+                scoring.compatible_latched_flags((lead.signals or {}).get("flags"), lead.analysis_version),
+                turn_count=lead.turn_count,
+                is_registered=lead.customer_id is not None,
+                has_phone=bool(user is not None and user.phone),
+            )
+            verdict = scoring.combine(
+                scoring.score_rules(signals),
+                signals,
+                None,
+                hot_threshold=settings.lead_hot_threshold,
+                warm_threshold=settings.lead_warm_threshold,
+            )
+            update_lead_score(db, lead, verdict, turn_count=lead.turn_count, project_id=lead.project_id)
+        except Exception:
+            db.rollback()
+            logger.warning("Stale lead rescore failed for lead %s; leaving the previous tier.", lead_id, exc_info=True)
 
 
 def _criteria_for(session_id: int, query: str) -> search_criteria.SearchCriteria:

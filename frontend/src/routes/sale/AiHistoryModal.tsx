@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { saleLiveApi } from "../../api/saleLive";
 import type { MessageResponse } from "../../types";
 import { AnswerImageStrip } from "./AnswerImageStrip";
@@ -25,20 +26,35 @@ interface AiHistoryModalProps {
  * merging it into the live transcript above. Fetched once per open, not polled: this is a
  * past conversation, not a live one. */
 export function AiHistoryModal({ sessionId, open, onClose }: AiHistoryModalProps) {
-  const [messages, setMessages] = useState<MessageResponse[]>([]);
+  const [history, setHistory] = useState<{ sessionId: number; messages: MessageResponse[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const hasLoadedHistory = history?.sessionId === sessionId;
+  const messages = hasLoadedHistory ? history.messages : [];
+
   useEffect(() => {
-    if (!open) return;
+    if (!open || hasLoadedHistory) return;
+    let cancelled = false;
     setLoading(true);
     setError(null);
     saleLiveApi
       .getAiHistory(sessionId)
-      .then(setMessages)
-      .catch(() => setError("Không tải được hội thoại AI — vui lòng thử lại."))
-      .finally(() => setLoading(false));
-  }, [open, sessionId]);
+      .then((result) => {
+        if (cancelled) return;
+        // Keep the modal responsive while React prepares a potentially media-heavy history.
+        startTransition(() => setHistory({ sessionId, messages: result }));
+      })
+      .catch(() => {
+        if (!cancelled) setError("Không tải được hội thoại AI — vui lòng thử lại.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sessionId, hasLoadedHistory]);
 
   useEffect(() => {
     if (!open) return;
@@ -49,8 +65,8 @@ export function AiHistoryModal({ sessionId, open, onClose }: AiHistoryModalProps
 
   if (!open) return null;
 
-  return (
-    <div className="admin-modal-backdrop" role="presentation" onMouseDown={onClose}>
+  return createPortal(
+    <div className="admin-modal-backdrop ai-history-backdrop" role="presentation" onMouseDown={onClose}>
       <section
         className="chat-page ai-history-modal"
         role="dialog"
@@ -72,19 +88,22 @@ export function AiHistoryModal({ sessionId, open, onClose }: AiHistoryModalProps
 
         <div className="chat-messages">
           <div className="chat-messages-inner">
-            {loading && (
+            {(loading || (!hasLoadedHistory && !error)) && (
               <div className="chat-empty-text">
                 <LoaderIcon size={16} className="icon-spin" /> Đang tải hội thoại...
               </div>
             )}
             {error && <div className="alert alert-danger">{error}</div>}
-            {!loading && !error && messages.length === 0 && (
+            {hasLoadedHistory && !loading && !error && messages.length === 0 && (
               <div className="chat-empty-text">Khách chưa từng chat với Auremont AI trước đó.</div>
             )}
             {messages.map((m) => {
               const isCustomer = m.sender === "customer";
               return (
-                <div key={m.id} className={`chat-message ${isCustomer ? "chat-message--bot" : "chat-message--user"}`}>
+                <div
+                  key={m.id}
+                  className={`chat-message ai-history-message ${isCustomer ? "chat-message--bot" : "chat-message--user"}`}
+                >
                   <div className={`chat-avatar ${isCustomer ? "chat-avatar--bot" : "chat-avatar--user"}`}>
                     {isCustomer ? <UserIcon size={16} /> : <AuremontAvatar size={20} emotion={m.emotion ?? "idle"} variant="face" />}
                   </div>
@@ -108,6 +127,7 @@ export function AiHistoryModal({ sessionId, open, onClose }: AiHistoryModalProps
           </div>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }

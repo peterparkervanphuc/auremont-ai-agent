@@ -37,36 +37,46 @@ from backend.services import memory_service, search_criteria
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_VERSION = "rules-2"
+ANALYSIS_VERSION = "rules-3"
 
 _RULE_WEIGHTS: dict[str, int] = {
-    "transaction_ready": 65,
+    "transaction_ready": 45,
+    "consideration_intent": 25,
     "stated_budget": 30,
-    "budget_over_1bn": 5,
-    "closing_intent": 25,
-    "wants_human": 20,
-    "named_unit_code": 15,
-    "three_filters": 10,
-    "registered": 10,
+    "named_unit_code": 20,
+    "three_filters": 8,
+    "criteria_known": 5,
+    "closing_intent": 15,
+    "wants_human": 10,
+    "near_term_timeline": 10,
     "has_phone": 10,
     "engaged": 5,
-    "purpose_known": 5,
-    "household_known": 3,
+    "purpose_known": 3,
+    "household_known": 2,
 }
 
 MAX_SCORE = 100
-SOFT_MAX = 30
+SOFT_MAX = 20
+PROFILE_MAX = 35
+
+_INTENT_SIGNALS = ("transaction_ready", "consideration_intent", "closing_intent", "wants_human")
+_PROFILE_SIGNALS = (
+    "stated_budget",
+    "named_unit_code",
+    "three_filters",
+    "criteria_known",
+    "purpose_known",
+    "household_known",
+)
 
 LATCHING_SIGNALS = (
     "transaction_ready",
     "stated_budget",
-    "budget_over_1bn",
-    "closing_intent",
-    "wants_human",
     "named_unit_code",
+    "near_term_timeline",
 )
+_LEGACY_SAFE_SIGNALS = ("stated_budget", "named_unit_code")
 
-_ONE_BILLION = 1_000_000_000
 _ENGAGED_TURNS = 6
 _MIN_FILTERS = 3
 
@@ -158,6 +168,14 @@ class LeadVerdict:
     reason: str
 
 
+def compatible_latched_flags(flags: dict[str, bool] | None, analysis_version: str | None) -> dict[str, bool]:
+    """Keep only stable facts when a lead was scored by an older rule vocabulary."""
+    stored = dict(flags or {})
+    if analysis_version == ANALYSIS_VERSION:
+        return stored
+    return {name: True for name in _LEGACY_SAFE_SIGNALS if stored.get(name)}
+
+
 def collect_signals(
     query: str,
     criteria: search_criteria.SearchCriteria,
@@ -174,16 +192,16 @@ def collect_signals(
     budgets = _stated_budgets(query)
     flags["stated_budget"] = bool(budgets)
 
-    price = criteria.get(search_criteria.FIELD_PRICE)
-    ceiling = price.value[1] if price is not None and isinstance(price.value, tuple) else None
-    flags["budget_over_1bn"] = bool(budgets) and ceiling is not None and ceiling >= _ONE_BILLION
-
     flags["transaction_ready"] = intent.is_transaction_ready_lead(query)
+    flags["consideration_intent"] = intent.is_consideration_lead(query)
     flags["closing_intent"] = intent.needs_registration_gate(query)
     flags["wants_human"] = intent.wants_human_agent(query)
+    flags["near_term_timeline"] = intent.has_near_term_timeline(query)
     flags["named_unit_code"] = criteria.get(search_criteria.FIELD_UNIT_CODES) is not None
 
-    flags["three_filters"] = len(criteria.filtering()) >= _MIN_FILTERS
+    filter_count = len(criteria.filtering())
+    flags["criteria_known"] = filter_count > 0
+    flags["three_filters"] = filter_count >= _MIN_FILTERS
     flags["purpose_known"] = criteria.purpose is not None
     flags["household_known"] = criteria.household_size is not None
 
@@ -199,8 +217,31 @@ def collect_signals(
 
 
 def score_rules(signals: LeadSignals) -> int:
-    total = sum(points for name, points in _RULE_WEIGHTS.items() if signals.fired(name))
-    return min(total, MAX_SCORE)
+    return min(sum(_rule_contributions(signals).values()), MAX_SCORE)
+
+
+def _rule_contributions(signals: LeadSignals) -> dict[str, int]:
+    """Return non-overlapping points so one sentence cannot score the same intent repeatedly."""
+    contributions: dict[str, int] = {}
+
+    fired_intents = [name for name in _INTENT_SIGNALS if signals.fired(name)]
+    if fired_intents:
+        strongest = max(fired_intents, key=_RULE_WEIGHTS.__getitem__)
+        contributions[strongest] = _RULE_WEIGHTS[strongest]
+
+    remaining_profile = PROFILE_MAX
+    for name in _PROFILE_SIGNALS:
+        if not signals.fired(name) or remaining_profile <= 0:
+            continue
+        points = min(_RULE_WEIGHTS[name], remaining_profile)
+        contributions[name] = points
+        remaining_profile -= points
+
+    for name in ("near_term_timeline", "has_phone", "engaged"):
+        if signals.fired(name):
+            contributions[name] = _RULE_WEIGHTS[name]
+
+    return contributions
 
 
 def signals_from_stored(
@@ -214,16 +255,36 @@ def signals_from_stored(
     badge at exactly the point they most want to act on it.
     """
     updated = dict(flags or {})
+    updated.pop("budget_over_1bn", None)
     updated["registered"] = is_registered
     updated["has_phone"] = has_phone
     updated["engaged"] = turn_count >= _ENGAGED_TURNS
     return LeadSignals(flags=updated, turn_count=turn_count)
 
 
-def classify(score: int, *, hot_threshold: int, warm_threshold: int) -> LeadTier:
-    if score >= hot_threshold:
+def classify(
+    score: int,
+    signals: LeadSignals,
+    soft: LeadSoftSignals | None = None,
+    *,
+    hot_threshold: int,
+    warm_threshold: int,
+) -> LeadTier:
+    """Classify readiness with prerequisites, not a threshold alone.
+
+    HOT requires a reachable person, an explicit commitment action, and one qualifying
+    detail. A high numeric score without those prerequisites is intentionally capped at WARM.
+    """
+    has_timing = soft is not None and soft.urgency in {LeadUrgency.IMMEDIATE, LeadUrgency.NEAR_TERM}
+    has_qualification = (
+        any(signals.fired(name) for name in ("stated_budget", "named_unit_code", "three_filters", "near_term_timeline"))
+        or has_timing
+    )
+    hot_eligible = signals.fired("has_phone") and signals.fired("transaction_ready") and has_qualification
+
+    if score >= hot_threshold and hot_eligible:
         return LeadTier.HOT
-    if score >= warm_threshold:
+    if score >= warm_threshold or signals.fired("consideration_intent") or signals.fired("transaction_ready"):
         return LeadTier.WARM
     return LeadTier.COLD
 
@@ -291,12 +352,10 @@ def enrich_with_llm(customer_turns: list[str]) -> LeadSoftSignals | None:
 def _soft_points(soft: LeadSoftSignals) -> int:
     raw = 0
     if soft.urgency == LeadUrgency.IMMEDIATE:
-        raw += 20
+        raw += 15
     elif soft.urgency == LeadUrgency.NEAR_TERM:
         raw += 8
     if soft.decision_ready:
-        raw += 10
-    if soft.purpose == LeadPurpose.INVESTMENT:
         raw += 5
     return min(int(raw * soft.confidence), SOFT_MAX)
 
@@ -312,7 +371,7 @@ def combine(
     soft_points = _soft_points(soft) if soft is not None else None
     total = min(rule_score + (soft_points or 0), MAX_SCORE)
     return LeadVerdict(
-        tier=classify(total, hot_threshold=hot_threshold, warm_threshold=warm_threshold),
+        tier=classify(total, signals, soft, hot_threshold=hot_threshold, warm_threshold=warm_threshold),
         score=total,
         rule_score=rule_score,
         soft_score=soft_points,
@@ -321,7 +380,7 @@ def combine(
         confidence=soft.confidence if soft is not None else None,
         signals={
             "flags": signals.flags,
-            "weights": {name: points for name, points in _RULE_WEIGHTS.items() if signals.fired(name)},
+            "weights": _rule_contributions(signals),
             "analysis_version": ANALYSIS_VERSION,
             **({"llm_reason": soft.reason} if soft is not None and soft.reason else {}),
         },

@@ -61,6 +61,7 @@ export function AnswerImageStrip({ images }: Props) {
                 src={image.url}
                 alt={image.project_name}
                 loading="lazy"
+                decoding="async"
                 onError={() => setBroken((prev) => new Set(prev).add(image.url))}
               />
             </button>

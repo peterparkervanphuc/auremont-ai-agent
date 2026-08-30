@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { CategoryCard } from "../components/CategoryCard";
+import { PricingSection } from "../components/PricingSection";
 import { FloorPlanTabs } from "./sale/inventory/shared";
 import { fetchCategories, fetchProjectOverview } from "../api/projects";
 import type { ProjectOverview } from "../api/projects";
@@ -154,6 +155,8 @@ export function Home() {
           </div>
         </div>
       </section>
+
+      <PricingSection />
 
       {overview && (
         <section className="home-intro">

@@ -116,7 +116,7 @@ def test_the_full_breakdown_lists_every_fired_signal_with_its_points(client_as, 
     assert body["customer_name"] == "Phạm Văn D"
     assert {s["label"]: s["points"] for s in body["signals"]} == {
         "Đã nêu ngân sách": 30,
-        "Muốn xem nhà / đặt lịch / xin bảng giá": 25,
+        "Muốn nhận tài liệu / đặt lịch / được liên hệ": 25,
         "Đã có số điện thoại": 10,
     }
     assert body["signals"][0]["label"] == "Đã nêu ngân sách"

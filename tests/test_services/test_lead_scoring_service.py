@@ -17,7 +17,7 @@ def _score(query: str, **kwargs) -> tuple[int, LeadTier, scoring.LeadSignals]:
     criteria = search_criteria.merge_criteria(search_criteria.SearchCriteria(), search_criteria.parse_criteria(query))
     signals = scoring.collect_signals(query, criteria, **kwargs)
     rule_score = scoring.score_rules(signals)
-    return rule_score, scoring.classify(rule_score, hot_threshold=HOT, warm_threshold=WARM), signals
+    return rule_score, scoring.classify(rule_score, signals, hot_threshold=HOT, warm_threshold=WARM), signals
 
 
 def test_a_stated_budget_scores_but_a_price_question_does_not():
@@ -87,12 +87,12 @@ def test_browsing_questions_stay_cold():
         "Có thể sắp xếp lịch tham quan dự án cuối tuần này không?",
     ),
 )
-def test_explicit_transaction_ready_questions_are_hot(query):
+def test_high_intent_questions_are_warm_without_a_reachable_customer(query):
     score, tier, signals = _score(query)
 
-    assert signals.fired("transaction_ready") is True
-    assert score >= HOT
-    assert tier is LeadTier.HOT
+    assert signals.fired("transaction_ready") or signals.fired("consideration_intent")
+    assert score > 0
+    assert tier is LeadTier.WARM
 
 
 @pytest.mark.parametrize(
@@ -110,30 +110,68 @@ def test_general_research_questions_are_not_transaction_ready(query):
     assert signals.fired("transaction_ready") is False
 
 
-def test_contact_details_lift_the_same_message_from_warm_to_hot():
-    """Asking for a price list anonymously is warm; the same person reachable by phone is hot."""
+def test_contact_details_alone_do_not_lift_a_price_list_request_to_hot():
+    """Reachability is necessary for HOT, but it is not proof of transaction readiness."""
     query = "cho mình xin bảng giá căn 2PN, ngân sách tầm 3.5 tỷ"
 
     _, anonymous_tier, _ = _score(query)
     _, known_tier, _ = _score(query, is_registered=True, has_phone=True)
 
     assert anonymous_tier is LeadTier.WARM
+    assert known_tier is LeadTier.WARM
+
+
+def test_hot_requires_contact_action_and_a_qualifying_detail():
+    query = "Tôi muốn đặt lịch xem căn A-1205 cuối tuần này"
+
+    _, anonymous_tier, _ = _score(query)
+    _, known_tier, signals = _score(query, is_registered=True, has_phone=True)
+
+    assert signals.fired("transaction_ready") is True
+    assert signals.fired("named_unit_code") is True
+    assert anonymous_tier is LeadTier.WARM
     assert known_tier is LeadTier.HOT
+
+
+def test_a_dated_viewing_with_contact_is_hot_but_an_undated_one_is_warm():
+    _, dated_tier, dated_signals = _score("Tôi muốn xem căn thực tế cuối tuần này", is_registered=True, has_phone=True)
+    _, undated_tier, _ = _score("Tôi muốn xem căn thực tế", is_registered=True, has_phone=True)
+
+    assert dated_signals.fired("near_term_timeline") is True
+    assert dated_tier is LeadTier.HOT
+    assert undated_tier is LeadTier.WARM
+
+
+def test_overlapping_intent_signals_only_contribute_once():
+    score, tier, signals = _score("Cho mình gặp chuyên viên tư vấn")
+
+    assert signals.fired("consideration_intent") is True
+    assert signals.fired("wants_human") is True
+    assert score == scoring._RULE_WEIGHTS["consideration_intent"]
+    assert tier is LeadTier.WARM
+
+
+def test_legacy_broad_transaction_flags_are_not_latched_into_the_new_rules():
+    stored = {"transaction_ready": True, "closing_intent": True, "stated_budget": True}
+
+    compatible = scoring.compatible_latched_flags(stored, "rules-2")
+
+    assert compatible == {"stated_budget": True}
 
 
 def test_utterance_signals_latch_so_a_later_thank_you_cannot_cool_a_lead():
     _, _, first = _score("em muốn đặt lịch xem nhà")
-    assert first.fired("closing_intent") is True
+    assert first.fired("transaction_ready") is True
 
     later_score, _, later = _score("dạ vâng em cảm ơn ạ", latched=first.flags)
 
-    assert later.fired("closing_intent") is True
-    assert later_score >= scoring._RULE_WEIGHTS["closing_intent"]
+    assert later.fired("transaction_ready") is True
+    assert later_score >= scoring._RULE_WEIGHTS["transaction_ready"]
 
 
 def test_newly_latched_reports_only_the_signals_this_turn_added():
     _, _, first = _score("em muốn đặt lịch xem nhà")
-    assert "closing_intent" in first.newly_latched
+    assert "transaction_ready" in first.newly_latched
 
     _, _, repeat = _score("em muốn đặt lịch xem nhà", latched=first.flags)
     assert repeat.newly_latched == ()
@@ -219,7 +257,7 @@ def test_the_verdict_records_the_evidence_behind_it():
     verdict = scoring.combine(scoring.score_rules(signals), signals, None, hot_threshold=HOT, warm_threshold=WARM)
 
     assert verdict.signals["flags"]["stated_budget"] is True
-    assert verdict.signals["weights"]["closing_intent"] == 25
+    assert verdict.signals["weights"]["closing_intent"] == 15
     assert verdict.signals["analysis_version"] == scoring.ANALYSIS_VERSION
 
 

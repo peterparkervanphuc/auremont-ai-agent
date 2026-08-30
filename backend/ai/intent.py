@@ -90,6 +90,11 @@ _FILTERED_UNIT_QUERY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_NATURAL_SEARCH_REQUEST_PATTERN = re.compile(
+    r"\b(?:tim|kiem)(?:\s+\w+){0,3}\s+(?:mot\s+)?(?:can|nha)\b",
+    re.IGNORECASE,
+)
+
 _PRICE_DOCUMENT_QUERY_PATTERN = re.compile(
     r"\b(?:gia|ngan\s+sach|tam\s+gia)\b"
     r"|\b(?:duoi|tren|toi\s+da|toi\s+thieu|tu)\b.{0,32}\b(?:ty|ti|trieu|vnd|dong)\b",
@@ -145,6 +150,7 @@ def needs_inventory(query: str) -> bool:
     return (
         any(strip_diacritics(keyword) in normalized for keyword in _REALTIME_INTENT_KEYWORDS)
         or bool(_FILTERED_UNIT_QUERY_PATTERN.search(normalized))
+        or bool(_NATURAL_SEARCH_REQUEST_PATTERN.search(normalized))
         or bool(_UNIT_CODE_PATTERN.search(normalized))
         or _mentions_price_threshold(normalized)
     )
@@ -442,6 +448,7 @@ _WANTS_HUMAN_KEYWORDS = (
     "gặp chuyên viên",
     "gặp sale",
     "gặp nhân viên",
+    "nhân viên tư vấn",
     "tư vấn viên",
     "nhân viên hỗ trợ",
     "cho gặp người",
@@ -455,41 +462,65 @@ def wants_human_agent(query: str) -> bool:
     return any(strip_diacritics(keyword) in normalized for keyword in _WANTS_HUMAN_KEYWORDS)
 
 
-# These phrases are stronger than ordinary browsing or a generic price question: the
-# customer is asking for a concrete transaction step, a current unit action, a calculation
-# they can act on, or a human appointment. Keep this separate from
-# `needs_registration_gate`: routing/registration and lead priority are different business
-# decisions, and broadening the gate would hide otherwise answerable questions.
+# A consideration signal is stronger than generic browsing, but it is not evidence that the
+# person is ready to transact. Availability, payment calculations and a human request should
+# put a lead on Sale's radar without making that lead HOT by themselves.
+_CONSIDERATION_PATTERNS = (
+    re.compile(r"\b(?:gui|cho|xin)\b.{0,30}\bbang hang\b.{0,40}\b(?:con trong|moi nhat)\b", re.IGNORECASE),
+    re.compile(r"\bcan (?:nay|do|[a-z0-9.-]+)\b.{0,24}\b(?:hien )?con (?:khong|trong)\b", re.IGNORECASE),
+    re.compile(r"\b(?:gui|cho|xin)\b.{0,30}\b(?:chinh sach|tien do thanh toan)\b", re.IGNORECASE),
+    re.compile(
+        r"\btinh\b.{0,60}\b(?:thanh toan tung dot|tung dot|khoan vay|tra hang thang|tra moi thang)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:giay to|ho so)\b.{0,50}\b(?:ky hop dong|ky.{0,20}dat coc)\b", re.IGNORECASE),
+)
+
+
+def is_consideration_lead(query: str) -> bool:
+    """Whether the visitor is evaluating a concrete unit, payment or human follow-up."""
+    normalized = strip_diacritics(query)
+    return wants_human_agent(query) or any(pattern.search(normalized) for pattern in _CONSIDERATION_PATTERNS)
+
+
+_NEAR_TERM_TIMELINE_PATTERN = re.compile(
+    r"\b(?:hom nay|ngay mai|tuan nay|cuoi tuan nay|tuan sau|thang nay|thang sau"
+    r"|trong(?: vong)?(?: \d+)? (?:ngay|tuan|thang)(?: toi| nay)?)\b",
+    re.IGNORECASE,
+)
+
+
+def has_near_term_timeline(query: str) -> bool:
+    """Whether the person named a concrete near-term time to act."""
+    return bool(_NEAR_TERM_TIMELINE_PATTERN.search(strip_diacritics(query)))
+
+
+# Only a concrete commitment step belongs here. These signals may contribute to HOT after
+# the person is reachable and has supplied a qualifying detail such as budget, unit or time.
 _TRANSACTION_READY_PATTERNS = (
     re.compile(r"\b(?:hom nay|bay gio)\b.{0,50}\bdat coc\b", re.IGNORECASE),
     re.compile(r"\bdat coc\b.{0,50}\b(?:chuyen|can|bao nhieu)\b", re.IGNORECASE),
-    re.compile(r"\b(?:gui|cho|xin)\b.{0,30}\bbang hang\b.{0,40}\b(?:con trong|moi nhat)\b", re.IGNORECASE),
     re.compile(
         r"\b(?:muon|can|dat|sap xep)\b.{0,40}\b(?:xem can thuc te|xem can mau|tham quan du an)\b", re.IGNORECASE
     ),
-    re.compile(r"\bcan (?:nay|do|[a-z0-9.-]+)\b.{0,24}\b(?:hien )?con (?:khong|trong)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:dat|hen|sap xep)\s+lich\b.{0,30}\b(?:xem (?:can|nha|du an)|tham quan)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b(?:giu can|giu cho)\b.{0,40}\b(?:den|toi|qua|ngay mai|hom sau)\b", re.IGNORECASE),
-    re.compile(r"\b(?:gui|cho|xin)\b.{0,30}\b(?:chinh sach|tien do thanh toan)\b", re.IGNORECASE),
-    re.compile(
-        r"\btinh\b.{0,60}\b(?:thanh toan tung dot|tung dot|khoan vay|tra hang thang|tra moi thang)\b", re.IGNORECASE
-    ),
-    re.compile(r"\b(?:giay to|ho so)\b.{0,50}\b(?:ky hop dong|ky.{0,20}dat coc)\b", re.IGNORECASE),
     re.compile(r"\b(?:khi nao|muon|co the)\b.{0,50}\b(?:ky thoa thuan dat coc|ky.{0,20}dat coc)\b", re.IGNORECASE),
-    re.compile(
-        r"\b(?:gap|noi chuyen|ket noi)\b.{0,30}\b(?:nhan vien tu van|chuyen vien|sale|tu van vien)\b", re.IGNORECASE
-    ),
 )
 
 
 def is_transaction_ready_lead(query: str) -> bool:
     """Whether this turn explicitly asks for a concrete next step toward a purchase.
 
-    The matcher is intentionally narrow. Questions such as "giá bán bao nhiêu?" or
-    "chính sách thanh toán thế nào?" remain browsing signals; asking us to send the exact
-    policy, calculate instalments, hold a unit, or arrange a visit is transaction-ready.
+    The matcher is intentionally narrow. Availability, policy, loan calculations and human
+    requests are consideration signals; booking a visit, holding a unit or placing/signing a
+    deposit is transaction-ready.
     """
     normalized = strip_diacritics(query)
-    return wants_human_agent(query) or any(pattern.search(normalized) for pattern in _TRANSACTION_READY_PATTERNS)
+    return any(pattern.search(normalized) for pattern in _TRANSACTION_READY_PATTERNS)
 
 
 _FRUSTRATION_KEYWORDS = (

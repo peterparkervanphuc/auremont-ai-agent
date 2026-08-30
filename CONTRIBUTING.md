@@ -21,16 +21,45 @@ falls back to a Rust build. Add `-c <(echo "cryptography<47")` to the install.
 CI runs these four, and so should you:
 
 ```bash
-ruff check backend/ tests/
-ruff format --check backend/ tests/
+ruff check backend/ tests/ eval/
+ruff format --check backend/ tests/ eval/
 mypy backend/
-pytest tests/ -q
+pytest tests/ -q --cov=backend --cov-fail-under=70
 ```
 
 `pytest tests/` needs no infrastructure — the suite is hermetic. A real
 `COHERE_API_KEY` or `REDIS_URL` in your `.env` is neutralised by a fixture in
-`tests/conftest.py`, so no test makes a billed API call. The exception is
-`tests/test_e2e`, which skips itself unless a backend is live on port 8000.
+`tests/conftest.py`, so no test makes a billed API call, and `_no_live_qdrant`
+does the same for the vector store. The exception is `tests/test_e2e`, which
+skips itself unless a backend is live on port 8000.
+
+The coverage gate is the same number CI enforces, and it is a floor rather than a
+target: a PR that adds a service and no test for it will trip it. If you need to
+see what is uncovered, `--cov-report=term-missing` prints the line numbers.
+
+## Review
+
+No branch is pushed to directly. Work happens on a `feature/*` branch, arrives as a PR
+into `develop`, and reaches `main` only through a release PR.
+
+Every PR needs one approving review from a maintainer who is not its author.
+`.github/CODEOWNERS` requests that review automatically; branch protection on `main` and
+`develop` is what makes it binding, together with the CI checks below as required status
+checks:
+
+- `lint-and-test / Lint with ruff`
+- `lint-and-test / Type-check with mypy`
+- `lint-and-test / Run tests` — includes the `--cov-fail-under` coverage gate
+- `lint-and-test / Golden RAG regression gate`
+
+The PR description follows `.github/pull_request_template.md`. Its risk-surface
+checklist is the part reviewers read first: it says which of the paths under
+[What needs care](#what-needs-care) the change touches, so review attention lands where
+a mistake is expensive rather than being spread evenly over the diff.
+
+As a reviewer, the questions worth asking are: does the *Why* describe a real failure or
+requirement; is a behaviour change covered by a test that would have failed before it;
+and does a ticked risk box have a test proving the guarantee still holds.
 
 ## Comments
 

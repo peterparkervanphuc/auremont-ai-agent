@@ -68,6 +68,8 @@ class Settings(BaseSettings):
 
     tracing_enabled: bool = False
     trace_file: str = "eval/runs.jsonl"
+    evaluation_report_path: str = "eval/results/report.json"
+    deepeval_report_path: str = "eval/results/deepeval_report.json"
     observability_metrics_enabled: bool = False
     token_input_cost_per_million_usd: float = Field(default=0.0, ge=0)
     token_output_cost_per_million_usd: float = Field(default=0.0, ge=0)

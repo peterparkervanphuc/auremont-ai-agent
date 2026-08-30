@@ -30,6 +30,7 @@ FRONTEND_ENDPOINTS = [
     ("POST", "/sale/sessions"),
     ("GET", "/admin/conflicts"),
     ("GET", "/admin/eval/scores"),
+    ("GET", "/admin/eval/reports"),
     ("GET", "/admin/settings"),
     ("POST", "/feedback"),
 ]

@@ -16,6 +16,7 @@ import uuid
 import pytest
 import redis
 
+from backend.core import redis_client as redis_module
 from backend.core.config import get_settings
 from backend.services import memory_service
 
@@ -32,6 +33,21 @@ pytestmark = pytest.mark.skipif(
     not _redis_is_up(),
     reason="Redis not reachable - start it with `docker compose up -d redis`.",
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_live_redis(monkeypatch):
+    """Override conftest's autouse fixture of the same name.
+
+    conftest.py blanks `redis_url` for every test by default, since most of the suite
+    should never make a real Redis call. This file exists specifically to make one, so
+    the override is a no-op: `redis_url` stays real and the client cache stays clean,
+    the same as if this fixture were never defined. A test-scoped fixture in a module
+    shadows the identically-named one from conftest, so no test here sees the blanking.
+    """
+    redis_module.get_redis_client.cache_clear()
+    yield
+    redis_module.get_redis_client.cache_clear()
 
 
 @pytest.fixture

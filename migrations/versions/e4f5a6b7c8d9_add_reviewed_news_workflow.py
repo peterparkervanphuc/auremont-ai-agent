@@ -1,7 +1,7 @@
 """add Sale-authored and Admin-reviewed news workflow
 
 Revision ID: e4f5a6b7c8d9
-Revises: d3e4f5a6b7c8
+Revises: e8f9a0b1c2d3
 Create Date: 2026-08-28
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "e4f5a6b7c8d9"
-down_revision: str | Sequence[str] | None = "d3e4f5a6b7c8"
+down_revision: str | Sequence[str] | None = "e8f9a0b1c2d3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

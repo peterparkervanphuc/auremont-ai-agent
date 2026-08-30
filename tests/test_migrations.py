@@ -170,3 +170,27 @@ def test_reconciliation_migration_accepts_the_develop_b1_history(tmp_path):
         assert {"full_name", "phone"} <= user_columns
     finally:
         engine.dispose()
+
+
+def test_news_repair_migration_restores_missing_news_articles(tmp_path):
+    """Repair databases that recorded the old duplicate revision without its table."""
+    db_path = tmp_path / "missing-news.db"
+    url = f"sqlite:///{db_path}"
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.config_file_name = None
+    config.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
+    config.set_main_option("sqlalchemy.url", url)
+
+    engine = create_engine(url)
+    try:
+        command.upgrade(config, "d3e4f5a6b7c8")
+        with engine.begin() as connection:
+            connection.exec_driver_sql("DROP TABLE news_articles")
+
+        command.upgrade(config, "head")
+
+        assert "news_articles" in inspect(engine).get_table_names()
+        indexes = {item["name"] for item in inspect(engine).get_indexes("news_articles")}
+        assert {"ix_news_articles_url_hash", "ix_news_articles_status"} <= indexes
+    finally:
+        engine.dispose()

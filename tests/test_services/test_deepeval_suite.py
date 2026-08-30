@@ -328,6 +328,97 @@ def test_build_report_aggregates_per_metric():
     }
 
 
+def _metrics(*, required: bool, faithfulness: bool) -> dict:
+    """One deterministic gate and one judged metric, so a report can be built with the two
+    halves disagreeing."""
+    return {
+        deepeval_suite.REQUIRED_FACTS_METRIC: {"score": 1.0 if required else 0.0, "passed": required, "reason": ""},
+        "Faithfulness": {"score": 1.0 if faithfulness else 0.0, "passed": faithfulness, "reason": ""},
+    }
+
+
+def test_report_splits_the_rule_based_rate_from_the_judged_one():
+    """The headline blends a gate no model votes on with an opinion, so both halves are
+    reported separately — a generous judge must not be able to move the trustworthy number."""
+    results = [
+        {"case_id": "a", "passed": False, "metrics": _metrics(required=False, faithfulness=True)},
+        {"case_id": "b", "passed": True, "metrics": _metrics(required=True, faithfulness=True)},
+    ]
+
+    report = deepeval_suite.build_report(results, judge_model="j", answer_model="a")
+
+    assert report["deterministic_pass_rate"] == 0.5
+    assert report["judged_pass_rate"] == 1.0
+
+
+def test_a_generous_judge_cannot_lift_the_deterministic_rate():
+    """The defect this whole split exists for: the judge passes everything while a
+    hand-written reference fact is missing from every answer."""
+    results = [
+        {"case_id": "a", "passed": False, "metrics": _metrics(required=False, faithfulness=True)},
+        {"case_id": "b", "passed": False, "metrics": _metrics(required=False, faithfulness=True)},
+    ]
+
+    report = deepeval_suite.build_report(results, judge_model="same", answer_model="same")
+
+    assert report["judged_pass_rate"] == 1.0
+    assert report["deterministic_pass_rate"] == 0.0
+    assert report["independent_judge"] is False
+
+
+def test_fail_under_gates_on_the_rule_based_rate(monkeypatch, tmp_path):
+    """A run whose judged metrics all pass still fails when the gates do not: `--fail-under`
+    reads the number no model got a vote on."""
+    case = deepeval_suite.gradeable_cases()[0]
+    monkeypatch.setattr(deepeval_suite, "gradeable_cases", lambda: [case])
+    monkeypatch.setattr(
+        deepeval_suite,
+        "run_case",
+        lambda case, metrics, attempt=1, pacer=None: {
+            "case_id": case.case_id,
+            "attempt": attempt,
+            "passed": False,
+            "metrics": _metrics(required=False, faithfulness=True),
+        },
+    )
+    monkeypatch.setattr(deepeval_suite, "build_metrics", lambda judge, threshold: [])
+    monkeypatch.setattr(deepeval_suite.settings, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        sys, "argv", ["prog", "--out", str(tmp_path), "--fail-under", "0.9", "--judge-model", "other-model"]
+    )
+
+    assert deepeval_suite.main() == 1
+
+    report = json.loads((tmp_path / "deepeval_report.json").read_text(encoding="utf-8"))
+    assert report["judged_pass_rate"] == 1.0
+    assert report["deterministic_pass_rate"] == 0.0
+
+
+def test_a_partial_run_does_not_overwrite_a_complete_report(monkeypatch, tmp_path):
+    """Two graded cases standing in for five is a worse artifact than the complete run it
+    would replace, and the Admin page reads whatever is on disk."""
+    cases = deepeval_suite.gradeable_cases()[:2]
+    monkeypatch.setattr(deepeval_suite, "gradeable_cases", lambda: cases)
+
+    def _run_case(case, metrics, attempt=1, pacer=None):
+        if case.case_id != cases[0].case_id:
+            raise deepeval_suite.DailyQuotaExhaustedError("spent")
+        return {"case_id": case.case_id, "attempt": attempt, "passed": True, "metrics": {}}
+
+    monkeypatch.setattr(deepeval_suite, "run_case", _run_case)
+    monkeypatch.setattr(deepeval_suite, "build_metrics", lambda judge, threshold: [])
+    monkeypatch.setattr(deepeval_suite.settings, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(sys, "argv", ["prog", "--out", str(tmp_path)])
+
+    complete = tmp_path / "deepeval_report.json"
+    complete.write_text(json.dumps({"runs": 99, "complete": True}), encoding="utf-8")
+
+    deepeval_suite.main()
+
+    assert json.loads(complete.read_text(encoding="utf-8"))["runs"] == 99
+    assert json.loads((tmp_path / "deepeval_report.partial.json").read_text(encoding="utf-8"))["complete"] is False
+
+
 def test_a_partial_run_is_not_reported_as_green(monkeypatch, tmp_path):
     """A pass rate over the cases that fitted inside the quota says nothing about the rest.
     Exiting 0 would tell the nightly job all is well on a run that mostly did not happen."""

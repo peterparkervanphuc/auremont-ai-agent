@@ -24,6 +24,8 @@ services:
       PROJECT_IMAGES_BASE_URL: ${PROJECT_IMAGES_BASE_URL:-}
       # A single .tar.gz containing all images; one request instead of ~180.
       PROJECT_IMAGES_ARCHIVE_URL: ${PROJECT_IMAGES_ARCHIVE_URL:-}
+    volumes:
+      - ./eval/results:/app/eval/results:ro
     depends_on:
       mysql:
         condition: service_healthy

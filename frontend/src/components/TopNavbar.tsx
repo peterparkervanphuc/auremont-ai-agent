@@ -131,10 +131,10 @@ export function TopNavbar() {
           Trang chủ
         </NavLink>
 
-        <span className="topnav-link topnav-link--soon" aria-disabled="true">
+        <NavLink to="/news" className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
           <GlobeIcon size={16} />
-          Tin tức <span className="topnav-soon-badge">(sắp ra mắt)</span>
-        </span>
+          Tin tức
+        </NavLink>
 
         {role === "sale" && (
           <NavLink to="/news-workspace" className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}>
@@ -405,10 +405,14 @@ export function TopNavbar() {
             Trang chủ
           </NavLink>
 
-          <span className="topnav-link topnav-link--soon" aria-disabled="true">
+          <NavLink
+            to="/news"
+            onClick={() => setMobileOpen(false)}
+            className={({ isActive }) => `topnav-link ${isActive ? "topnav-link--active" : ""}`}
+          >
             <GlobeIcon size={16} />
-            Tin tức <span className="topnav-soon-badge">(sắp ra mắt)</span>
-          </span>
+            Tin tức
+          </NavLink>
 
           {role === "sale" && (
             <NavLink

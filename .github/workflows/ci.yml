@@ -32,7 +32,11 @@ jobs:
         run: mypy backend/
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        # `--cov-fail-under` is a floor, not a target. The suite sits well above it; the
+        # gate exists so a PR that adds a service and no test for it fails here instead of
+        # being noticed months later. Raise the number when the floor is comfortably passed
+        # — never lower it to make a red build green.
+        run: pytest tests/ -v --tb=short --cov=backend --cov-report=term-missing --cov-fail-under=85
         env:
           APP_ENV: test
           GEMINI_API_KEY: test-key

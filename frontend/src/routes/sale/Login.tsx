@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../types";
-import { EyeIcon, EyeOffIcon, LoaderIcon, LogInIcon, AuremontLogoIcon } from "../../components/Icons";
+import { ArrowLeftIcon, EyeIcon, EyeOffIcon, LoaderIcon, LogInIcon, AuremontLogoIcon } from "../../components/Icons";
 
 const HERO_IMAGE_URL =
   "https://pub-2b6dd93e8e8948099737838a9bf56770.r2.dev/vinhomes-ocean-park/masteri-grand-coast-bg-homepage.jpg";
@@ -55,6 +55,11 @@ export function Login() {
   return (
     <div className="login-page" style={{ "--hero-image-url": `url(${HERO_IMAGE_URL})` } as React.CSSProperties}>
       <div className="login-page-scrim" />
+
+      <Link to="/" className="login-home-link">
+        <ArrowLeftIcon size={16} />
+        <span>Trang chủ</span>
+      </Link>
 
       <div className="login-card">
         <div className="login-logo">

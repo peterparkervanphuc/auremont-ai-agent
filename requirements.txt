@@ -42,6 +42,9 @@ cohere>=5.13.0,<8
 ruff>=0.8.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+# CI fails the build below a coverage floor, so the plugin is a hard requirement of the
+# test step rather than something a developer happens to have installed.
+pytest-cov>=6.0.0
 httpx>=0.28.0
 mypy>=1.13.0
 

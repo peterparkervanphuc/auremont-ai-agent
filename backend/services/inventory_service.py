@@ -48,32 +48,51 @@ _UNIT_TYPE_PATTERN = re.compile(
 )
 _UNIT_CODE_PATTERN = re.compile(r"\b[A-Z]{1,6}\d{0,3}-[A-Z0-9]{2,12}\b", re.IGNORECASE)
 _AREA_RANGE_PATTERN = re.compile(
-    r"\b(?:từ\s*)?(\d+(?:[.,]\d+)?)\s*(?:[-\u2013\u2014]|đến|tới)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b",
+    r"\b(?:(?:từ|tu)\s*)?(\d+(?:[.,]\d+)?)\s*(?:[-\u2013\u2014]|đến|den|tới|toi)\s*"
+    r"(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b",
     re.IGNORECASE,
 )
-_AREA_MAX_PATTERN = re.compile(r"\b(?:dưới|<=?|không quá|tối đa)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
-_AREA_MIN_PATTERN = re.compile(r"\b(?:trên|>=?|từ)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
+_AREA_MAX_PATTERN = re.compile(
+    r"\b(?:dưới|duoi|<=?|không quá|khong qua|tối đa|toi da)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b",
+    re.IGNORECASE,
+)
+_AREA_MIN_PATTERN = re.compile(r"\b(?:trên|tren|>=?|từ|tu)\s*(\d+(?:[.,]\d+)?)\s*m(?:2|²)\b", re.IGNORECASE)
 _PRICE_RANGE_PATTERN = re.compile(
-    r"\b(?:từ\s*)?(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)?\s*(?:-|đến|tới)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)\b",
+    r"\b(?:(?:từ|tu)\s*)?(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr|t)?\s*"
+    r"(?:-|đến|den|tới|toi)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr|t)\b",
     re.IGNORECASE,
 )
 _PRICE_MAX_PATTERN = re.compile(
-    r"\b(?:dưới|<=?|không quá|tối đa)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)\b", re.IGNORECASE
+    r"\b(?:dưới|duoi|<=?|không quá|khong qua|tối đa|toi da)\s*(\d+(?:[.,]\d+)?)\s*"
+    r"(tỷ|ty|triệu|trieu|tr|t)\b",
+    re.IGNORECASE,
 )
-_PRICE_MIN_PATTERN = re.compile(r"\b(?:trên|>=?|từ)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|triệu|tr|t)\b", re.IGNORECASE)
+_PRICE_MIN_PATTERN = re.compile(
+    r"\b(?:trên|tren|>=?|từ|tu)\s*(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr|t)\b",
+    re.IGNORECASE,
+)
 _STATUS_PATTERN = re.compile(
-    r"\b(còn căn|còn bán|còn hàng|còn trống|available|giữ chỗ|đặt chỗ|reserved|đã bán|sold)\b", re.IGNORECASE
+    r"\b(còn căn|con can|còn bán|con ban|còn hàng|con hang|còn trống|con trong|available|"
+    r"giữ chỗ|giu cho|đặt chỗ|dat cho|reserved|đã bán|da ban|sold)\b",
+    re.IGNORECASE,
 )
 _STATUS_ALIASES = {
     "còn căn": "available",
+    "con can": "available",
     "còn bán": "available",
+    "con ban": "available",
     "còn hàng": "available",
+    "con hang": "available",
     "còn trống": "available",
+    "con trong": "available",
     "available": "available",
     "giữ chỗ": "reserved",
+    "giu cho": "reserved",
     "đặt chỗ": "reserved",
+    "dat cho": "reserved",
     "reserved": "reserved",
     "đã bán": "sold",
+    "da ban": "sold",
     "sold": "sold",
 }
 
@@ -833,9 +852,14 @@ def _to_number(value: str) -> float:
 
 
 def _price_to_vnd(value: str, unit: str | None) -> float:
-    multiplier = {"tỷ": 1_000_000_000, "t": 1_000_000_000, "triệu": 1_000_000, "tr": 1_000_000}.get(
-        (unit or "").lower(), 1.0
-    )
+    multiplier = {
+        "tỷ": 1_000_000_000,
+        "ty": 1_000_000_000,
+        "t": 1_000_000_000,
+        "triệu": 1_000_000,
+        "trieu": 1_000_000,
+        "tr": 1_000_000,
+    }.get((unit or "").lower(), 1.0)
     return _to_number(value) * multiplier
 
 
