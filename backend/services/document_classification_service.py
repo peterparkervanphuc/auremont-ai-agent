@@ -528,7 +528,7 @@ def classify_document(
             DocumentClassification,
             system_instruction=_CLASSIFICATION_SYSTEM_INSTRUCTION,
             temperature=0.0,
-            model=settings.gemini_model_accurate,
+            model=settings.gemini_model_background,
         )
     except Exception as exc:
         if is_gemini_quota_error(exc):
