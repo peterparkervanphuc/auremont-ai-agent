@@ -60,7 +60,12 @@ def get_gemini_client() -> genai.Client:
     return _client
 
 
-def generate_text(prompt: str, system_instruction: str | None = None) -> str:
+def generate_text(
+    prompt: str,
+    system_instruction: str | None = None,
+    *,
+    model: str | None = None,
+) -> str:
     config = (
         types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -69,7 +74,7 @@ def generate_text(prompt: str, system_instruction: str | None = None) -> str:
         else None
     )
 
-    return client_models_generate(prompt, config).text or ""
+    return client_models_generate(prompt, config, model=model).text or ""
 
 
 def generate_json(
@@ -78,6 +83,7 @@ def generate_json(
     system_instruction: str | None = None,
     *,
     temperature: float | None = None,
+    model: str | None = None,
 ) -> ModelT | None:
     """Generate a response constrained to `schema`, returning a parsed model instance.
 
@@ -95,7 +101,7 @@ def generate_json(
         temperature=temperature,
     )
 
-    response = client_models_generate(prompt, config)
+    response = client_models_generate(prompt, config, model=model)
     parsed = getattr(response, "parsed", None)
     if isinstance(parsed, schema):
         return parsed
@@ -106,13 +112,17 @@ def generate_json(
     return schema.model_validate_json(raw)
 
 
-def client_models_generate(prompt: str, config):
+def client_models_generate(prompt: str, config, *, model: str | None = None):
     """The single entry point for every generation call, so the retry policy above cannot
-    drift between the plain-text and schema-constrained paths."""
+    drift between the plain-text and schema-constrained paths.
+
+    `model` is resolved here rather than as a signature default so that overriding the
+    setting at runtime (tests, env reloads) is not frozen at import time."""
+    model = model or settings.gemini_model_fast
     for attempt in range(1, _GENERATE_MAX_ATTEMPTS + 1):
         try:
             response = get_gemini_client().models.generate_content(
-                model=settings.GEMINI_MODEL,
+                model=model,
                 contents=prompt,
                 config=config,
             )
@@ -125,7 +135,7 @@ def client_models_generate(prompt: str, config):
                 tracing.step(
                     "llm.usage",
                     usage_id=usage_id,
-                    model=settings.GEMINI_MODEL,
+                    model=model,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     total_tokens=total_tokens,
@@ -138,7 +148,7 @@ def client_models_generate(prompt: str, config):
                             usage_id=usage_id,
                             run_id=tracing.current_run_id(),
                             operation="gemini_generation",
-                            model=settings.GEMINI_MODEL,
+                            model=model,
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,
                             total_tokens=total_tokens,
@@ -159,7 +169,7 @@ def client_models_generate(prompt: str, config):
                 "Gemini generation hit a transient fault; retrying once.",
                 extra={
                     "event": "gemini.generate.retry",
-                    "model": settings.GEMINI_MODEL,
+                    "model": model,
                     "status_code": exc.code,
                     "attempt": attempt,
                     "delay_seconds": delay,

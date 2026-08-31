@@ -737,9 +737,19 @@ def _generate(state: PipelineState) -> dict[str, Any]:
     parsed: prompts.ConsultAnswer | prompts.SaleAnswer | None
     try:
         if is_public:
-            parsed = generate_json(prompt, prompts.ConsultAnswer, system_instruction=prompts.SYSTEM_INSTRUCTION_PUBLIC)
+            parsed = generate_json(
+                prompt,
+                prompts.ConsultAnswer,
+                system_instruction=prompts.SYSTEM_INSTRUCTION_PUBLIC,
+                model=get_settings().gemini_model_accurate,
+            )
         else:
-            parsed = generate_json(prompt, prompts.SaleAnswer, system_instruction=prompts.SYSTEM_INSTRUCTION)
+            parsed = generate_json(
+                prompt,
+                prompts.SaleAnswer,
+                system_instruction=prompts.SYSTEM_INSTRUCTION,
+                model=get_settings().gemini_model_accurate,
+            )
     except Exception:
         logger.exception(
             "Answer generation failed.",
