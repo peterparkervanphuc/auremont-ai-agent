@@ -36,7 +36,10 @@ class Settings(BaseSettings):
     llm_model: str = ""
 
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    # Live customer-turn path: verification and lead scoring stack inside one ~3s budget.
+    gemini_model_fast: str = "gemini-3.5-flash-lite"
+    # User-facing answer generation plus background judgment/extraction.
+    gemini_model_accurate: str = "gemini-2.5-flash"
     classification_auto_approve_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
     classification_require_admin_approval_before_indexing: bool = True
     semantic_conflict_detection_enabled: bool = True

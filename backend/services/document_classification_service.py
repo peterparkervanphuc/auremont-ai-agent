@@ -17,6 +17,7 @@ from typing import Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from backend.core.config import settings
 from backend.core.enums import DocumentCategory, LegalStatus
 from backend.core.gemini_client import generate_json, is_gemini_quota_error
 
@@ -493,6 +494,7 @@ def classify_document(
             DocumentClassification,
             system_instruction=_CLASSIFICATION_SYSTEM_INSTRUCTION,
             temperature=0.0,
+            model=settings.gemini_model_accurate,
         )
     except Exception as exc:
         if is_gemini_quota_error(exc):
