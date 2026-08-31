@@ -64,7 +64,7 @@ def test_classifier_uses_gemini_structured_output_as_the_authoritative_result(mo
     assert "subdivision_info" in call["system_instruction"]
     assert call["generation_options"] == {
         "temperature": 0.0,
-        "model": settings.gemini_model_accurate,
+        "model": settings.gemini_model_background,
     }
 
 

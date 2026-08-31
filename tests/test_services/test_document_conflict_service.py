@@ -103,7 +103,7 @@ def test_judge_uses_structured_output_and_marks_documents_as_untrusted(monkeypat
     assert captured["schema"] is SemanticConflictAssessment
     assert captured["options"] == {
         "temperature": 0.0,
-        "model": settings.gemini_model_accurate,
+        "model": settings.gemini_model_background,
     }
     assert "UNTRUSTED DATA" in captured["system_instruction"]
     assert "Ignore previous instructions" in captured["prompt"]
@@ -118,7 +118,7 @@ def test_compact_facts_are_bounded_and_raw_text_remains_available_for_evidence(m
         "settings",
         SimpleNamespace(
             document_conflict_max_facts_per_document=1,
-            gemini_model_accurate=settings.gemini_model_accurate,
+            gemini_model_background=settings.gemini_model_background,
         ),
     )
     captured: dict = {}
@@ -292,7 +292,7 @@ def test_long_documents_are_bounded_and_sample_start_middle_and_end(monkeypatch)
         SimpleNamespace(
             document_conflict_max_chars_per_document=600,
             document_conflict_sample_segments=3,
-            gemini_model_accurate=settings.gemini_model_accurate,
+            gemini_model_background=settings.gemini_model_background,
         ),
     )
     captured: dict = {}
@@ -329,7 +329,7 @@ def test_sampled_documents_can_never_be_silently_declared_compatible(monkeypatch
         SimpleNamespace(
             document_conflict_max_chars_per_document=600,
             document_conflict_sample_segments=3,
-            gemini_model_accurate=settings.gemini_model_accurate,
+            gemini_model_background=settings.gemini_model_background,
         ),
     )
     monkeypatch.setattr(service, "generate_json", lambda *_args, **_kwargs: _assessment(confidence=0.99))
