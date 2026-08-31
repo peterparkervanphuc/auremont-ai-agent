@@ -1,9 +1,7 @@
 target-version = "py311"
 line-length = 120
 
-# File migration do Alembic sinh tự động: sửa tay để chiều linter sẽ khiến file
-# lệch khỏi template và dễ hỏng khi rebase. Nội dung vẫn được kiểm bằng
-# tests/test_migrations.py (chạy thật lên DB, so schema với model).
+# Alembic-generated migrations are covered by migration tests.
 extend-exclude = ["migrations/versions"]
 
 [lint]
@@ -11,10 +9,10 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "S", "SIM", "RET"]
 ignore = ["E501"]
 
 [lint.per-file-ignores]
-# FastAPI intentionally declares dependency factories and request extractors as defaults.
+# FastAPI dependencies are intentionally declared as defaults.
 "backend/routers/*.py" = ["B008"]
 "backend/core/deps.py" = ["B008"]
-# Pytest uses assert, test credentials, and local FastAPI routes by design.
+# Tests intentionally use assertions, test credentials, and local routes.
 "tests/**/*.py" = ["S101", "S105", "S106", "B008"]
 
 [format]

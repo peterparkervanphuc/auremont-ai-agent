@@ -631,8 +631,7 @@ def test_conflicting_document_vectors_remain_quarantined(db_session, monkeypatch
         "scan_conflicts_for",
         lambda *_args, **_kwargs: ingestion_service.ConflictScanOutcome(conflict_ids=(123,)),
     )
-    # Both bindings: `ingestion_service` imported the name directly, while calls routed
-    # through `sync_document_vector_metadata` resolve it inside `vector_store_service`.
+    # Patch both the imported and source bindings.
     for _module in (ingestion_service, vector_store_service):
         monkeypatch.setattr(
             _module,
@@ -684,8 +683,7 @@ def test_exact_duplicate_is_blocked_without_an_open_conflict(db_session, monkeyp
         lambda sibling: text if sibling.id == old.id else "",
     )
     monkeypatch.setattr(ingestion_service, "index_document_chunks", lambda **kwargs: indexed.append(kwargs))
-    # Both bindings: `ingestion_service` imported the name directly, while calls routed
-    # through `sync_document_vector_metadata` resolve it inside `vector_store_service`.
+    # Patch both the imported and source bindings.
     for _module in (ingestion_service, vector_store_service):
         monkeypatch.setattr(
             _module,
@@ -732,8 +730,7 @@ def test_conflict_scan_failure_fails_ingestion_and_keeps_vectors_quarantined(db_
         raise RuntimeError("MinIO unavailable")
 
     monkeypatch.setattr(ingestion_service, "scan_conflicts_for", fail_scan)
-    # Both bindings: `ingestion_service` imported the name directly, while calls routed
-    # through `sync_document_vector_metadata` resolve it inside `vector_store_service`.
+    # Patch both the imported and source bindings.
     for _module in (ingestion_service, vector_store_service):
         monkeypatch.setattr(
             _module,
@@ -2184,8 +2181,7 @@ def test_an_unidentifiable_upload_waits_for_admin_without_indexing(db_session, m
         ),
     )
     monkeypatch.setattr(ingestion_service, "index_document_chunks", lambda **kwargs: indexed.append(kwargs))
-    # Both bindings: `ingestion_service` imported the name directly, while calls routed
-    # through `sync_document_vector_metadata` resolve it inside `vector_store_service`.
+    # Patch both the imported and source bindings.
     for _module in (ingestion_service, vector_store_service):
         monkeypatch.setattr(
             _module,

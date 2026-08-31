@@ -331,10 +331,7 @@ def apply_document_reclassification(
         if not chunks:
             raise LegacyReclassificationError("The proposed category produced no indexable chunks.")
 
-    # `document.categories` is not reassigned until later in this function (the multi-label
-    # rewrite happens well below), so `document_categories(document)` here still reflects
-    # the pre-reclassification labels — matching `category=old_category` rather than the
-    # incoming `classification.category`.
+    # Quarantine the indexed version under its pre-reclassification labels.
     update_document_vector_metadata(
         document.id,
         review_status=_enum_value(document.review_status),

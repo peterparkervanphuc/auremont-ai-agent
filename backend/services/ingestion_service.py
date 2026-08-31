@@ -601,10 +601,7 @@ def reclassify_document(
     previous_update_values = {field_name: getattr(document, field_name) for field_name in updates}
 
     if not was_pending_review:
-        # `document.category`/`.categories` are still the pre-update values here — the
-        # `updates` dict above was only read from, never applied to the ORM object — so
-        # this quarantines the version currently live in Qdrant under its old labels,
-        # matching `category=previous_category` below rather than the incoming `category`.
+        # Quarantine the indexed version under its pre-update labels.
         update_document_vector_metadata(
             document.id,
             review_status=document.review_status,

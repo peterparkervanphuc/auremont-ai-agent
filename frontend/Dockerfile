@@ -8,11 +8,7 @@ RUN npm ci
 
 COPY . .
 
-# Vite inlines `import.meta.env.VITE_*` at build time, reading them from the process
-# environment — so a bare ARG is not enough, it has to be re-exported as ENV before the
-# build runs. docker-compose.yml has always passed these two as build args; without the
-# declarations below Docker discarded them silently and the bundle fell back to the
-# localhost defaults in src/api/client.ts.
+# Vite requires build args to be exported before bundling.
 ARG VITE_API_URL
 ARG VITE_WS_URL
 ENV VITE_API_URL=$VITE_API_URL

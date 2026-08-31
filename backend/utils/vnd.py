@@ -39,10 +39,7 @@ class Profile(Enum):
     DOCUMENT = "document"
 
 
-# Diacritics are stripped before lookup, so keys are unaccented. Note `tỷ` normalises to
-# `ty` but `tỉ` normalises to `ti` — the two spellings do NOT collapse to one key, so both
-# are listed. Getting this wrong is what left `tỉ` unrecognised in four of the five original
-# call sites.
+# Diacritic stripping maps `tỷ` to `ty` and `tỉ` to `ti`, so both keys are required.
 _CONVERSATIONAL_UNITS = {
     "ty": _BILLION,
     "ti": _BILLION,
@@ -74,22 +71,13 @@ def _alternation(*spellings: str) -> str:
     return "|".join(sorted(set(spellings), key=len, reverse=True))
 
 
-# The units a *budget* is quoted in. This is the vocabulary for matching what a person says
-# they want to spend, so it deliberately excludes `vnd`/`dong` (a fee or a deposit line, not
-# a budget) and bare `t` (too eager: it fires on "t" inside ordinary text).
+# Exclude đồng and bare `t` to avoid matching fees or ordinary text as budgets.
 BUDGET_UNIT_ALTERNATION = _alternation("tỷ", "tỉ", "ty", "ti", "triệu", "trieu", "tr")
 
-# As above plus the bare `t` shorthand. Only for patterns anchored tightly enough that `t`
-# cannot run away — inventory's price ranges require a digit immediately before it ("căn 3t",
-# "từ 2t đến 4t"), which is what makes the abbreviation safe there and nowhere else.
+# Bare `t` is only safe in tightly anchored price-range patterns.
 BUDGET_UNIT_ALTERNATION_WITH_BARE_T = _alternation("tỷ", "tỉ", "ty", "ti", "triệu", "trieu", "tr", "t")
 
-# The vocabulary for prices printed in a document: English unit names and the accented đồng
-# forms, but NO bare `t`. A price table is full of "tầng 15 t" and "tải trọng 5 t", and
-# admitting `t` here would feed those into conflict detection as if they were prices.
-#
-# `đ`/`đồng`/`vnđ` are matched here but resolve through strip_diacritics to the `d`/`dong`/
-# `vnd` keys in the tables above, so no separate multiplier entry is needed.
+# Exclude bare `t` so floor and load values are not parsed as document prices.
 DOCUMENT_UNIT_ALTERNATION = _alternation(
     "tỷ",
     "tỉ",
@@ -107,9 +95,7 @@ DOCUMENT_UNIT_ALTERNATION = _alternation(
     "đ",
 )
 
-# Every spelling any caller may need, bare `t` included. Exported so the regexes that used
-# to hand-list their own subset share one vocabulary and cannot drift apart again; prefer
-# one of the narrower alternations above unless a pattern really needs all of them.
+# Broad vocabulary for callers that cannot use a narrower alternation.
 UNIT_ALTERNATION = _alternation(
     "tỷ",
     "tỉ",
@@ -128,9 +114,6 @@ UNIT_ALTERNATION = _alternation(
     "đ",
 )
 
-# Dot- or comma-separated groups of exactly three digits. One group ("500.000") is already
-# unambiguous in a printed table; two or more ("1.500.000") cannot be a decimal under any
-# notation.
 _GROUPED_THOUSANDS = re.compile(r"\d{1,3}(?:[.,]\d{3})+")
 _MULTI_GROUP_THOUSANDS = re.compile(r"\d{1,3}(?:[.,]\d{3}){2,}")
 

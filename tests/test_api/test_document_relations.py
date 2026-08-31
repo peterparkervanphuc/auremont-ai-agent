@@ -29,9 +29,6 @@ def admin(db_session):
 def client(db_session, admin, monkeypatch):
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_current_user] = lambda: admin
-    # monkeypatch, not direct assignment: this patches the shared source module, so a test
-    # that fails mid-way must still hand the real function back or every later test file
-    # sees the stub instead of Qdrant.
     monkeypatch.setattr(vector_store_service, "update_document_vector_metadata", lambda *_args, **_kwargs: None)
     yield TestClient(app)
     app.dependency_overrides.clear()

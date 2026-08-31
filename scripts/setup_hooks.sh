@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
-# Install git pre-push hook for AI log submission (POSIX / Git Bash).
-# Run once after cloning: bash scripts/setup_hooks.sh
+# Install the AI-log pre-push hook.
 set -e
 
 HOOK_FILE=".git/hooks/pre-push"
 
 cat > "$HOOK_FILE" <<'EOF'
 #!/usr/bin/env bash
-# Pre-push: collect Claude Code, Codex and Antigravity prompts, then submit AI logs.
-# Uses the cross-platform Python launcher so it works whether the user
-# has python3, python, or only the `py` launcher (Windows).
+# Collect and submit AI logs without blocking pushes.
 bash scripts/_pyrun.sh scripts/log_claude.py --auto || true
 bash scripts/_pyrun.sh scripts/log_codex.py --auto || true
 bash scripts/_pyrun.sh scripts/log_antigravity.py --auto || true
 bash scripts/_pyrun.sh scripts/submit_log.py || true
-exit 0  # Never block push, even if either step fails
+exit 0
 EOF
 
 chmod +x "$HOOK_FILE"

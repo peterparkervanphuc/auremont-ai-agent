@@ -11,18 +11,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Security: run as non-root user
 RUN useradd -m appuser
 
-# Copy installed packages from builder, owned by appuser
 COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 ENV PATH=/home/appuser/.local/bin:$PATH
 
-# Copy application code
 COPY . .
 
-# Create data directory with correct ownership.
-# chmod +x: file được tạo trên Windows nên không mang sẵn bit thực thi.
+# Windows checkouts may not preserve executable bits.
 RUN mkdir -p /app/data \
     && chmod +x /app/docker-entrypoint.sh \
     && chown -R appuser:appuser /app

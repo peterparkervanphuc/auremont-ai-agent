@@ -33,8 +33,7 @@ MAX_ITEMS_PER_FIELD = 5
 
 UNIT_TYPE_PATTERN = re.compile(r"\b(\d\s?PN|studio|shophouse|penthouse|duplex)\b", re.IGNORECASE)
 
-# Shared vocabulary rather than a hand-listed subset: this pattern used to omit `tr`, so
-# "ngân sách 800tr" — ordinary Vietnamese — was never remembered as a budget at all.
+# Shared vocabulary keeps supported budget-unit spellings consistent.
 BUDGET_PATTERN = re.compile(rf"(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION})\b", re.IGNORECASE)
 BUDGET_RANGE_PATTERN = re.compile(
     rf"(\d+(?:[.,]\d+)?)\s*(?:-|–|đến|den|tới|toi)\s*(\d+(?:[.,]\d+)?)\s*({BUDGET_UNIT_ALTERNATION})\b",

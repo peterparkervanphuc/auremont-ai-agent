@@ -64,11 +64,7 @@ def recorder(monkeypatch):
         "_embed_and_index",
         lambda doc, chunks, is_current=None: events.append(("index", is_current)),
     )
-    # Patched in both places on purpose. `ingestion_service` did `from ... import
-    # update_document_vector_metadata`, so its module-level name is a separate binding that
-    # a patch on the source module cannot reach; but the calls routed through
-    # `sync_document_vector_metadata` resolve the name inside `vector_store_service` and
-    # only the source patch reaches those.
+    # Patch both the imported and source bindings.
     record_sync = lambda document_id, **kwargs: events.append(  # noqa: E731
         ("sync", kwargs["category"], kwargs["is_current"])
     )

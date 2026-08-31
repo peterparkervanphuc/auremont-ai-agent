@@ -13,16 +13,10 @@ services:
       QDRANT_URL: http://qdrant:6333
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
-      # Persist Admin tool/token/trace metrics in MySQL. JSONL tracing remains an
-      # independent opt-in export for eval/debug datasets.
       OBSERVABILITY_METRICS_ENABLED: ${OBSERVABILITY_METRICS_ENABLED:-true}
-      # Browser-facing address for loading public images. Must be localhost, not
-      # `minio:9000` — the <img> tag runs on the host machine, not in the Docker network.
+      # Browser-facing endpoint, not the Docker network hostname.
       MINIO_PUBLIC_ENDPOINT: localhost:9000
-      # Source of project images (~58MB, not in git). Backend downloads to MinIO at
-      # startup. Set the value in .env — leaving it empty runs the catalogue without images.
       PROJECT_IMAGES_BASE_URL: ${PROJECT_IMAGES_BASE_URL:-}
-      # A single .tar.gz containing all images; one request instead of ~180.
       PROJECT_IMAGES_ARCHIVE_URL: ${PROJECT_IMAGES_ARCHIVE_URL:-}
     volumes:
       - ./eval/results:/app/eval/results:ro
@@ -60,8 +54,6 @@ services:
     image: mysql:8.4
     container_name: ai20k_mysql
     ports:
-      # 3306 is commonly occupied by a locally installed MySQL service.
-      # Containers still communicate with MySQL at mysql:3306; only the host port changes.
       - "3307:3306"
     environment:
       MYSQL_ROOT_PASSWORD: root
@@ -84,8 +76,6 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
-  # Long-term memory (per-customer / per-sale profiles). Not a source of truth:
-  # if Redis is lost, the system still answers normally, just without personalization.
   redis:
     image: redis:7-alpine
     container_name: ai20k_redis
@@ -93,7 +83,6 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    # AOF: memory profiles survive restarts. Losing the last few seconds is fine.
     command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

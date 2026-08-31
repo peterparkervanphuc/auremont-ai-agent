@@ -59,9 +59,6 @@ def client(db_session, admin, monkeypatch):
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_current_user] = lambda: admin
     vector_sync_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
-    # monkeypatch, not direct assignment: this patches the shared source module, so a test
-    # that fails mid-way must still hand the real function back or every later test file
-    # sees the stub instead of Qdrant.
     monkeypatch.setattr(
         vector_store_service,
         "update_document_vector_metadata",
