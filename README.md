@@ -277,6 +277,6 @@ This project is licensed under the [**MIT License**](LICENSE). Developed as part
 | Name | Student ID | Role |
 | :--- | :--- | :--- |
 | Nguyễn Quang Vinh | 2A202601517 | Team Lead |
-| Hoàng Trường Giang | | Member |
+| Hoàng Trường Giang | 2A202601224 | Backend AI Full-stack |
 | Lê Thị Trúc Linh | | Member |
 | Đào Ngọc Duy | | Member |
