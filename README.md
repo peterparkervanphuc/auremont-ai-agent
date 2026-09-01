@@ -279,4 +279,4 @@ This project is licensed under the [**MIT License**](LICENSE). Developed as part
 | Nguyễn Quang Vinh | 2A202601517 | Team Lead |
 | Hoàng Trường Giang | 2A202601224 | Backend AI Full-stack |
 | Lê Thị Trúc Linh | 2A202601322| Full-stack Engineer |
-| Đào Ngọc Duy | | Business  |
+| Đào Ngọc Duy | 2A202601780| Business Analyst |
