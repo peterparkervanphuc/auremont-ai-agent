@@ -224,8 +224,8 @@ Production readiness probes and metrics are exposed at `/health/live`, `/health/
 ### Step 0: Clone & Environment Setup
 ```bash
 # Clone the repository
-git clone https://github.com/AI20K-Build-Phase-Cohort-3/P-110.git
-cd P-110
+git clone https://github.com/peterparkervanphuc/auremont-ai-agent.git
+cd auremont-ai-agent
 
 # Initialize environment configuration
 cp .env.example .env
@@ -307,7 +307,7 @@ npm run dev
 ## 📂 Repository Structure
 
 ```text
-P-110/
+auremont-ai-agent/
 ├── assets/                    # Project logos, branding assets, presentation diagrams
 ├── backend/
 │   ├── ai/                    # Prompt engineering, citation helpers, intent classification
@@ -422,7 +422,7 @@ This project is licensed under the [**MIT License**](LICENSE). Developed as part
 
 ---
 
-## 👥 Authors & Team P-110
+## 👥 Authors 
 
 | Name | Student ID | Role |
 | :--- | :--- | :--- |
